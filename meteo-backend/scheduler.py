@@ -9,8 +9,10 @@ Ogni ora:
   5. Se abbastanza dati verificati → re-training scikit-learn
 """
 import asyncio
+import os
 from datetime import datetime, timezone, timedelta
 
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import and_
@@ -173,6 +175,18 @@ def _calc_avg_error(db: Session) -> float:
     return sum(abs(e[0]) for e in errors) / len(errors)
 
 
+async def _keepalive_ping():
+    """Pinga il proprio /health ogni 10 minuti per evitare lo spin-down su Render free tier."""
+    own_url = os.getenv("RENDER_EXTERNAL_URL", "")
+    if not own_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.get(f"{own_url}/health")
+    except Exception:
+        pass
+
+
 def start_scheduler():
     """Avvia APScheduler con il job orario."""
     scheduler.add_job(
@@ -182,6 +196,13 @@ def start_scheduler():
         name="Raccolta meteo + auto-learning ML",
         replace_existing=True,
         max_instances=1       # Non sovrapporre esecuzioni
+    )
+    scheduler.add_job(
+        _keepalive_ping,
+        trigger=IntervalTrigger(minutes=10),
+        id="keepalive",
+        name="Keep-alive ping (anti spin-down Render)",
+        replace_existing=True,
     )
     scheduler.start()
     print("[SCHED] Scheduler avviato — ciclo orario attivo")
