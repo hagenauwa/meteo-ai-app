@@ -1,0 +1,38 @@
+# Configurazione Netlify per Meteo AI App
+# Documentazione: https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  # Directory dove risiedono i file statici (HTML, CSS, JS)
+  publish = "public"
+  
+  # Comando di build (vuoto perché è un sito statico)
+  command = ""
+
+# Configurazione delle Serverless Functions
+[functions]
+  # Directory contenente le funzioni Netlify
+  directory = "netlify/functions"
+  
+  # Node.js runtime
+  node_bundler = "esbuild"
+
+# Redirect per API (opzionale - per compatibilità futura)
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# Headers di sicurezza
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Variabili d'ambiente (da configurare su Netlify dashboard)
+[context.production.environment]
+  NODE_ENV = "production"
+
+[context.development.environment]
+  NODE_ENV = "development"

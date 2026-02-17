@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Previsioni meteo accurate con intelligenza artificiale per l'Italia">
+    <title>Meteo AI - Previsioni Intelligenti</title>
+    
+    <!-- Configurazione backend Python — modifica con il tuo URL/IP del VPS -->
+    <script>
+        window.BACKEND_URL = 'https://meteo-ai-andrea.loca.lt';
+    </script>
+
+    <!-- Icone meteo -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    
+    <!-- Stili personalizzati -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Header con logo e titolo -->
+    <header class="header">
+        <div class="container">
+            <div class="logo">
+                <i class="fas fa-cloud-sun"></i>
+                <h1>Meteo AI</h1>
+            </div>
+            <p class="subtitle">Previsioni accurate con Machine Learning</p>
+        </div>
+    </header>
+
+    <!-- Sezione di ricerca -->
+    <section class="search-section">
+        <div class="container">
+            <div class="search-box">
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="cityInput" 
+                        placeholder="Inserisci una città italiana (es. Roma, Milano, Napoli)..."
+                        autocomplete="off"
+                    >
+                    <div id="autocompleteList" class="autocomplete-list hidden"></div>
+                </div>
+                <button id="searchBtn" class="btn-primary">
+                    <i class="fas fa-search"></i> Cerca
+                </button>
+            </div>
+            
+            <!-- Suggerimenti città italiane popolari -->
+            <div class="quick-cities">
+                <span class="label">Città popolari:</span>
+                <button class="city-chip" data-city="Roma">Roma</button>
+                <button class="city-chip" data-city="Milano">Milano</button>
+                <button class="city-chip" data-city="Napoli">Napoli</button>
+                <button class="city-chip" data-city="Torino">Torino</button>
+                <button class="city-chip" data-city="Firenze">Firenze</button>
+                <button class="city-chip" data-city="Venezia">Venezia</button>
+                <button class="city-chip" data-city="Bologna">Bologna</button>
+                <button class="city-chip" data-city="Palermo">Palermo</button>
+            </div>
+            
+            <!-- Chat Domande Linguaggio Naturale -->
+            <div class="chat-section">
+                <div class="chat-toggle" id="chatToggle">
+                    <i class="fas fa-comments"></i>
+                    <span>Fai una domanda in italiano</span>
+                    <i class="fas fa-chevron-down"></i>
+                </div>
+                <div class="chat-box hidden" id="chatBox">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="chat-message bot">
+                            <i class="fas fa-robot"></i>
+                            <div class="message-content">
+                                Ciao! Puoi chiedermi cose come:<br>
+                                • "Tra un'ora a Massa pioverà?"<br>
+                                • "Domani a Roma che tempo fa?"<br>
+                                • "Fra 3 giorni a Milano temperatura?"
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chatInput" placeholder="Scrivi la tua domanda...">
+                        <button id="chatSendBtn">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stato di caricamento -->
+    <div id="loadingState" class="loading-state hidden">
+        <div class="spinner"></div>
+        <p>Sto consultando i satelliti meteo...</p>
+    </div>
+
+    <!-- Messaggi di errore -->
+    <div id="errorMessage" class="error-message hidden">
+        <i class="fas fa-exclamation-circle"></i>
+        <span id="errorText"></span>
+    </div>
+
+    <!-- Risultati meteo -->
+    <main id="weatherResults" class="weather-results hidden">
+        <div class="container">
+            
+            <!-- Card meteo attuale -->
+            <div class="current-weather-card">
+                <div class="location-info">
+                    <h2 id="cityName">--</h2>
+                    <p id="currentDate">--</p>
+                </div>
+                
+                <div class="weather-main">
+                    <div class="temperature-section">
+                        <span id="currentTemp" class="temperature">--</span>
+                        <span class="unit">°C</span>
+                    </div>
+                    <div class="weather-icon-section">
+                        <i id="weatherIcon" class="fas fa-sun"></i>
+                        <p id="weatherDescription">--</p>
+                    </div>
+                </div>
+                
+                <!-- Correzione AI -->
+                <div id="aiCorrection" class="ai-correction hidden">
+                    <div class="correction-badge">
+                        <i class="fas fa-robot"></i>
+                        <span>Correzione AI</span>
+                    </div>
+                    <p class="correction-text">
+                        Temperatura corretta di <span id="correctionValue">--</span>°C 
+                        basandosi sui dati storici
+                    </p>
+                </div>
+                
+                <!-- Dettagli aggiuntivi -->
+                <div class="weather-details">
+                    <div class="detail-item">
+                        <i class="fas fa-tint"></i>
+                        <span class="label">Umidità</span>
+                        <span id="humidity" class="value">--%</span>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fas fa-wind"></i>
+                        <span class="label">Vento</span>
+                        <span id="windSpeed" class="value">-- km/h</span>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fas fa-eye"></i>
+                        <span class="label">Visibilità</span>
+                        <span id="visibility" class="value">-- km</span>
+                    </div>
+                    <div class="detail-item">
+                        <i class="fas fa-compress-arrows-alt"></i>
+                        <span class="label">Pressione</span>
+                        <span id="pressure" class="value">-- hPa</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Previsioni orarie (prossime 24h) -->
+            <div class="forecast-section">
+                <h3><i class="fas fa-clock"></i> Previsioni Orarie</h3>
+                <div id="hourlyForecast" class="hourly-forecast">
+                    <!-- Popolato dinamicamente da JS -->
+                </div>
+            </div>
+
+            <!-- Previsioni giornaliere (prossimi 5 giorni) -->
+            <div class="forecast-section">
+                <h3><i class="fas fa-calendar-alt"></i> Previsioni 5 Giorni</h3>
+                <div id="dailyForecast" class="daily-forecast">
+                    <!-- Popolato dinamicamente da JS -->
+                </div>
+            </div>
+
+            <!-- Sezione ML - Statistiche apprendimento -->
+            <div class="ml-stats-section">
+                <div class="ml-toggle-header" id="mlToggleHeader">
+                    <h3><i class="fas fa-brain"></i> Intelligenza Artificiale</h3>
+                    <i class="fas fa-chevron-down ml-chevron"></i>
+                </div>
+                <div class="ml-body" id="mlBody">
+                <div class="ml-stats-grid">
+                    <div class="ml-stat-card">
+                        <span class="ml-stat-value" id="predictionsCount">0</span>
+                        <span class="ml-stat-label">Previsioni salvate</span>
+                    </div>
+                    <div class="ml-stat-card">
+                        <span class="ml-stat-value" id="avgError">--</span>
+                        <span class="ml-stat-label">Errore medio (°C)</span>
+                    </div>
+                    <div class="ml-stat-card">
+                        <span class="ml-stat-value" id="modelStatus">In attesa</span>
+                        <span class="ml-stat-label">Stato modello</span>
+                    </div>
+                    <div class="ml-stat-card">
+                        <span class="ml-stat-value" id="learningProgress">0%</span>
+                        <span class="ml-stat-label">Apprendimento</span>
+                    </div>
+                </div>
+                
+                <!-- Grafico errori (semplificato) -->
+                <div class="error-chart">
+                    <h4>Andamento errori di previsione</h4>
+                    <canvas id="errorChart" width="800" height="200"></canvas>
+                </div>
+                
+                <!-- Controlli ML -->
+                <div class="ml-controls">
+                    <button id="trainModelBtn" class="btn-secondary">
+                        <i class="fas fa-graduation-cap"></i> Allena modello ora
+                    </button>
+                    <button id="resetModelBtn" class="btn-danger">
+                        <i class="fas fa-trash"></i> Reset dati ML
+                    </button>
+                    <button id="verifyPredictionsBtn" class="btn-secondary">
+                        <i class="fas fa-check-double"></i> Verifica previsioni passate
+                    </button>
+                </div>
+
+                <!-- Auto-Learning server-side -->
+                <div class="auto-learning-section">
+                    <div class="auto-learning-header">
+                        <h4><i class="fas fa-robot"></i> Apprendimento Automatico (Server)</h4>
+                        <span class="status-dot active" id="autoLearningDot" title="Il backend aggiorna tutte le città ogni ora"></span>
+                    </div>
+                    <p class="auto-learning-desc">
+                        Il backend Python raccoglie i dati meteo per tutti i ~8.000 comuni italiani ogni ora
+                        e aggiorna il modello automaticamente — anche quando il browser è chiuso.
+                    </p>
+                    <div class="auto-learning-status-row">
+                        <span id="autoLearningStatus">Backend attivo</span>
+                        <span id="autoLearningNext" class="next-run-label">Ciclo orario automatico</span>
+                    </div>
+                    <button id="autoLearningRunNow" class="btn-secondary btn-sm mt-8">
+                        <i class="fas fa-play"></i> Forza ciclo ora
+                    </button>
+                </div>
+                </div><!-- fine ml-body -->
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>Dati forniti da <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a> (gratuito)</p>
+            <p>Modello ML: <span id="mlModelInfo">scikit-learn Ridge Regression — ~8.000 comuni italiani</span></p>
+        </div>
+    </footer>
+
+    <!-- Scripts (ml-model.js rimosso: ML ora server-side) -->
+    <script src="app.js"></script>
+</body>
+</html>
