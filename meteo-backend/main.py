@@ -20,11 +20,14 @@ load_dotenv()
 
 
 def _load_cities_if_empty():
-    """Carica i comuni italiani in background se il DB è vuoto (primo avvio su server)."""
+    """Carica i comuni italiani e le località GeoNames in background se mancanti."""
     try:
         with SessionLocal() as session:
-            count = session.query(City).count()
-        if count == 0:
+            count_comuni = session.query(City).filter(City.locality_type == "comune").count()
+            count_localita = session.query(City).filter(City.locality_type == "localita").count()
+
+        # 1. Carica comuni ISTAT se mancanti
+        if count_comuni == 0:
             print("[CITIES] Database vuoto — caricamento comuni italiani in background...")
             from cities_loader import load_cities, download_and_load
             csv_path = Path(__file__).parent / "data" / "comuni_italiani.csv"
@@ -33,9 +36,20 @@ def _load_cities_if_empty():
             else:
                 download_and_load()
         else:
-            print(f"[CITIES] {count} comuni presenti nel DB")
+            print(f"[CITIES] {count_comuni} comuni ISTAT presenti nel DB")
+
+        # 2. Carica località GeoNames se mancanti
+        if count_localita == 0:
+            print("[GEONAMES] Caricamento località GeoNames in background...")
+            from cities_loader import load_geonames
+            load_geonames()
+        else:
+            print(f"[GEONAMES] {count_localita} località GeoNames presenti nel DB")
+
     except Exception as e:
-        print(f"[WARN] Caricamento comuni fallito: {e}")
+        print(f"[WARN] Caricamento città fallito: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @asynccontextmanager

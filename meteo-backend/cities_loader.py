@@ -1,20 +1,23 @@
 """
-cities_loader.py — Carica tutti i comuni italiani da CSV ISTAT nel database.
+cities_loader.py — Carica comuni italiani (ISTAT) e località (GeoNames) nel database.
 
-Dataset: https://github.com/matteocontrini/comuni-json
-         oppure ISTAT: https://www.istat.it/it/files//2011/01/comuni_italiani_geo.csv
-
-Il CSV atteso ha le colonne (con header):
-  nome, regione, provincia, lat, lon, popolazione (opzionale)
+Comuni ISTAT (~7.700): da CSV GitHub matteocontrini/comuni-json
+Località GeoNames (~50.000+): da https://download.geonames.org/export/dump/IT.zip
 
 Eseguire una volta: python cities_loader.py
+  --download     Scarica e carica comuni ISTAT
+  --geonames     Scarica e carica località GeoNames
+  --reload       Ricarica comuni da CSV locale
 """
 import csv
 import os
 import sys
+import zipfile
+import io
 from pathlib import Path
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from database import engine, init_db, City
 
 CSV_PATH = Path(__file__).parent / "data" / "comuni_italiani.csv"
@@ -95,13 +98,14 @@ def load_cities(truncate: bool = False) -> int:
                     continue
 
                 city = City(
-                    name       = name,
-                    name_lower = name.lower(),
-                    region     = row.get(col_regione, "").strip() if col_regione else None,
-                    province   = row.get(col_prov, "").strip() if col_prov else None,
-                    lat        = lat,
-                    lon        = lon,
-                    population = int(row[col_pop]) if col_pop and row.get(col_pop, "").isdigit() else None
+                    name          = name,
+                    name_lower    = name.lower(),
+                    region        = row.get(col_regione, "").strip() if col_regione else None,
+                    province      = row.get(col_prov, "").strip() if col_prov else None,
+                    lat           = lat,
+                    lon           = lon,
+                    population    = int(row[col_pop]) if col_pop and row.get(col_pop, "").isdigit() else None,
+                    locality_type = "comune"
                 )
                 batch.append(city)
                 count += 1
@@ -202,9 +206,149 @@ def download_and_load():
     return load_cities(truncate=True)
 
 
+# ---------- GeoNames: tutte le località italiane ----------
+
+GEONAMES_URL = "https://download.geonames.org/export/dump/IT.zip"
+GEONAMES_DIR = Path(__file__).parent / "data"
+
+# Mapping GeoNames admin1_code → nome regione italiana
+ADMIN1_TO_REGION = {
+    "01": "Abruzzo",     "02": "Basilicata",   "03": "Calabria",
+    "04": "Campania",    "05": "Emilia-Romagna","06": "Friuli Venezia Giulia",
+    "07": "Lazio",       "08": "Liguria",       "09": "Lombardia",
+    "10": "Marche",      "11": "Molise",        "12": "Piemonte",
+    "13": "Puglia",      "14": "Sardegna",      "15": "Sicilia",
+    "16": "Toscana",     "17": "Trentino-Alto Adige", "18": "Umbria",
+    "19": "Valle d'Aosta", "20": "Veneto",
+}
+
+# Feature codes di tipo "populated place" da includere
+POPULATED_FEATURES = {"PPL", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLC",
+                       "PPLF", "PPLL", "PPLQ", "PPLR", "PPLS", "PPLX"}
+
+
+def load_geonames() -> int:
+    """
+    Scarica IT.zip da GeoNames, estrae le località (feature class P),
+    esclude i duplicati con i comuni ISTAT già presenti, e inserisce
+    le nuove località con locality_type="localita".
+    Ritorna il numero di località inserite.
+    """
+    import httpx
+
+    init_db()
+
+    # Controlla se ci sono già località GeoNames nel DB
+    with Session(engine) as session:
+        existing_geonames = session.query(City).filter(City.locality_type == "localita").count()
+        if existing_geonames > 0:
+            print(f"[INFO] {existing_geonames} località GeoNames già presenti nel DB. Saltando.")
+            return existing_geonames
+
+    # 1. Scarica IT.zip
+    zip_path = GEONAMES_DIR / "IT.zip"
+    txt_path = GEONAMES_DIR / "IT.txt"
+    GEONAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not txt_path.exists():
+        print(f"[DL] Scaricando GeoNames IT.zip...")
+        r = httpx.get(GEONAMES_URL, timeout=120, follow_redirects=True)
+        r.raise_for_status()
+        with open(zip_path, "wb") as f:
+            f.write(r.content)
+        print(f"[OK] Download completato ({len(r.content) // 1024} KB)")
+
+        # 2. Estrai IT.txt
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extract("IT.txt", GEONAMES_DIR)
+        print(f"[OK] Estratto IT.txt")
+    else:
+        print(f"[INFO] IT.txt già presente, uso file locale")
+
+    # 3. Carica comuni esistenti per deduplica (nome_lower → set di coordinate)
+    with Session(engine) as session:
+        existing_comuni = {}
+        for c in session.query(City.name_lower, City.lat, City.lon).filter(City.locality_type == "comune").all():
+            existing_comuni.setdefault(c.name_lower, []).append((c.lat, c.lon))
+
+    # 4. Parsa IT.txt (TSV con colonne GeoNames standard)
+    # Colonne: 0=geonameid, 1=name, 2=asciiname, 3=alternatenames,
+    #          4=latitude, 5=longitude, 6=feature_class, 7=feature_code,
+    #          8=country_code, 9=cc2, 10=admin1_code, 11=admin2,
+    #          12=admin3, 13=admin4, 14=population, ...
+    batch = []
+    count = 0
+    skipped_dupes = 0
+
+    with open(txt_path, encoding="utf-8") as f:
+        for line in f:
+            cols = line.strip().split("\t")
+            if len(cols) < 15:
+                continue
+
+            feature_class = cols[6]
+            feature_code = cols[7]
+
+            # Solo luoghi abitati
+            if feature_class != "P" or feature_code not in POPULATED_FEATURES:
+                continue
+
+            name = cols[1].strip()
+            if not name:
+                continue
+
+            try:
+                lat = float(cols[4])
+                lon = float(cols[5])
+            except ValueError:
+                continue
+
+            name_lower = name.lower()
+            admin1 = cols[10]
+            region = ADMIN1_TO_REGION.get(admin1, "")
+            pop_str = cols[14]
+            population = int(pop_str) if pop_str.isdigit() and int(pop_str) > 0 else None
+
+            # Deduplica: se esiste un comune ISTAT con stesso nome e coordinate vicine (<5km), skip
+            is_dupe = False
+            if name_lower in existing_comuni:
+                for (ex_lat, ex_lon) in existing_comuni[name_lower]:
+                    # Approssimazione: 0.05° ≈ 5km
+                    if abs(lat - ex_lat) < 0.05 and abs(lon - ex_lon) < 0.05:
+                        is_dupe = True
+                        break
+            if is_dupe:
+                skipped_dupes += 1
+                continue
+
+            batch.append(City(
+                name          = name,
+                name_lower    = name_lower,
+                region        = region,
+                province      = None,   # GeoNames non ha provincia diretta
+                lat           = lat,
+                lon           = lon,
+                population    = population,
+                locality_type = "localita"
+            ))
+            count += 1
+
+    # 5. Inserisci in batch
+    with Session(engine) as session:
+        for i in range(0, len(batch), 500):
+            session.bulk_save_objects(batch[i:i+500])
+            session.commit()
+            print(f"  ... inserite {min(i+500, count)} località", end="\r")
+
+    print(f"\n[OK] Caricate {count} località GeoNames (esclusi {skipped_dupes} duplicati con comuni ISTAT)")
+    return count
+
+
 if __name__ == "__main__":
     if "--download" in sys.argv:
         download_and_load()
+    elif "--geonames" in sys.argv:
+        load_geonames()
     elif "--reload" in sys.argv:
         load_cities(truncate=True)
     else:
@@ -213,3 +357,5 @@ if __name__ == "__main__":
             download_and_load()
         else:
             load_cities()
+        # Dopo i comuni ISTAT, carica anche GeoNames
+        load_geonames()

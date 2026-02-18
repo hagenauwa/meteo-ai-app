@@ -40,8 +40,10 @@ async def hourly_cycle():
 
     db: Session = SessionLocal()
     try:
-        # 1. Carica tutte le città
-        cities_rows = db.query(City.id, City.name, City.lat, City.lon).all()
+        # 1. Carica solo i comuni ISTAT (non le località GeoNames)
+        cities_rows = db.query(City.id, City.name, City.lat, City.lon).filter(
+            City.locality_type == "comune"
+        ).all()
         cities = [{"id": r.id, "name": r.name, "lat": r.lat, "lon": r.lon} for r in cities_rows]
 
         if not cities:

@@ -48,7 +48,8 @@ class City(Base):
     province   = Column(Text)
     lat        = Column(Float, nullable=False)
     lon        = Column(Float, nullable=False)
-    population = Column(Integer)
+    population    = Column(Integer)
+    locality_type = Column(Text, default="comune")  # "comune" (ISTAT) o "localita" (GeoNames)
 
     observations = relationship("WeatherObservation", back_populates="city", lazy="dynamic")
     predictions  = relationship("MlPrediction", back_populates="city", lazy="dynamic")
@@ -106,6 +107,7 @@ Index("idx_obs_city_time",  WeatherObservation.city_id, WeatherObservation.obser
 Index("idx_pred_city_time", MlPrediction.city_id, MlPrediction.predicted_at)
 Index("idx_pred_verified",  MlPrediction.verified)
 Index("idx_cities_name",    City.name_lower)
+Index("idx_cities_type",    City.locality_type)
 
 
 def get_db():
@@ -133,6 +135,7 @@ def _migrate_columns():
     migrations = [
         ("ml_predictions", "precipitation", "FLOAT"),
         ("ml_predictions", "weather_code",  "INTEGER"),
+        ("cities",         "locality_type", "TEXT DEFAULT 'comune'"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:

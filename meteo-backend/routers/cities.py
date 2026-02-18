@@ -6,7 +6,7 @@ GET /api/cities?q=val+di+cornia&limit=8
 """
 from typing import List
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, case
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -16,12 +16,13 @@ router = APIRouter()
 
 
 class CityResult(BaseModel):
-    id:       int
-    name:     str
-    region:   str | None
-    province: str | None
-    lat:      float
-    lon:      float
+    id:            int
+    name:          str
+    region:        str | None
+    province:      str | None
+    lat:           float
+    lon:           float
+    locality_type: str | None = "comune"
 
     class Config:
         from_attributes = True
@@ -39,11 +40,17 @@ def search_cities(
     """
     q_lower = q.strip().lower()
 
+    # Ordine: comuni ISTAT prima, poi località GeoNames; a parità, nomi più corti prima
+    type_priority = case(
+        (City.locality_type == "comune", 0),
+        else_=1
+    )
+
     # Prima priorità: inizia con la query
     starts_with = (
         db.query(City)
         .filter(City.name_lower.like(f"{q_lower}%"))
-        .order_by(func.length(City.name_lower))
+        .order_by(type_priority, func.length(City.name_lower))
         .limit(limit)
         .all()
     )
@@ -59,7 +66,7 @@ def search_cities(
                 City.name_lower.like(f"%{q_lower}%"),
                 ~City.id.in_(already_ids)
             )
-            .order_by(func.length(City.name_lower))
+            .order_by(type_priority, func.length(City.name_lower))
             .limit(limit - len(results))
             .all()
         )
