@@ -87,7 +87,9 @@ async def hourly_cycle():
                 predicted_temp = obs["temp"],
                 humidity       = obs.get("humidity"),
                 hour           = now.hour,
-                verified       = False
+                verified       = False,
+                precipitation  = obs.get("precipitation", 0.0),
+                weather_code   = obs.get("weather_code")
             ))
         db.bulk_save_objects(pred_objects)
         print(f"[PRED] Salvate {len(pred_objects)} nuove predictions")
@@ -137,6 +139,11 @@ async def hourly_cycle():
                 print(f"[DONE] Modello aggiornato — MAE: {result['mae']:.3f}°C su {result['n_samples']} campioni")
             else:
                 print(f"[WARN]  Training fallito: {result.get('message')}")
+            rain_result = await asyncio.to_thread(ml_model.train_rain_model, 100)
+            if rain_result.get("success"):
+                print(f"[DONE] Modello pioggia — Accuracy: {rain_result.get('accuracy', 0):.3f}")
+            else:
+                print(f"[INFO]  Modello pioggia: {rain_result.get('message', 'dati insufficienti')}")
             return  # db già chiuso
 
         # 7. Pulizia dati vecchi (mantieni max 30 giorni di osservazioni)

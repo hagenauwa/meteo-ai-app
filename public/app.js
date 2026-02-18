@@ -269,9 +269,10 @@ const CONFIG = {
     API_ENDPOINTS: {
         weather:    `${BACKEND_URL}/api/weather`,
         cities:     `${BACKEND_URL}/api/cities`,
-        mlCorrection: `${BACKEND_URL}/api/ml/correction`,
-        mlStats:    `${BACKEND_URL}/api/ml/stats`,
-        chat:       `${BACKEND_URL}/api/chat`,
+        mlCorrection:     `${BACKEND_URL}/api/ml/correction`,
+        mlRainPrediction: `${BACKEND_URL}/api/ml/rain-prediction`,
+        mlStats:          `${BACKEND_URL}/api/ml/stats`,
+        chat:             `${BACKEND_URL}/api/chat`,
     },
     
     // Icone meteo mapping (OpenWeather -> Font Awesome)
@@ -509,6 +510,41 @@ async function renderCurrentWeather(weather, coords) {
         correctionEl.classList.add('hidden');
     }
 
+    // Widget previsione pioggia ML
+    const rainWidget = document.getElementById('mlRainPrediction');
+    try {
+        const rainParams = new URLSearchParams({
+            city:        coords.name,
+            humidity:    weather.humidity || 60,
+            hour:        new Date().getHours(),
+            cloud_cover: weather.clouds || 50
+        });
+        const rainResp = await apiFetch(`${CONFIG.API_ENDPOINTS.mlRainPrediction}?${rainParams}`);
+        if (rainResp.ok) {
+            const rainData = await rainResp.json();
+            if (rainData.model_ready) {
+                const pct = Math.round(rainData.rain_probability * 100);
+                document.getElementById('rainPct').textContent = `${pct}%`;
+                const rainBar = document.getElementById('rainBar');
+                rainBar.style.width = `${pct}%`;
+                if (pct < 30) rainBar.style.background = '#10b981';
+                else if (pct < 60) rainBar.style.background = '#f59e0b';
+                else rainBar.style.background = '#3b82f6';
+                const label = rainData.will_rain
+                    ? `Probabile pioggia — confidenza ${rainData.confidence}`
+                    : `Cielo tendenzialmente asciutto — confidenza ${rainData.confidence}`;
+                document.getElementById('rainLabel').textContent = label;
+                rainWidget.classList.remove('hidden');
+            } else {
+                rainWidget.classList.add('hidden');
+            }
+        } else {
+            rainWidget.classList.add('hidden');
+        }
+    } catch (e) {
+        rainWidget.classList.add('hidden');
+    }
+
     // Dettagli (wind_speed già in km/h dal backend Open-Meteo)
     document.getElementById('humidity').textContent = `${weather.humidity}%`;
     document.getElementById('windSpeed').textContent = `${Math.round(weather.windSpeed)} km/h`;
@@ -700,9 +736,6 @@ async function searchWeather(cityName) {
         document.getElementById('weatherResults').classList.remove('hidden');
         showLoading(false);
         
-        // 7. Salva città in localStorage per ricerche future
-        localStorage.setItem('lastCity', cityName);
-        
     } catch (error) {
         console.error('Errore ricerca:', error);
         showError(error.message || 'Errore durante la ricerca. Riprova.');
@@ -800,12 +833,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert('⚠️ Backend non raggiungibile');
             }
         });
-    }
-    
-    // Carica ultima città cercata
-    const lastCity = localStorage.getItem('lastCity');
-    if (lastCity) {
-        cityInput.value = lastCity;
     }
     
     // Inizializza autocompletamento

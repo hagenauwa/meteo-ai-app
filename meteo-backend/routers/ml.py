@@ -75,6 +75,43 @@ def get_stats():
     return ml_model.get_stats()
 
 
+@router.get("/rain-prediction")
+async def get_rain_prediction(
+    city:        str   = Query(...),
+    humidity:    float = Query(60.0),
+    hour:        int   = Query(None),
+    cloud_cover: float = Query(50.0),
+    db:          Session = Depends(get_db)
+):
+    """
+    Predice la probabilità di pioggia per una città basandosi sui pattern storici locali.
+    Ritorna model_ready: false finché non ci sono abbastanza dati (~24-48h).
+    """
+    now = datetime.now(timezone.utc)
+    if hour is None:
+        hour = now.hour
+
+    q_lower = city.strip().lower()
+    city_row = (
+        db.query(City)
+        .filter(City.name_lower.like(f"{q_lower}%"))
+        .order_by(City.name_lower)
+        .first()
+    )
+
+    lat    = city_row.lat    if city_row else 43.0
+    region = city_row.region if city_row else "Sconosciuta"
+
+    return ml_model.predict_rain_probability(
+        humidity=humidity,
+        hour=hour,
+        month=now.month,
+        lat=lat,
+        region=region,
+        cloud_cover=cloud_cover
+    )
+
+
 @router.post("/train")
 async def force_train(min_samples: int = Query(100)):
     """Forza un re-training manuale del modello."""

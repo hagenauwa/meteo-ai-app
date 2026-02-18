@@ -33,7 +33,7 @@ async def fetch_weather_batch(
     params = {
         "latitude": lats,
         "longitude": lons,
-        "current": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,precipitation",
+        "current": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,precipitation,weather_code",
         "wind_speed_unit": "kmh",
         "timezone": "Europe/Rome"
     }
@@ -61,7 +61,8 @@ async def fetch_weather_batch(
             "humidity":    current.get("relative_humidity_2m"),
             "cloud_cover": current.get("cloud_cover"),
             "wind_speed":  current.get("wind_speed_10m"),
-            "precipitation": current.get("precipitation", 0.0)
+            "precipitation": current.get("precipitation", 0.0),
+            "weather_code":  current.get("weather_code")
         })
 
     return results

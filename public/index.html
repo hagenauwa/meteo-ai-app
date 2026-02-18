@@ -131,11 +131,18 @@
                         <span>Correzione AI</span>
                     </div>
                     <p class="correction-text">
-                        Temperatura corretta di <span id="correctionValue">--</span>°C 
+                        Temperatura corretta di <span id="correctionValue">--</span>°C
                         basandosi sui dati storici
                     </p>
                 </div>
-                
+
+                <!-- Previsione pioggia ML -->
+                <div id="mlRainPrediction" class="ml-rain-widget hidden">
+                    <div class="rain-header">🧠 Previsione pioggia AI — <span id="rainPct">--%</span></div>
+                    <div class="rain-bar-wrap"><div id="rainBar" style="width:0%"></div></div>
+                    <p id="rainLabel">--</p>
+                </div>
+
                 <!-- Dettagli aggiuntivi -->
                 <div class="weather-details">
                     <div class="detail-item">

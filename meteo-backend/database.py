@@ -84,6 +84,8 @@ class MlPrediction(Base):
     actual_temp    = Column(Float)
     error          = Column(Float)      # actual_temp - predicted_temp
     verified_at    = Column(DateTime(timezone=True))
+    precipitation  = Column(Float, nullable=True)   # mm misurati all'ora T
+    weather_code   = Column(Integer, nullable=True)  # WMO code all'ora T
 
     city = relationship("City", back_populates="predictions")
 
@@ -116,6 +118,40 @@ def get_db():
 
 
 def init_db():
-    """Crea tutte le tabelle se non esistono."""
+    """Crea tutte le tabelle se non esistono e applica le migrazioni colonne."""
     Base.metadata.create_all(bind=engine)
+    _migrate_columns()
     print("[OK] Database inizializzato")
+
+
+def _migrate_columns():
+    """
+    Aggiunge colonne nuove alle tabelle esistenti (compatibile PostgreSQL e SQLite).
+    ALTER TABLE ... ADD COLUMN IF NOT EXISTS funziona su PostgreSQL;
+    su SQLite usiamo try/except perché non supporta IF NOT EXISTS.
+    """
+    migrations = [
+        ("ml_predictions", "precipitation", "FLOAT"),
+        ("ml_predictions", "weather_code",  "INTEGER"),
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
+            try:
+                if _is_sqlite:
+                    # SQLite: prova ad aggiungere, ignora errore se esiste già
+                    conn.execute(
+                        __import__("sqlalchemy").text(
+                            f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                        )
+                    )
+                else:
+                    # PostgreSQL: supporta IF NOT EXISTS
+                    conn.execute(
+                        __import__("sqlalchemy").text(
+                            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
+                        )
+                    )
+                conn.commit()
+                print(f"[MIGR] Aggiunta colonna {table}.{column}")
+            except Exception:
+                conn.rollback()  # colonna già esistente, nessun problema
