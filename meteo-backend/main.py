@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Meteo AI Backend",
     description="Backend Python per l'app meteo con auto-learning ML autonomo",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
