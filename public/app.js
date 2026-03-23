@@ -987,7 +987,7 @@ function initAutocomplete() {
     
     let _autocompleteTimer = null;
 
-    // Quando l'utente digita — debounce 250ms per non spammare il backend
+    // Quando l'utente digita — debounce 80ms; usa indice locale se disponibile, altrimenti backend
     input.addEventListener('input', function() {
         const val = this.value.trim();
         closeAllLists();
