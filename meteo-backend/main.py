@@ -10,7 +10,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 
 from database import init_db, SessionLocal, City
@@ -85,9 +84,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
-
-# GZip compression — riduce dimensione risposte JSON (es. ~200KB → ~60KB)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Importa e registra i router
 from routers import weather, cities, ml, chat, admin
