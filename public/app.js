@@ -1023,9 +1023,9 @@ function initAutocomplete() {
                 }
 
                 // Unisci: frazioni hardcoded prima (hanno priorità), poi indice (senza duplicati)
-                const indexNames = new Set(indexCities.map(c => c.name.toLowerCase()));
-                const localUnique = localMatches.filter(c => !indexNames.has(c.name.toLowerCase()));
-                const combined = [...localUnique, ...indexCities].slice(0, 8);
+                const localNames = new Set(localMatches.map(c => c.name.toLowerCase()));
+                const indexUnique = indexCities.filter(c => !localNames.has(c.name.toLowerCase()));
+                const combined = [...localMatches, ...indexUnique].slice(0, 8);
 
                 if (!combined.length) return;
 
