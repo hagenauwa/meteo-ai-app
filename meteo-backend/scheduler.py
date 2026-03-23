@@ -255,7 +255,7 @@ def start_scheduler():
     """Avvia APScheduler con il job orario."""
     scheduler.add_job(
         hourly_cycle,
-        trigger=IntervalTrigger(hours=1),
+        trigger=IntervalTrigger(hours=2),
         id="hourly_cycle",
         name="Raccolta meteo + auto-learning ML",
         replace_existing=True,
@@ -269,8 +269,8 @@ def start_scheduler():
         replace_existing=True,
     )
     scheduler.start()
-    print("[SCHED] Scheduler avviato — ciclo orario attivo")
-    print(f"   Prossima esecuzione: tra 1 ora")
+    print("[SCHED] Scheduler avviato — ciclo ogni 2 ore attivo")
+    print(f"   Prossima esecuzione: tra 2 ore")
 
 
 def stop_scheduler():
