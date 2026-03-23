@@ -13,6 +13,9 @@ const BACKEND_URL = (typeof window !== 'undefined' && window.BACKEND_URL)
     ? window.BACKEND_URL
     : 'http://localhost:8000';
 
+// Indice città pre-fetchato al caricamento — null finché non è pronto
+let _cityIndex = null;
+
 const CONFIG = {
     // Manteniamo un piccolo set di città per fallback offline (opzionale)
     // La lista completa (~8.000 comuni) arriva dal backend
@@ -836,8 +839,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // Inizializza autocompletamento
+    loadCityIndex(); // pre-fetch indice comuni in background (non blocca l'UI)
     initAutocomplete();
-    
+
     // Inizializza chat
     initChat();
     
@@ -900,6 +904,81 @@ const CITY_REGIONS = {
 
 let currentFocus = -1;
 
+/**
+ * Carica l'indice completo delle città dal backend (o da localStorage se valido).
+ * Chiamata una volta all'avvio. Popola _cityIndex.
+ * TTL: 24h. Chiave: meteo_city_index_v1
+ */
+async function loadCityIndex() {
+    const CACHE_KEY = 'meteo_city_index_v1';
+    const TTL_MS = 86_400_000; // 24 ore
+
+    try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed.ts && (Date.now() - parsed.ts) < TTL_MS) {
+                _cityIndex = parsed.data;
+                console.log(`[CityIndex] Caricato da cache: ${_cityIndex.length} città`);
+                return;
+            }
+        }
+    } catch (_) {
+        // localStorage non disponibile o JSON corrotto — procedi con fetch
+    }
+
+    try {
+        const resp = await fetch(`${BACKEND_URL}/api/cities/index`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        _cityIndex = data;
+        try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+        } catch (_) {
+            // localStorage pieno — ignora, _cityIndex è comunque in memoria
+        }
+        console.log(`[CityIndex] Scaricato dal backend: ${_cityIndex.length} città`);
+    } catch (e) {
+        console.warn('[CityIndex] Pre-fetch fallito, uso backend per autocomplete:', e.message);
+        // _cityIndex rimane null → initAutocomplete userà il fallback backend
+    }
+}
+
+/**
+ * Ricerca locale nell'indice pre-fetchato.
+ * Algoritmo speculare al backend cities.py:
+ *   1. Comuni che iniziano con la query (comuni ISTAT prima, poi per lunghezza)
+ *   2. Comuni che contengono la query (se risultati < limit)
+ * @param {string} query - testo cercato (già lowercase e trimmed)
+ * @param {number} limit - max risultati (default 8)
+ * @returns {Array} array di oggetti {name, region, lat, lon, locality_type}
+ */
+function searchLocalIndex(query, limit = 8) {
+    if (!_cityIndex) return [];
+
+    const q = query.toLowerCase().trim();
+    if (!q) return [];
+
+    const scoreType = c => c.locality_type === 'comune' ? 0 : 1;
+
+    // Passata 1: inizia con la query
+    const startsWith = _cityIndex
+        .filter(c => c.name.toLowerCase().startsWith(q))
+        .sort((a, b) => scoreType(a) - scoreType(b) || a.name.length - b.name.length)
+        .slice(0, limit);
+
+    if (startsWith.length >= limit) return startsWith;
+
+    // Passata 2: contiene la query (escludi già trovati)
+    const foundNames = new Set(startsWith.map(c => c.name.toLowerCase()));
+    const contains = _cityIndex
+        .filter(c => !foundNames.has(c.name.toLowerCase()) && c.name.toLowerCase().includes(q))
+        .sort((a, b) => scoreType(a) - scoreType(b) || a.name.length - b.name.length)
+        .slice(0, limit - startsWith.length);
+
+    return [...startsWith, ...contains];
+}
+
 function initAutocomplete() {
     const input = document.getElementById('cityInput');
     const list = document.getElementById('autocompleteList');
@@ -920,7 +999,7 @@ function initAutocomplete() {
             try {
                 const valLower = val.toLowerCase();
 
-                // Cerca nel dizionario locale (frazioni, mete turistiche non nei comuni ISTAT)
+                // Frazioni hardcoded (CONFIG.ITALIAN_CITIES) — hanno priorità
                 const localMatches = Object.keys(CONFIG.ITALIAN_CITIES)
                     .filter(k => k.startsWith(valLower) || k.includes(valLower))
                     .slice(0, 4)
@@ -930,19 +1009,23 @@ function initAutocomplete() {
                         local: true
                     }));
 
-                // Cerca nel backend (8.000 comuni ISTAT)
-                let backendCities = [];
-                try {
-                    const resp = await apiFetch(
-                        `${CONFIG.API_ENDPOINTS.cities}?q=${encodeURIComponent(val)}&limit=8`
-                    );
-                    if (resp.ok) backendCities = await resp.json();
-                } catch (_) {}
+                // Indice pre-fetchato (preferito) oppure fallback al backend
+                let indexCities = [];
+                if (_cityIndex) {
+                    indexCities = searchLocalIndex(valLower);
+                } else {
+                    try {
+                        const resp = await apiFetch(
+                            `${CONFIG.API_ENDPOINTS.cities}?q=${encodeURIComponent(val)}&limit=8`
+                        );
+                        if (resp.ok) indexCities = await resp.json();
+                    } catch (_) {}
+                }
 
-                // Unisci: locale prima, poi backend (senza duplicati)
-                const backendNames = new Set(backendCities.map(c => c.name.toLowerCase()));
-                const localUnique = localMatches.filter(c => !backendNames.has(c.name.toLowerCase()));
-                const combined = [...localUnique, ...backendCities].slice(0, 8);
+                // Unisci: frazioni hardcoded prima (hanno priorità), poi indice (senza duplicati)
+                const indexNames = new Set(indexCities.map(c => c.name.toLowerCase()));
+                const localUnique = localMatches.filter(c => !indexNames.has(c.name.toLowerCase()));
+                const combined = [...localUnique, ...indexCities].slice(0, 8);
 
                 if (!combined.length) return;
 
@@ -972,9 +1055,9 @@ function initAutocomplete() {
             } catch (e) {
                 // Backend non disponibile: fallback silenzioso
             }
-        }, 250);
+        }, 80);
     });
-    
+
     // Navigazione con tastiera
     input.addEventListener('keydown', function(e) {
         const items = list.getElementsByClassName('autocomplete-item');
