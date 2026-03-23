@@ -28,6 +28,27 @@ class CityResult(BaseModel):
         from_attributes = True
 
 
+class CityIndexItem(BaseModel):
+    name:          str
+    region:        str | None
+    lat:           float
+    lon:           float
+    locality_type: str | None = "comune"
+
+    class Config:
+        from_attributes = True  # necessario per serializzare oggetti ORM SQLAlchemy
+
+
+@router.get("/cities/index", response_model=List[CityIndexItem])
+def get_cities_index(db: Session = Depends(get_db)):
+    """
+    Restituisce tutti i comuni in formato compatto per il pre-fetch frontend.
+    Usato da app.js per la ricerca autocomplete locale (zero latency).
+    """
+    cities = db.query(City).all()
+    return cities
+
+
 @router.get("/cities", response_model=List[CityResult])
 def search_cities(
     q:     str   = Query(..., min_length=1, description="Testo di ricerca"),
