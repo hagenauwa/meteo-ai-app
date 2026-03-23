@@ -30,7 +30,10 @@ Restituisce tutti i record della tabella `City` come array JSON compatto:
 ```
 
 - Nessun parametro
-- GZip middleware comprime automaticamente la risposta (~200KB → ~60KB)
+- Il campo `id` **non è incluso**: il frontend usa `lat`/`lon` direttamente dall'autocomplete per le chiamate meteo, non `id`
+- GZip middleware comprime automaticamente la risposta (stima ~60-150KB compresso, dipende dal numero totale di record inclusi GeoNames ~57K)
+- Chiave localStorage: `meteo_city_index_v1` (namespace per evitare collisioni)
+- L'endpoint è read-only, nessun auth/rate-limiting necessario
 - Aggiungere `GZipMiddleware` in `main.py` se non presente
 
 ### Frontend — modifiche a `app.js`
@@ -52,7 +55,7 @@ TTL: `Date.now() - ts > 86_400_000` (24h)
 1. Prima passata: nomi che iniziano con la query (`name_lower.startsWith(q)`)
    - Ordine: comuni ISTAT prima (`locality_type === "comune"`), poi per lunghezza nome crescente
 2. Seconda passata: nomi che contengono la query (se risultati < 8), escludendo già trovati
-3. Unione con `CONFIG.ITALIAN_CITIES` (frazioni hardcoded) senza duplicati
+3. Unione con `CONFIG.ITALIAN_CITIES` (frazioni hardcoded) senza duplicati — **le voci hardcoded hanno priorità** (stesse coordinate, ma potrebbero differire da GeoNames)
 4. Slice a 8 risultati
 
 **Debounce:** 250ms → 80ms (utile ancora per non cercare a ogni tasto su digitazione veloce)
