@@ -1,5 +1,4 @@
 """Test per l'endpoint GET /api/cities/index"""
-import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock
 
@@ -37,7 +36,7 @@ def test_cities_index_returns_list():
     try:
         response = client.get("/api/cities/index")
     finally:
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -58,7 +57,7 @@ def test_cities_index_item_shape():
     try:
         response = client.get("/api/cities/index")
     finally:
-        app.dependency_overrides.clear()
+        app.dependency_overrides.pop(get_db, None)
 
     item = response.json()[0]
     assert "name" in item
