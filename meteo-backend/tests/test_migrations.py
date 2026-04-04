@@ -28,3 +28,12 @@ def test_alembic_upgrade_creates_expected_schema(tmp_path):
 
     prediction_columns = {column["name"] for column in inspector.get_columns("ml_predictions")}
     assert {"target_time", "lead_hours", "forecast_temp", "actual_precipitation"} <= prediction_columns
+    assert {
+        "forecast_wind_speed",
+        "forecast_wind_direction",
+        "actual_wind_speed",
+        "actual_wind_direction",
+    } <= prediction_columns
+
+    observation_columns = {column["name"] for column in inspector.get_columns("weather_observations")}
+    assert {"wind_direction"} <= observation_columns

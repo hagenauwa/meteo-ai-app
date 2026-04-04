@@ -120,6 +120,14 @@ async def get_weather(
             "stats": stats,
         }
 
+        for index, day in enumerate(formatted.get("daily", [])):
+            day["ml"] = ml_model.build_daily_insight(
+                day=day,
+                lat=resolved["lat"],
+                region=region,
+                lead_hours=max(0, (index * 24) + 14),
+            )
+
     if city_row:
         formatted["city"] = {
             "id": city_row.id,

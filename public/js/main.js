@@ -1,24 +1,50 @@
 import {
     fetchWeatherByCity,
-    hasAdminToken,
     loadCityIndex,
     searchCities,
-    sendChat,
-    triggerRunCycle,
-    triggerTraining,
 } from "./api.js";
 import { createAutocomplete } from "./autocomplete.js";
-import { initChat } from "./chat.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
 import { getFavorites, getLastCity, getRecents, pushRecent, toggleFavorite } from "./storage.js";
 
 let currentCity = null;
+let currentPayload = null;
+let selectedDayIndex = 0;
 
 function normalize(value) {
     return value
         .toLowerCase()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isFavoriteCity(city) {
+    if (!city) return false;
+    return getFavorites().some(item => item.name.toLowerCase() === city.name.toLowerCase());
+}
+
+function updateFavoriteButtonState() {
+    const button = document.getElementById("favoriteBtn");
+    if (!button) return;
+
+    const active = isFavoriteCity(currentCity);
+    button.innerHTML = active
+        ? '<i class="fas fa-star"></i><span>Salvata tra preferite</span>'
+        : '<i class="far fa-star"></i><span>Salva tra preferite</span>';
+    button.classList.toggle("is-active", active);
+}
+
+function renderCurrentView() {
+    if (!currentPayload) return;
+
+    renderWeather(currentPayload, {
+        selectedDayIndex,
+        onDaySelect: nextIndex => {
+            selectedDayIndex = nextIndex;
+            renderCurrentView();
+        },
+    });
+    updateFavoriteButtonState();
 }
 
 async function localCityMatches(query) {
@@ -43,6 +69,7 @@ async function executeSearch(city) {
 
     try {
         const payload = await fetchWeatherByCity(city);
+        currentPayload = payload;
         currentCity = {
             name: payload.city?.name || payload.name,
             lat: payload.lat,
@@ -50,9 +77,11 @@ async function executeSearch(city) {
             region: payload.city?.region || city.region || "",
             province: payload.city?.province || city.province || "",
         };
+
+        selectedDayIndex = payload.daily?.length > 1 ? 1 : 0;
         pushRecent(currentCity);
         renderSavedCities();
-        renderWeather(payload);
+        renderCurrentView();
     } catch (error) {
         showError(error.message || "Errore durante la ricerca meteo");
     }
@@ -62,14 +91,14 @@ async function searchFromInput() {
     const input = document.getElementById("cityInput");
     const value = input.value.trim();
     if (!value) {
-        showError("Inserisci il nome di una città");
+        showError("Inserisci il nome di una citta.");
         return;
     }
 
     try {
         const results = await searchCities(value, 1, "all");
         if (!results.length) {
-            throw new Error(`Città "${value}" non trovata`);
+            throw new Error(`Citta "${value}" non trovata`);
         }
         await executeSearch(results[0]);
     } catch (error) {
@@ -82,60 +111,23 @@ function renderSavedCities() {
     renderChipList("recentList", getRecents(), executeSearch);
 }
 
-function configureAdminControls() {
-    const trainBtn = document.getElementById("trainModelBtn");
-    const runCycleBtn = document.getElementById("verifyPredictionsBtn");
-    const notice = document.getElementById("adminNotice");
-    const adminEnabled = hasAdminToken();
-
-    if (!adminEnabled) {
-        trainBtn.disabled = true;
-        runCycleBtn.disabled = true;
-        notice.textContent = "Frontend pubblico in sola lettura: training e run-cycle sono protetti.";
-        return;
-    }
-
-    notice.textContent = "Token admin attivo: controlli manuali disponibili.";
-
-    trainBtn.addEventListener("click", async () => {
-        trainBtn.disabled = true;
-        try {
-            const result = await triggerTraining();
-            alert(
-                `Training completato.\nMAE: ${result.mae?.toFixed?.(3) ?? result.mae}\nBaseline: ${
-                    result.baseline_mae?.toFixed?.(3) ?? result.baseline_mae
-                }`
-            );
-        } catch (error) {
-            alert(error.message);
-        } finally {
-            trainBtn.disabled = false;
-        }
-    });
-
-    runCycleBtn.addEventListener("click", async () => {
-        runCycleBtn.disabled = true;
-        try {
-            const result = await triggerRunCycle();
-            alert(result.message || "Ciclo avviato");
-        } catch (error) {
-            alert(error.message);
-        } finally {
-            runCycleBtn.disabled = false;
-        }
-    });
-}
-
 function registerFavoriteButton() {
     const button = document.getElementById("favoriteBtn");
+    if (!button) return;
+
     button.addEventListener("click", () => {
         if (!currentCity) {
-            alert("Cerca prima una città da salvare.");
+            showError("Cerca prima una citta da salvare.");
             return;
         }
+
         const added = toggleFavorite(currentCity);
         renderSavedCities();
-        alert(added ? `${currentCity.name} aggiunta ai preferiti.` : `${currentCity.name} rimossa dai preferiti.`);
+        updateFavoriteButtonState();
+
+        if (added) {
+            hideError();
+        }
     });
 }
 
@@ -149,18 +141,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     const input = document.getElementById("cityInput");
     const searchBtn = document.getElementById("searchBtn");
     const autocompleteList = document.getElementById("autocompleteList");
-    const mlToggleHeader = document.getElementById("mlToggleHeader");
-    const mlBody = document.getElementById("mlBody");
-
-    if (mlToggleHeader && mlBody) {
-        mlToggleHeader.addEventListener("click", () => {
-            const isOpen = mlBody.classList.toggle("open");
-            mlToggleHeader.classList.toggle("open", isOpen);
-        });
-    }
 
     renderSavedCities();
-    configureAdminControls();
     registerFavoriteButton();
     registerPwa();
 
@@ -181,12 +163,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         list: autocompleteList,
         getLocalMatches: localCityMatches,
         onSelect: executeSearch,
-    });
-
-    initChat({
-        cityIndex: loadCityIndex,
-        sendChat,
-        fetchWeatherByCity,
     });
 
     const lastCity = getLastCity();

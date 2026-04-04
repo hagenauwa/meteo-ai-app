@@ -3,56 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Previsioni meteo accurate con intelligenza artificiale per l'Italia">
-    <meta name="theme-color" content="#0f4c81">
-    <title>Meteo AI - Previsioni Intelligenti</title>
+    <meta name="description" content="Previsioni meteo per citta e giorno, con risultati chiari e aggiornati per l'Italia.">
+    <meta name="theme-color" content="#133c55">
+    <title>Meteo AI | Previsioni per citta e giorno</title>
     <link rel="manifest" href="manifest.webmanifest">
-    
-    <!-- Configurazione backend Python — modifica con il tuo URL/IP del VPS -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
     <script>
         window.BACKEND_URL = 'https://meteo-ai-backend.onrender.com';
-        window.ADMIN_API_TOKEN = '';
     </script>
 
-    <!-- Icone meteo -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-    
-    <!-- Stili personalizzati -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- Header con logo e titolo -->
     <header class="header">
         <div class="container">
-            <div class="logo">
-                <i class="fas fa-cloud-sun"></i>
-                <h1>Meteo AI</h1>
+            <div class="brand-row">
+                <div class="logo">
+                    <i class="fas fa-cloud-sun-rain"></i>
+                    <div>
+                        <p class="brand-kicker">Previsioni essenziali</p>
+                        <h1>Meteo AI</h1>
+                    </div>
+                </div>
+                <p class="subtitle">Cerca una citta, scegli un giorno e guarda subito cosa aspettarti.</p>
             </div>
-            <p class="subtitle">Previsioni accurate con Machine Learning</p>
         </div>
     </header>
 
-    <!-- Sezione di ricerca -->
     <section class="search-section">
         <div class="container">
-            <div class="search-box">
-                <div class="input-wrapper">
-                    <input 
-                        type="text" 
-                        id="cityInput" 
-                        placeholder="Inserisci una città italiana (es. Roma, Milano, Napoli)..."
-                        autocomplete="off"
-                    >
-                    <div id="autocompleteList" class="autocomplete-list hidden"></div>
+            <div class="search-panel">
+                <div class="search-copy">
+                    <p class="section-kicker">Pianifica meglio la giornata</p>
+                    <h2>Previsioni per citta e giorno, senza rumore.</h2>
+                    <p class="section-text">
+                        L'app mette al centro il giorno che ti interessa davvero: condizioni attese,
+                        temperature, pioggia e vento in un colpo d'occhio.
+                    </p>
                 </div>
-                <button id="searchBtn" class="btn-primary">
-                    <i class="fas fa-search"></i> Cerca
-                </button>
+
+                <div class="search-box">
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="cityInput"
+                            placeholder="Inserisci una citta italiana (es. Roma, Milano, Napoli)..."
+                            autocomplete="off"
+                        >
+                        <div id="autocompleteList" class="autocomplete-list hidden"></div>
+                    </div>
+                    <button id="searchBtn" class="btn-primary">
+                        <i class="fas fa-magnifying-glass"></i>
+                        <span>Mostra previsioni</span>
+                    </button>
+                </div>
             </div>
-            
-            <!-- Suggerimenti città italiane popolari -->
+
             <div class="quick-cities">
-                <span class="label">Città popolari:</span>
+                <span class="label">Citta popolari</span>
                 <button class="city-chip" data-city="Roma">Roma</button>
                 <button class="city-chip" data-city="Milano">Milano</button>
                 <button class="city-chip" data-city="Napoli">Napoli</button>
@@ -65,216 +77,146 @@
 
             <div class="saved-cities">
                 <div class="saved-group">
-                    <span class="label">Preferite:</span>
+                    <span class="label">Preferite</span>
                     <div id="favoritesList" class="saved-chips"></div>
                 </div>
                 <div class="saved-group">
-                    <span class="label">Recenti:</span>
+                    <span class="label">Recenti</span>
                     <div id="recentList" class="saved-chips"></div>
-                </div>
-            </div>
-            
-            <!-- Chat Domande Linguaggio Naturale -->
-            <div class="chat-section">
-                <div class="chat-toggle" id="chatToggle">
-                    <i class="fas fa-comments"></i>
-                    <span>Fai una domanda in italiano</span>
-                    <i class="fas fa-chevron-down"></i>
-                </div>
-                <div class="chat-box hidden" id="chatBox">
-                    <div class="chat-messages" id="chatMessages">
-                        <div class="chat-message bot">
-                            <i class="fas fa-robot"></i>
-                            <div class="message-content">
-                                Ciao! Puoi chiedermi cose come:<br>
-                                • "Tra un'ora a Massa pioverà?"<br>
-                                • "Domani a Roma che tempo fa?"<br>
-                                • "Fra 3 giorni a Milano temperatura?"
-                            </div>
-                        </div>
-                    </div>
-                    <div class="chat-input-area">
-                        <input type="text" id="chatInput" placeholder="Scrivi la tua domanda...">
-                        <button id="chatSendBtn">
-                            <i class="fas fa-paper-plane"></i>
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Stato di caricamento -->
     <div id="loadingState" class="loading-state hidden">
         <div class="spinner"></div>
-        <p>Sto consultando i satelliti meteo...</p>
+        <p>Sto preparando la previsione migliore per la tua citta...</p>
     </div>
 
-    <!-- Messaggi di errore -->
     <div id="errorMessage" class="error-message hidden">
-        <i class="fas fa-exclamation-circle"></i>
+        <i class="fas fa-circle-exclamation"></i>
         <span id="errorText"></span>
     </div>
 
-    <!-- Risultati meteo -->
     <main id="weatherResults" class="weather-results hidden">
         <div class="container">
-            
-            <!-- Card meteo attuale -->
-            <div class="current-weather-card">
-                <div class="location-info">
-                    <h2 id="cityName">--</h2>
-                    <p id="currentDate">--</p>
-                </div>
-                
-                <div class="weather-main">
-                    <div class="temperature-section">
-                        <span id="currentTemp" class="temperature">--</span>
-                        <span class="unit">°C</span>
+            <section class="planner-shell">
+                <div class="planner-head">
+                    <div class="planner-title">
+                        <p class="results-kicker">Previsione selezionata</p>
+                        <h2 id="cityName">--</h2>
+                        <p id="cityMeta" class="city-meta">--</p>
                     </div>
-                    <div class="weather-icon-section">
-                        <i id="weatherIcon" class="fas fa-sun"></i>
-                        <p id="weatherDescription">--</p>
+
+                    <div class="planner-actions">
+                        <span id="forecastBadge" class="forecast-badge hidden">Previsione affinata automaticamente</span>
+                        <button id="favoriteBtn" class="btn-secondary">
+                            <i class="fas fa-star"></i>
+                            <span>Salva tra preferite</span>
+                        </button>
                     </div>
-                </div>
-                
-                <!-- Correzione AI -->
-                <div id="aiCorrection" class="ai-correction hidden">
-                    <div class="correction-badge">
-                        <i class="fas fa-robot"></i>
-                        <span>Correzione AI</span>
-                    </div>
-                    <p class="correction-text">
-                        Temperatura corretta di <span id="correctionValue">--</span>°C
-                        basandosi sui dati storici
-                    </p>
                 </div>
 
-                <!-- Previsione pioggia ML -->
-                <div id="mlRainPrediction" class="ml-rain-widget hidden">
-                    <div class="rain-header">🧠 Previsione pioggia AI — <span id="rainPct">--%</span></div>
-                    <div class="rain-bar-wrap"><div id="rainBar" style="width:0%"></div></div>
-                    <p id="rainLabel">--</p>
+                <div id="daySelector" class="day-selector"></div>
+
+                <div class="planner-grid">
+                    <section class="selected-day-panel">
+                        <div class="selected-day-header">
+                            <div>
+                                <p id="selectedDayLabel" class="selected-day-label">--</p>
+                                <h3 id="selectedDayDate">--</h3>
+                            </div>
+                            <span id="selectedDayTag" class="panel-badge">--</span>
+                        </div>
+
+                        <div class="selected-day-main">
+                            <div class="selected-day-visual">
+                                <i id="selectedDayIcon" class="fas fa-cloud"></i>
+                            </div>
+                            <div class="selected-day-copy">
+                                <p id="selectedDayDescription" class="selected-day-description">--</p>
+                                <p id="selectedDaySummary" class="selected-day-summary">--</p>
+                            </div>
+                        </div>
+
+                        <div class="selected-stats">
+                            <div class="stat-tile">
+                                <span class="stat-label">Massima</span>
+                                <strong id="selectedDayMax">--</strong>
+                            </div>
+                            <div class="stat-tile">
+                                <span class="stat-label">Minima</span>
+                                <strong id="selectedDayMin">--</strong>
+                            </div>
+                            <div class="stat-tile">
+                                <span class="stat-label">Pioggia</span>
+                                <strong id="selectedDayRain">--</strong>
+                            </div>
+                            <div class="stat-tile">
+                                <span class="stat-label">Vento</span>
+                                <strong id="selectedDayWind">--</strong>
+                            </div>
+                        </div>
+                    </section>
+
+                    <aside class="snapshot-card">
+                        <div class="snapshot-header">
+                            <div>
+                                <p class="snapshot-kicker">Adesso</p>
+                                <h3 id="currentDate">--</h3>
+                            </div>
+                        </div>
+
+                        <div class="snapshot-main">
+                            <div class="snapshot-temp-wrap">
+                                <span id="currentTemp" class="snapshot-temp">--</span>
+                                <span class="unit">°C</span>
+                            </div>
+                            <div class="snapshot-icon-wrap">
+                                <i id="weatherIcon" class="fas fa-sun"></i>
+                                <p id="weatherDescription">--</p>
+                            </div>
+                        </div>
+
+                        <div class="snapshot-details">
+                            <div class="detail-item">
+                                <span class="label">Umidita</span>
+                                <strong id="humidity" class="value">--%</strong>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Vento</span>
+                                <strong id="windSpeed" class="value">-- km/h</strong>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Visibilita</span>
+                                <strong id="visibility" class="value">-- km</strong>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Pressione</span>
+                                <strong id="pressure" class="value">-- hPa</strong>
+                            </div>
+                        </div>
+                    </aside>
                 </div>
 
-                <!-- Dettagli aggiuntivi -->
-                <div class="weather-details">
-                    <div class="detail-item">
-                        <i class="fas fa-tint"></i>
-                        <span class="label">Umidità</span>
-                        <span id="humidity" class="value">--%</span>
+                <section id="hourlySection" class="forecast-detail-section">
+                    <div class="section-head">
+                        <div>
+                            <p class="section-kicker">Dettaglio breve termine</p>
+                            <h3>Ora per ora</h3>
+                        </div>
+                        <p id="hourlyHint" class="section-note">--</p>
                     </div>
-                    <div class="detail-item">
-                        <i class="fas fa-wind"></i>
-                        <span class="label">Vento</span>
-                        <span id="windSpeed" class="value">-- km/h</span>
-                    </div>
-                    <div class="detail-item">
-                        <i class="fas fa-eye"></i>
-                        <span class="label">Visibilità</span>
-                        <span id="visibility" class="value">-- km</span>
-                    </div>
-                    <div class="detail-item">
-                        <i class="fas fa-compress-arrows-alt"></i>
-                        <span class="label">Pressione</span>
-                        <span id="pressure" class="value">-- hPa</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Previsioni orarie (prossime 24h) -->
-            <div class="forecast-section">
-                <h3><i class="fas fa-clock"></i> Previsioni Orarie</h3>
-                <div id="hourlyForecast" class="hourly-forecast">
-                    <!-- Popolato dinamicamente da JS -->
-                </div>
-            </div>
-
-            <!-- Previsioni giornaliere (prossimi 5 giorni) -->
-            <div class="forecast-section">
-                <h3><i class="fas fa-calendar-alt"></i> Previsioni 5 Giorni</h3>
-                <div id="dailyForecast" class="daily-forecast">
-                    <!-- Popolato dinamicamente da JS -->
-                </div>
-            </div>
-
-            <!-- Sezione ML - Statistiche apprendimento -->
-            <div class="ml-stats-section">
-                <div class="ml-toggle-header" id="mlToggleHeader">
-                    <h3><i class="fas fa-brain"></i> Intelligenza Artificiale</h3>
-                    <i class="fas fa-chevron-down ml-chevron"></i>
-                </div>
-                <div class="ml-body" id="mlBody">
-                <div class="ml-stats-grid">
-                    <div class="ml-stat-card">
-                        <span class="ml-stat-value" id="predictionsCount">0</span>
-                        <span class="ml-stat-label">Previsioni salvate</span>
-                    </div>
-                    <div class="ml-stat-card">
-                        <span class="ml-stat-value" id="avgError">--</span>
-                        <span class="ml-stat-label">Errore medio (°C)</span>
-                    </div>
-                    <div class="ml-stat-card">
-                        <span class="ml-stat-value" id="modelStatus">In attesa</span>
-                        <span class="ml-stat-label">Stato modello</span>
-                    </div>
-                    <div class="ml-stat-card">
-                        <span class="ml-stat-value" id="learningProgress">0%</span>
-                        <span class="ml-stat-label">Apprendimento</span>
-                    </div>
-                </div>
-                
-                <!-- Grafico errori (semplificato) -->
-                <div class="error-chart">
-                    <h4>Andamento errori di previsione</h4>
-                    <canvas id="errorChart" width="800" height="200"></canvas>
-                </div>
-                
-                <!-- Controlli ML -->
-                <div class="ml-controls">
-                    <button id="trainModelBtn" class="btn-secondary">
-                        <i class="fas fa-graduation-cap"></i> Training manuale
-                    </button>
-                    <button id="favoriteBtn" class="btn-secondary">
-                        <i class="fas fa-star"></i> Salva tra preferite
-                    </button>
-                    <button id="verifyPredictionsBtn" class="btn-secondary">
-                        <i class="fas fa-play"></i> Forza ciclo backend
-                    </button>
-                </div>
-
-                <!-- Auto-Learning server-side -->
-                <div class="auto-learning-section">
-                    <div class="auto-learning-header">
-                        <h4><i class="fas fa-robot"></i> Apprendimento Automatico (Server)</h4>
-                        <span class="status-dot active" id="autoLearningDot" title="Il backend aggiorna tutte le città ogni ora"></span>
-                    </div>
-                    <p class="auto-learning-desc">
-                        Il backend Python raccoglie i dati meteo per tutti i ~8.000 comuni italiani ogni ora
-                        e aggiorna il modello automaticamente — anche quando il browser è chiuso.
-                    </p>
-                    <p class="auto-learning-desc" id="adminNotice">
-                        Le azioni manuali richiedono un token admin e restano nascoste sul frontend pubblico.
-                    </p>
-                    <div class="auto-learning-status-row">
-                        <span id="autoLearningStatus">Backend attivo</span>
-                        <span id="autoLearningNext" class="next-run-label">Ciclo orario automatico</span>
-                    </div>
-                    <button id="autoLearningRunNow" class="btn-secondary btn-sm mt-8">
-                        <i class="fas fa-play"></i> Forza ciclo ora
-                    </button>
-                </div>
-                </div><!-- fine ml-body -->
-            </div>
-
+                    <div id="hourlyForecast" class="hourly-forecast"></div>
+                </section>
+            </section>
         </div>
     </main>
 
-    <!-- Footer -->
     <footer class="footer">
         <div class="container">
-            <p>Dati forniti da <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a> (gratuito)</p>
-            <p>Modello ML: <span id="mlModelInfo">scikit-learn Ridge Regression — ~8.000 comuni italiani</span></p>
+            <p>Dati forniti da <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>.</p>
+            <p id="modelNote">Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.</p>
         </div>
     </footer>
 

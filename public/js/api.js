@@ -1,4 +1,4 @@
-import { ADMIN_API_TOKEN, API_ENDPOINTS, CITY_INDEX_CACHE_KEY } from "./config.js";
+import { API_ENDPOINTS, CITY_INDEX_CACHE_KEY } from "./config.js";
 
 let cityIndexPromise = null;
 
@@ -17,10 +17,6 @@ async function fetchJson(url, options = {}) {
         throw new Error(body.detail || body.message || `HTTP ${response.status}`);
     }
     return body;
-}
-
-export function hasAdminToken() {
-    return Boolean(ADMIN_API_TOKEN);
 }
 
 export async function loadCityIndex() {
@@ -64,26 +60,4 @@ export async function fetchWeatherByCity(city) {
         params.set("city", city.name);
     }
     return fetchJson(`${API_ENDPOINTS.weather}?${params.toString()}`);
-}
-
-export async function sendChat(payload) {
-    return fetchJson(API_ENDPOINTS.chat, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-    });
-}
-
-export async function triggerTraining() {
-    return fetchJson(API_ENDPOINTS.train, {
-        method: "POST",
-        headers: { "x-admin-token": ADMIN_API_TOKEN },
-    });
-}
-
-export async function triggerRunCycle() {
-    return fetchJson(API_ENDPOINTS.runCycle, {
-        method: "POST",
-        headers: { "x-admin-token": ADMIN_API_TOKEN },
-    });
 }

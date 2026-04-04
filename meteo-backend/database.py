@@ -65,6 +65,7 @@ class WeatherObservation(Base):
     humidity    = Column(Float)
     cloud_cover = Column(Float)
     wind_speed  = Column(Float)
+    wind_direction = Column(Float)
     precipitation = Column(Float)
 
     city = relationship("City", back_populates="observations")
@@ -93,9 +94,13 @@ class MlPrediction(Base):
     forecast_precipitation = Column(Float, nullable=True)
     forecast_weather_code  = Column(Integer, nullable=True)
     forecast_cloud_cover   = Column(Float, nullable=True)
+    forecast_wind_speed    = Column(Float, nullable=True)
+    forecast_wind_direction = Column(Float, nullable=True)
     actual_precipitation   = Column(Float, nullable=True)
     actual_weather_code    = Column(Integer, nullable=True)
     actual_cloud_cover     = Column(Float, nullable=True)
+    actual_wind_speed      = Column(Float, nullable=True)
+    actual_wind_direction  = Column(Float, nullable=True)
 
     city = relationship("City", back_populates="predictions")
 

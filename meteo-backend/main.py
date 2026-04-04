@@ -88,12 +88,11 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Importa e registra i router
-from routers import weather, cities, ml, chat, admin
+from routers import weather, cities, ml, admin
 
 app.include_router(weather, prefix="/api")
 app.include_router(cities,  prefix="/api")
 app.include_router(ml,      prefix="/api/ml")
-app.include_router(chat,    prefix="/api")
 app.include_router(admin,   prefix="/api/admin")
 
 

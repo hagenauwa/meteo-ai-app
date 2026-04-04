@@ -5,12 +5,9 @@
 1. Verifica che il servizio usi il `render.yaml` aggiornato.
 2. Configura queste env vars in Render:
    - `DATABASE_URL`
-   - `GEMINI_API_KEY`
    - `ADMIN_API_TOKEN`
    - `FRONTEND_ORIGIN=https://leprevisioni.netlify.app`
    - `APP_ENV=production`
-   - `CHAT_REQUESTS_PER_MINUTE=15`
-   - `CHAT_REQUESTS_PER_DAY=300`
 3. Conferma che lo start command esegua prima:
    - `python -m alembic -c alembic.ini upgrade head`
 4. Verifica health check:
@@ -42,8 +39,6 @@
    - ricerca città
    - meteo attuale
    - nessun banner o errore "Impossibile ottenere dati meteo da Open-Meteo"
-   - widget ML
-   - chat
    - preferiti/recenti
    - service worker registrato
 3. Sicurezza:

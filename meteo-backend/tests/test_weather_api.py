@@ -67,6 +67,7 @@ def test_weather_includes_ml_block(monkeypatch):
             "relative_humidity_2m": [60, 61],
             "cloud_cover": [40, 45],
             "wind_speed_10m": [12, 13],
+            "wind_direction_10m": [180, 190],
             "precipitation_probability": [10, 20],
             "precipitation": [0, 0.1],
             "weather_code": [1, 2],
@@ -78,6 +79,7 @@ def test_weather_includes_ml_block(monkeypatch):
             "weather_code": [1, 2],
             "precipitation_probability_max": [10, 30],
             "wind_speed_10m_max": [12, 14],
+            "wind_direction_10m_dominant": [180, 210],
         },
     }
 
@@ -94,6 +96,18 @@ def test_weather_includes_ml_block(monkeypatch):
         "will_rain": False,
         "confidence": "media",
     })
+    monkeypatch.setattr(weather_module.ml_model, "build_daily_insight", lambda **kwargs: {
+        "expected_condition": "sereno",
+        "display_condition": "Cielo sereno",
+        "condition_confidence": "alta",
+        "condition_source": "ml",
+        "rain_probability": 0.22,
+        "rain_confidence": "media",
+        "temperature_delta": 0.4,
+        "adjusted_temp_range": {"min": 11.4, "max": 21.4},
+        "summary": "Cielo sereno con basso rischio di pioggia.",
+        "badge": "Scenario stabile",
+    })
     monkeypatch.setattr(weather_module.ml_model, "get_public_summary", lambda: {"model_ready": True})
     monkeypatch.setattr(weather_module.ml_model, "get_stats", lambda: {"verified_predictions": 12, "lead_time_error": []})
 
@@ -108,3 +122,5 @@ def test_weather_includes_ml_block(monkeypatch):
     assert "ml" in data
     assert data["ml"]["correction"]["model_ready"] is True
     assert data["ml"]["stats"]["verified_predictions"] == 12
+    assert data["daily"][0]["ml"]["expected_condition"] == "sereno"
+    assert data["daily"][0]["ml"]["adjusted_temp_range"]["max"] == 21.4

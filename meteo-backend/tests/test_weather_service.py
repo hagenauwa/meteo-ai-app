@@ -22,6 +22,7 @@ def test_build_batch_results_creates_future_predictions():
             "relative_humidity_2m": 60,
             "cloud_cover": 20,
             "wind_speed_10m": 10,
+            "wind_direction_10m": 180,
             "precipitation": 0.0,
             "weather_code": 1,
         },
@@ -38,6 +39,8 @@ def test_build_batch_results_creates_future_predictions():
             "temperature_2m": [18, 19, 20, 21, 22, 23, 24],
             "relative_humidity_2m": [60, 61, 62, 63, 64, 65, 66],
             "cloud_cover": [20, 21, 22, 23, 24, 25, 26],
+            "wind_speed_10m": [10, 11, 12, 13, 14, 15, 16],
+            "wind_direction_10m": [180, 181, 182, 183, 184, 185, 186],
             "precipitation": [0, 0, 0, 0, 0.2, 0.3, 0.4],
             "weather_code": [1, 1, 2, 2, 3, 61, 61],
         },
@@ -51,6 +54,8 @@ def test_build_batch_results_creates_future_predictions():
     assert first_prediction["lead_hours"] == 1
     assert first_prediction["target_time"] == datetime(2026, 4, 4, 11, 0, tzinfo=timezone.utc)
     assert first_prediction["forecast_temp"] == 19
+    assert first_prediction["forecast_wind_speed"] == 11
+    assert first_prediction["forecast_wind_direction"] == 181
 
 
 def test_fetch_single_city_returns_first_attempt_payload(monkeypatch):
@@ -266,3 +271,4 @@ def test_convert_metno_payload_to_open_meteo_shape():
     assert result["current"]["weather_code"] == 2
     assert result["hourly"]["weather_code"][1] == 61
     assert result["daily"]["time"]
+    assert result["daily"]["wind_direction_10m_dominant"][0] == 180

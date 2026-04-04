@@ -44,6 +44,7 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
             humidity=obs.get("humidity"),
             cloud_cover=obs.get("cloud_cover"),
             wind_speed=obs.get("wind_speed"),
+            wind_direction=obs.get("wind_direction"),
             precipitation=obs.get("precipitation", 0.0),
         )
         for obs in observations
@@ -67,6 +68,8 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
             forecast_precipitation=pred.get("forecast_precipitation"),
             forecast_weather_code=pred.get("forecast_weather_code"),
             forecast_cloud_cover=pred.get("forecast_cloud_cover"),
+            forecast_wind_speed=pred.get("forecast_wind_speed"),
+            forecast_wind_direction=pred.get("forecast_wind_direction"),
         )
         for pred in predictions
         if pred.get("forecast_temp") is not None
@@ -97,6 +100,8 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
                         actual_precipitation = :actual_precipitation,
                         actual_weather_code = :actual_weather_code,
                         actual_cloud_cover = :actual_cloud_cover,
+                        actual_wind_speed = :actual_wind_speed,
+                        actual_wind_direction = :actual_wind_direction,
                         error = :actual_temp - COALESCE(forecast_temp, predicted_temp),
                         verified = :v_true,
                         verified_at = :verified_at
@@ -109,6 +114,8 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
                     "actual_precipitation": obs.get("precipitation"),
                     "actual_weather_code": obs.get("weather_code"),
                     "actual_cloud_cover": obs.get("cloud_cover"),
+                    "actual_wind_speed": obs.get("wind_speed"),
+                    "actual_wind_direction": obs.get("wind_direction"),
                     "verified_at": obs["observed_at"],
                     "city_id": obs["city_id"],
                     "target_time": observed_at,
@@ -218,6 +225,13 @@ async def hourly_cycle():
                 )
             elif result.get("rain_message"):
                 print(f"[INFO] Modello pioggia non promosso: {result['rain_message']}")
+            if result.get("condition_model_ready"):
+                print(
+                    f"[DONE] Modello condizioni — Accuracy: {result.get('condition_accuracy', 0):.3f} "
+                    f"(baseline {result.get('condition_baseline_accuracy', 0):.3f})"
+                )
+            elif result.get("condition_message"):
+                print(f"[INFO] Modello condizioni non promosso: {result['condition_message']}")
         else:
             print(f"[WARN] Training non promosso: {result.get('message')}")
 

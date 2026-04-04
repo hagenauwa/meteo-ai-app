@@ -3,19 +3,192 @@ import { WEATHER_ICONS } from "./config.js";
 function formatDate(date, options = {}) {
     return new Date(date).toLocaleDateString("it-IT", {
         weekday: "long",
-        year: "numeric",
-        month: "long",
         day: "numeric",
+        month: "long",
         ...options,
     });
 }
 
 function formatTime(date) {
-    return new Date(date).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+    return new Date(date).toLocaleTimeString("it-IT", {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
+function formatShortDay(date) {
+    return new Date(date).toLocaleDateString("it-IT", {
+        weekday: "short",
+    });
+}
+
+function formatShortDate(date) {
+    return new Date(date).toLocaleDateString("it-IT", {
+        day: "numeric",
+        month: "short",
+    });
 }
 
 function getWeatherIcon(iconCode) {
     return WEATHER_ICONS[iconCode] || "fa-cloud";
+}
+
+function getRelativeDayLabel(index, date) {
+    if (index === 0) return "Oggi";
+    if (index === 1) return "Domani";
+    return formatDate(date, { weekday: "long", day: "numeric", month: "long" });
+}
+
+function buildDayTag(day) {
+    if (day.ml?.badge) return day.ml.badge;
+    if ((day.pop || 0) >= 0.6) return "Possibili piogge";
+    if ((day.wind_speed || 0) >= 28) return "Vento deciso";
+    if ((day.weather?.[0]?.description || "").toLowerCase().includes("nuvol")) return "Cielo variabile";
+    return "Giornata stabile";
+}
+
+function buildDaySummary(day) {
+    if (day.ml?.summary) return day.ml.summary;
+
+    const description = day.weather?.[0]?.description || "Condizioni variabili";
+    const rainPct = Math.round((day.pop || 0) * 100);
+    const wind = Math.round(day.wind_speed || 0);
+
+    if (rainPct >= 60) {
+        return `${description}. Ombrello consigliato: la probabilita di pioggia e intorno al ${rainPct}%.`;
+    }
+    if (wind >= 28) {
+        return `${description}. Attenzione a raffiche piu presenti, con vento fino a ${wind} km/h.`;
+    }
+    if (rainPct >= 30) {
+        return `${description}. Possibili passaggi instabili, ma con fasi asciutte prevalenti.`;
+    }
+    return `${description}. Scenario nel complesso regolare per la giornata selezionata.`;
+}
+
+function setText(id, value) {
+    const node = document.getElementById(id);
+    if (node) node.textContent = value;
+}
+
+function renderPlannerHead(payload, selectedDay, selectedIndex) {
+    setText("cityName", payload.name || "--");
+
+    const cityMeta = payload.city
+        ? [payload.city.province, payload.city.region].filter(Boolean).join(" • ")
+        : "Italia";
+    setText("cityMeta", cityMeta || "Italia");
+    setText("selectedDayLabel", getRelativeDayLabel(selectedIndex, selectedDay.dt));
+    setText("selectedDayDate", formatDate(selectedDay.dt));
+
+    const badge = document.getElementById("forecastBadge");
+    const mlReady = Boolean(
+        payload.ml?.summary?.model_ready ||
+        payload.ml?.summary?.condition_model_ready ||
+        payload.ml?.rain_prediction?.model_ready
+    );
+    badge.classList.toggle("hidden", !mlReady);
+}
+
+function renderDaySelector(daily, selectedIndex, onDaySelect) {
+    const container = document.getElementById("daySelector");
+    container.innerHTML = "";
+
+    daily.forEach((day, index) => {
+        const adjusted = day.ml?.adjusted_temp_range || day.temp;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `day-pill${index === selectedIndex ? " active" : ""}`;
+        button.innerHTML = `
+            <span class="day-pill-top">${index === 0 ? "Oggi" : formatShortDay(day.dt)}</span>
+            <span class="day-pill-date">${formatShortDate(day.dt)}</span>
+            <span class="day-pill-temp">${Math.round(adjusted.max)}° / ${Math.round(adjusted.min)}°</span>
+        `;
+        button.addEventListener("click", () => onDaySelect(index));
+        container.appendChild(button);
+    });
+}
+
+function renderSelectedDay(day) {
+    const mlDay = day.ml || {};
+    const adjusted = mlDay.adjusted_temp_range || day.temp;
+    const displayCondition = mlDay.display_condition || day.weather?.[0]?.description || "--";
+    const rainProbability = mlDay.rain_probability ?? day.pop ?? 0;
+
+    setText("selectedDayDate", formatDate(day.dt));
+    setText("selectedDayDescription", displayCondition);
+    setText("selectedDaySummary", buildDaySummary(day));
+    setText("selectedDayMax", `${Math.round(adjusted.max)}°`);
+    setText("selectedDayMin", `${Math.round(adjusted.min)}°`);
+    setText("selectedDayRain", `${Math.round(rainProbability * 100)}%`);
+    setText("selectedDayWind", `${Math.round(day.wind_speed || 0)} km/h`);
+    setText("selectedDayTag", buildDayTag(day));
+
+    const icon = document.getElementById("selectedDayIcon");
+    icon.className = `fas ${getWeatherIcon(day.weather?.[0]?.icon)}`;
+}
+
+function renderCurrent(payload) {
+    const { current } = payload;
+    const correction = payload.ml?.correction || { corrected_temp: current.temp };
+
+    setText("currentDate", `Aggiornato ${formatDate(new Date(), { weekday: "long" })}`);
+    setText("currentTemp", Math.round(correction.corrected_temp ?? current.temp));
+    setText("weatherDescription", current.weather?.[0]?.description || "--");
+    setText("humidity", `${current.humidity}%`);
+    setText("windSpeed", `${Math.round(current.wind_speed)} km/h`);
+    setText("visibility", `${(current.visibility / 1000).toFixed(1)} km`);
+    setText("pressure", `${current.pressure} hPa`);
+
+    const icon = document.getElementById("weatherIcon");
+    icon.className = `fas ${getWeatherIcon(current.weather?.[0]?.icon)}`;
+}
+
+function renderHourlyDetail(selectedDay, hourly) {
+    const container = document.getElementById("hourlyForecast");
+    const hint = document.getElementById("hourlyHint");
+    const section = document.getElementById("hourlySection");
+    const hoursForDay = hourly.filter(hour => String(hour.dt || "").startsWith(selectedDay.dt));
+
+    container.innerHTML = "";
+    section.classList.remove("is-empty");
+
+    if (!hoursForDay.length) {
+        hint.textContent = "Per questa data e disponibile solo il riepilogo giornaliero.";
+        section.classList.add("is-empty");
+
+        const empty = document.createElement("div");
+        empty.className = "empty-forecast";
+        empty.textContent = "Il dettaglio ora per ora arrivera quando il backend esporra un orizzonte piu ampio.";
+        container.appendChild(empty);
+        return;
+    }
+
+    hint.textContent = "Scansione oraria disponibile nel breve termine.";
+
+    hoursForDay.forEach(hour => {
+        const card = document.createElement("article");
+        card.className = "hour-card";
+        card.innerHTML = `
+            <span class="time">${formatTime(hour.dt)}</span>
+            <i class="fas ${getWeatherIcon(hour.weather?.[0]?.icon)}"></i>
+            <strong class="temp">${Math.round(hour.temp)}°</strong>
+            <span class="rain">Pioggia ${Math.round((hour.pop || 0) * 100)}%</span>
+        `;
+        container.appendChild(card);
+    });
+}
+
+function renderModelNote(payload) {
+    const note = document.getElementById("modelNote");
+    const mlReady = Boolean(
+        payload.ml?.summary?.model_ready ||
+        payload.ml?.summary?.condition_model_ready ||
+        payload.ml?.rain_prediction?.model_ready
+    );
+    note.textContent = mlReady
+        ? "Le previsioni vengono affinate automaticamente usando osservazioni meteo reali, nuvolosita e vento."
+        : "Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.";
 }
 
 export function showLoading(show) {
@@ -37,6 +210,7 @@ export function showError(message) {
     const errorText = document.getElementById("errorText");
     errorText.textContent = message;
     errorEl.classList.remove("hidden");
+    document.getElementById("weatherResults").classList.add("hidden");
     showLoading(false);
 }
 
@@ -44,146 +218,23 @@ export function hideError() {
     document.getElementById("errorMessage").classList.add("hidden");
 }
 
-function renderCurrent(payload) {
-    const { current } = payload;
-    const correction = payload.ml?.correction || { correction: 0, corrected_temp: current.temp };
-    const rain = payload.ml?.rain_prediction || { model_ready: false };
-
-    document.getElementById("cityName").textContent = payload.name;
-    document.getElementById("currentDate").textContent = formatDate(new Date());
-    document.getElementById("currentTemp").textContent = Math.round(correction.corrected_temp ?? current.temp);
-    document.getElementById("weatherIcon").className = `fas ${getWeatherIcon(current.weather?.[0]?.icon)}`;
-    document.getElementById("weatherDescription").textContent = current.weather?.[0]?.description || "--";
-
-    const correctionEl = document.getElementById("aiCorrection");
-    if (correction.model_ready && Math.abs(correction.correction || 0) > 0.2) {
-        correctionEl.classList.remove("hidden");
-        const sign = correction.correction > 0 ? "+" : "";
-        document.getElementById("correctionValue").textContent = `${sign}${correction.correction.toFixed(1)}`;
-    } else {
-        correctionEl.classList.add("hidden");
-    }
-
-    const rainWidget = document.getElementById("mlRainPrediction");
-    if (rain.model_ready) {
-        const pct = Math.round((rain.rain_probability || 0) * 100);
-        document.getElementById("rainPct").textContent = `${pct}%`;
-        const rainBar = document.getElementById("rainBar");
-        rainBar.style.width = `${pct}%`;
-        rainBar.style.background = pct < 30 ? "#10b981" : pct < 60 ? "#f59e0b" : "#3b82f6";
-        document.getElementById("rainLabel").textContent = rain.will_rain
-            ? `Probabile pioggia — confidenza ${rain.confidence}`
-            : `Scenario asciutto — confidenza ${rain.confidence}`;
-        rainWidget.classList.remove("hidden");
-    } else {
-        rainWidget.classList.add("hidden");
-    }
-
-    document.getElementById("humidity").textContent = `${current.humidity}%`;
-    document.getElementById("windSpeed").textContent = `${Math.round(current.wind_speed)} km/h`;
-    document.getElementById("visibility").textContent = `${(current.visibility / 1000).toFixed(1)} km`;
-    document.getElementById("pressure").textContent = `${current.pressure} hPa`;
-}
-
-function renderHourly(hourly) {
-    const container = document.getElementById("hourlyForecast");
-    container.innerHTML = "";
-    hourly.slice(0, 24).forEach(hour => {
-        const card = document.createElement("div");
-        card.className = "hour-card";
-        card.innerHTML = `
-            <div class="time">${formatTime(hour.dt)}</div>
-            <i class="fas ${getWeatherIcon(hour.weather?.[0]?.icon)}"></i>
-            <div class="temp">${Math.round(hour.temp)}°</div>
-        `;
-        container.appendChild(card);
-    });
-}
-
-function renderDaily(daily) {
-    const container = document.getElementById("dailyForecast");
-    container.innerHTML = "";
-    daily.slice(1, 6).forEach(day => {
-        const date = new Date(day.dt);
-        const card = document.createElement("div");
-        card.className = "day-card";
-        card.innerHTML = `
-            <div class="day-name">${date.toLocaleDateString("it-IT", { weekday: "short" })}</div>
-            <div class="day-date">${date.toLocaleDateString("it-IT", { day: "numeric", month: "short" })}</div>
-            <i class="fas ${getWeatherIcon(day.weather?.[0]?.icon)}"></i>
-            <div class="temp-range">
-                <span class="temp-max">${Math.round(day.temp.max)}°</span>
-                <span class="temp-min">${Math.round(day.temp.min)}°</span>
-            </div>
-        `;
-        container.appendChild(card);
-    });
-}
-
-function renderErrorChart(stats) {
-    const canvas = document.getElementById("errorChart");
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const dataset = stats?.lead_time_error || [];
-    if (!dataset.length) {
-        ctx.fillStyle = "#94a3b8";
-        ctx.font = "14px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("Storico ML ancora in costruzione...", canvas.width / 2, canvas.height / 2);
+export function renderWeather(payload, { selectedDayIndex = 0, onDaySelect = () => {} } = {}) {
+    const daily = payload.daily || [];
+    if (!daily.length) {
+        showError("La previsione giornaliera non e disponibile per questa citta.");
         return;
     }
 
-    const padding = 40;
-    const chartWidth = canvas.width - padding * 2;
-    const chartHeight = canvas.height - padding * 2;
-    const maxValue = Math.max(...dataset.map(item => item.avg_abs_error), 1);
-    const barWidth = chartWidth / dataset.length;
+    const safeIndex = Math.min(Math.max(selectedDayIndex, 0), daily.length - 1);
+    const selectedDay = daily[safeIndex];
 
-    ctx.strokeStyle = "#e2e8f0";
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, canvas.height - padding);
-    ctx.lineTo(canvas.width - padding, canvas.height - padding);
-    ctx.stroke();
-
-    dataset.forEach((item, index) => {
-        const height = (item.avg_abs_error / maxValue) * chartHeight;
-        const x = padding + index * barWidth + barWidth * 0.15;
-        const y = canvas.height - padding - height;
-        ctx.fillStyle = "#3b82f6";
-        ctx.fillRect(x, y, barWidth * 0.7, height);
-        ctx.fillStyle = "#475569";
-        ctx.font = "12px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(`${item.lead_hours}h`, x + barWidth * 0.35, canvas.height - padding + 16);
-    });
-}
-
-function renderStats(payload) {
-    const stats = payload.ml?.stats || {};
-    document.getElementById("predictionsCount").textContent = stats.verified_predictions || 0;
-    document.getElementById("avgError").textContent = stats.avg_error_celsius ?? "--";
-    document.getElementById("modelStatus").textContent = stats.model_ready ? "Attivo" : "In attesa";
-
-    const learning = stats.model_samples
-        ? Math.min(100, Math.round((stats.model_samples / 500) * 100))
-        : 0;
-    document.getElementById("learningProgress").textContent = `${learning}%`;
-    document.getElementById("mlModelInfo").textContent = stats.model_ready
-        ? `Ridge + baseline temporale — MAE ${stats.model_mae?.toFixed?.(3) ?? stats.model_mae}°C`
-        : "Modello in raccolta dati";
-
-    renderErrorChart(stats);
-}
-
-export function renderWeather(payload) {
+    renderPlannerHead(payload, selectedDay, safeIndex);
+    renderDaySelector(daily, safeIndex, onDaySelect);
+    renderSelectedDay(selectedDay);
     renderCurrent(payload);
-    renderHourly(payload.hourly || []);
-    renderDaily(payload.daily || []);
-    renderStats(payload);
+    renderHourlyDetail(selectedDay, payload.hourly || []);
+    renderModelNote(payload);
+
     document.getElementById("weatherResults").classList.remove("hidden");
     showLoading(false);
 }
@@ -194,7 +245,7 @@ export function renderChipList(targetId, cities, onClick) {
     container.innerHTML = "";
 
     if (!cities.length) {
-        container.innerHTML = '<span class="city-chip">Nessuna</span>';
+        container.innerHTML = '<span class="city-chip is-empty">Nessuna</span>';
         return;
     }
 
@@ -205,15 +256,4 @@ export function renderChipList(targetId, cities, onClick) {
         button.addEventListener("click", () => onClick(city));
         container.appendChild(button);
     });
-}
-
-export function addChatMessage(type, text) {
-    const container = document.getElementById("chatMessages");
-    if (!container) return;
-    const msg = document.createElement("div");
-    msg.className = `chat-message ${type}`;
-    const icon = type === "bot" ? "fa-robot" : "fa-user";
-    msg.innerHTML = `<i class="fas ${icon}"></i><div class="message-content">${text}</div>`;
-    container.appendChild(msg);
-    container.scrollTop = container.scrollHeight;
 }

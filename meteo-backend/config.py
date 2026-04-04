@@ -17,8 +17,6 @@ class Settings:
     frontend_origin: str
     cors_origins: tuple[str, ...]
     admin_api_token: str
-    chat_requests_per_minute: int
-    chat_requests_per_day: int
     cities_index_cache_seconds: int
     max_model_store_records: int
 
@@ -58,8 +56,6 @@ def load_settings() -> Settings:
         frontend_origin=frontend_origin,
         cors_origins=tuple(ordered_origins),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", "").strip(),
-        chat_requests_per_minute=int(os.getenv("CHAT_REQUESTS_PER_MINUTE", "15")),
-        chat_requests_per_day=int(os.getenv("CHAT_REQUESTS_PER_DAY", "300")),
         cities_index_cache_seconds=int(os.getenv("CITIES_INDEX_CACHE_SECONDS", "3600")),
         max_model_store_records=int(os.getenv("MAX_MODEL_STORE_RECORDS", "5")),
     )

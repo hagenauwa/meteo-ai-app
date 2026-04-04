@@ -1,5 +1,4 @@
 export const BACKEND_URL = window.BACKEND_URL || "http://localhost:8000";
-export const ADMIN_API_TOKEN = window.ADMIN_API_TOKEN || "";
 export const CITY_INDEX_CACHE_KEY = "meteo_city_index_v2_all";
 export const LAST_CITY_KEY = "meteo_last_city";
 export const FAVORITES_KEY = "meteo_favorites_v1";
@@ -9,10 +8,6 @@ export const API_ENDPOINTS = {
     weather: `${BACKEND_URL}/api/weather`,
     cities: `${BACKEND_URL}/api/cities`,
     cityIndex: `${BACKEND_URL}/api/cities/index`,
-    mlStats: `${BACKEND_URL}/api/ml/stats`,
-    train: `${BACKEND_URL}/api/ml/train`,
-    runCycle: `${BACKEND_URL}/api/admin/run-cycle`,
-    chat: `${BACKEND_URL}/api/chat`,
 };
 
 export const WEATHER_ICONS = {

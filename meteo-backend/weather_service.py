@@ -33,14 +33,14 @@ SINGLE_CITY_CURRENT_FIELDS = (
 )
 SINGLE_CITY_DAILY_FIELDS = (
     "temperature_2m_max,temperature_2m_min,weather_code,"
-    "precipitation_probability_max,wind_speed_10m_max"
+    "precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant"
 )
 SINGLE_CITY_HOURLY_RICH_FIELDS = (
-    "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,"
+    "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,"
     "precipitation_probability,precipitation,weather_code"
 )
 SINGLE_CITY_HOURLY_COMPAT_FIELDS = (
-    "temperature_2m,relative_humidity_2m,wind_speed_10m,"
+    "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,"
     "precipitation_probability,weather_code"
 )
 
@@ -106,6 +106,7 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
                 "humidity": current.get("relative_humidity_2m"),
                 "cloud_cover": current.get("cloud_cover"),
                 "wind_speed": current.get("wind_speed_10m"),
+                "wind_direction": current.get("wind_direction_10m"),
                 "precipitation": current.get("precipitation", 0.0),
                 "weather_code": current.get("weather_code"),
             })
@@ -135,6 +136,8 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
             precipitations = hourly.get("precipitation", [])
             weather_codes = hourly.get("weather_code", [])
             cloud_covers = hourly.get("cloud_cover", [])
+            wind_speeds = hourly.get("wind_speed_10m", [])
+            wind_directions = hourly.get("wind_direction_10m", [])
 
             predictions.append({
                 "city_id": city["id"],
@@ -147,6 +150,8 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
                 "forecast_precipitation": precipitations[idx] if idx < len(precipitations) else None,
                 "forecast_weather_code": weather_codes[idx] if idx < len(weather_codes) else None,
                 "forecast_cloud_cover": cloud_covers[idx] if idx < len(cloud_covers) else None,
+                "forecast_wind_speed": wind_speeds[idx] if idx < len(wind_speeds) else None,
+                "forecast_wind_direction": wind_directions[idx] if idx < len(wind_directions) else None,
             })
 
     return {"observations": observations, "predictions": predictions}
@@ -162,8 +167,8 @@ async def fetch_weather_batch(cities: list[dict], client: httpx.AsyncClient) -> 
     params = {
         "latitude": ",".join(str(c["lat"]) for c in cities),
         "longitude": ",".join(str(c["lon"]) for c in cities),
-        "current": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,precipitation,weather_code",
-        "hourly": "temperature_2m,relative_humidity_2m,cloud_cover,precipitation,weather_code",
+        "current": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,weather_code",
+        "hourly": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,weather_code",
         "wind_speed_unit": "kmh",
         "timezone": "UTC",
         "forecast_hours": max(ML_FORECAST_LEADS) + 1,
@@ -464,6 +469,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         "weather_code": [],
         "precipitation_probability_max": [],
         "wind_speed_10m_max": [],
+        "wind_direction_10m_dominant": [],
     }
 
     for day in daily_keys:
@@ -478,6 +484,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         daily["weather_code"].append(preferred["weather_code"] or common_code)
         daily["precipitation_probability_max"].append(max(pops))
         daily["wind_speed_10m_max"].append(max(winds))
+        daily["wind_direction_10m_dominant"].append(preferred["wind_direction"])
 
     return {
         "latitude": lat,
@@ -501,6 +508,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
             "relative_humidity_2m": [entry["humidity"] for entry in hourly_items[:24]],
             "cloud_cover": [entry["cloud_cover"] for entry in hourly_items[:24]],
             "wind_speed_10m": [entry["wind_speed"] for entry in hourly_items[:24]],
+            "wind_direction_10m": [entry["wind_direction"] for entry in hourly_items[:24]],
             "precipitation_probability": [entry["precipitation_probability"] for entry in hourly_items[:24]],
             "precipitation": [entry["precipitation"] for entry in hourly_items[:24]],
             "weather_code": [entry["weather_code"] for entry in hourly_items[:24]],
@@ -608,6 +616,18 @@ def wmo_to_description(code: int, is_night: bool = False) -> tuple[str, str]:
     return desc, icon
 
 
+def _approx_cloud_cover_from_wmo(code: int) -> float:
+    if code in {0, 1}:
+        return 12.0
+    if code == 2:
+        return 45.0
+    if code in {3, 45, 48}:
+        return 82.0
+    if code in {51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99}:
+        return 88.0
+    return 55.0
+
+
 def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
     if not raw_data:
         return None
@@ -644,6 +664,7 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
             "humidity": hourly["relative_humidity_2m"][i] if i < len(hourly.get("relative_humidity_2m", [])) else 0,
             "cloud_cover": hourly["cloud_cover"][i] if i < len(hourly.get("cloud_cover", [])) else 0,
             "wind_speed": round(hourly["wind_speed_10m"][i], 1) if i < len(hourly.get("wind_speed_10m", [])) else 0,
+            "wind_deg": hourly["wind_direction_10m"][i] if i < len(hourly.get("wind_direction_10m", [])) else 0,
             "precipitation": hourly["precipitation"][i] if i < len(hourly.get("precipitation", [])) else 0,
             "pop": (hourly["precipitation_probability"][i] or 0) / 100 if i < len(hourly.get("precipitation_probability", [])) else 0,
             "weather": [{"description": desc_h, "icon": icon_h}],
@@ -663,7 +684,9 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
                 "day": round((daily["temperature_2m_min"][i] + daily["temperature_2m_max"][i]) / 2, 1) if i < len(daily.get("temperature_2m_min", [])) else 0,
             },
             "humidity": 50,
+            "cloud_cover": _approx_cloud_cover_from_wmo(wmo_d[i] if i < len(wmo_d) else 0),
             "wind_speed": round(daily["wind_speed_10m_max"][i], 1) if i < len(daily.get("wind_speed_10m_max", [])) else 0,
+            "wind_deg": daily["wind_direction_10m_dominant"][i] if i < len(daily.get("wind_direction_10m_dominant", [])) else 0,
             "pop": (daily["precipitation_probability_max"][i] or 0) / 100 if i < len(daily.get("precipitation_probability_max", [])) else 0,
             "weather": [{"description": desc_d, "icon": icon_d}],
             "weather_code": wmo_d[i] if i < len(wmo_d) else 0,
