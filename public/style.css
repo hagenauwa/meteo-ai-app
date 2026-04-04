@@ -411,9 +411,16 @@ body {
 
 .day-selector {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(132px, 1fr);
     gap: 12px;
     margin-top: 24px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: 8px;
+    scrollbar-width: thin;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
 }
 
 .day-pill {
@@ -424,6 +431,7 @@ body {
     background: rgba(255, 255, 255, 0.72);
     cursor: pointer;
     transition: transform var(--transition), background var(--transition), border-color var(--transition);
+    scroll-snap-align: start;
 }
 
 .day-pill.active {
@@ -679,9 +687,6 @@ body {
         display: grid;
     }
 
-    .day-selector {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
 }
 
 @media (max-width: 840px) {
@@ -731,10 +736,6 @@ body {
     .forecast-detail-section {
         padding: 20px;
         border-radius: 24px;
-    }
-
-    .day-selector {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .selected-day-visual {

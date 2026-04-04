@@ -1,6 +1,6 @@
 """Test costruzione dataset forecast target-based."""
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import sys
 import os
@@ -65,6 +65,8 @@ def test_fetch_single_city_returns_first_attempt_payload(monkeypatch):
 
     async def fake_fetch(client, *, params, attempt_name):
         calls.append((attempt_name, params["hourly"]))
+        assert params["forecast_days"] == weather_service.PUBLIC_FORECAST_DAYS
+        assert params["forecast_hours"] == weather_service.PUBLIC_HOURLY_FORECAST_HOURS
         return expected
 
     monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload", fake_fetch)
@@ -272,3 +274,83 @@ def test_convert_metno_payload_to_open_meteo_shape():
     assert result["hourly"]["weather_code"][1] == 61
     assert result["daily"]["time"]
     assert result["daily"]["wind_direction_10m_dominant"][0] == 180
+
+
+def test_convert_metno_payload_limits_daily_horizon_to_nine_days():
+    start = datetime(2026, 4, 4, 10, 0, tzinfo=timezone.utc)
+    payload = {
+        "properties": {
+            "timeseries": [
+                {
+                    "time": (start + timedelta(days=offset)).isoformat().replace("+00:00", "Z"),
+                    "data": {
+                        "instant": {
+                            "details": {
+                                "air_pressure_at_sea_level": 1015,
+                                "air_temperature": 15 + offset,
+                                "cloud_area_fraction": 20 + offset,
+                                "relative_humidity": 60,
+                                "wind_from_direction": 180,
+                                "wind_speed": 4.0,
+                            }
+                        },
+                        "next_1_hours": {
+                            "summary": {"symbol_code": "partlycloudy_day"},
+                            "details": {"precipitation_amount": 0.0},
+                        },
+                    },
+                }
+                for offset in range(11)
+            ]
+        }
+    }
+
+    result = weather_service._convert_metno_to_open_meteo_payload(payload, lat=41.9, lon=12.5)
+
+    assert result is not None
+    assert len(result["daily"]["time"]) == weather_service.PUBLIC_FALLBACK_FORECAST_DAYS
+    assert result["daily"]["time"][-1] == "2026-04-12"
+
+
+def test_format_weather_for_frontend_preserves_sixteen_daily_entries():
+    raw_data = {
+        "latitude": 41.9,
+        "longitude": 12.5,
+        "current": {
+            "temperature_2m": 20,
+            "relative_humidity_2m": 60,
+            "apparent_temperature": 20,
+            "cloud_cover": 35,
+            "wind_speed_10m": 12,
+            "wind_direction_10m": 180,
+            "surface_pressure": 1014,
+            "precipitation": 0,
+            "weather_code": 1,
+        },
+        "hourly": {
+            "time": [f"2026-04-04T{hour:02d}:00" for hour in range(weather_service.PUBLIC_HOURLY_FORECAST_HOURS)],
+            "temperature_2m": [18 + (hour * 0.1) for hour in range(weather_service.PUBLIC_HOURLY_FORECAST_HOURS)],
+            "relative_humidity_2m": [60] * weather_service.PUBLIC_HOURLY_FORECAST_HOURS,
+            "cloud_cover": [35] * weather_service.PUBLIC_HOURLY_FORECAST_HOURS,
+            "wind_speed_10m": [10] * weather_service.PUBLIC_HOURLY_FORECAST_HOURS,
+            "wind_direction_10m": [180] * weather_service.PUBLIC_HOURLY_FORECAST_HOURS,
+            "precipitation_probability": [10] * weather_service.PUBLIC_HOURLY_FORECAST_HOURS,
+            "precipitation": [0.0] * weather_service.PUBLIC_HOURLY_FORECAST_HOURS,
+            "weather_code": [1] * weather_service.PUBLIC_HOURLY_FORECAST_HOURS,
+        },
+        "daily": {
+            "time": [f"2026-04-{day:02d}" for day in range(4, 4 + weather_service.PUBLIC_FORECAST_DAYS)],
+            "temperature_2m_min": [10 + day for day in range(weather_service.PUBLIC_FORECAST_DAYS)],
+            "temperature_2m_max": [20 + day for day in range(weather_service.PUBLIC_FORECAST_DAYS)],
+            "weather_code": [1] * weather_service.PUBLIC_FORECAST_DAYS,
+            "precipitation_probability_max": [10] * weather_service.PUBLIC_FORECAST_DAYS,
+            "wind_speed_10m_max": [12] * weather_service.PUBLIC_FORECAST_DAYS,
+            "wind_direction_10m_dominant": [180] * weather_service.PUBLIC_FORECAST_DAYS,
+        },
+    }
+
+    result = weather_service.format_weather_for_frontend(raw_data, "Roma")
+
+    assert result is not None
+    assert len(result["daily"]) == weather_service.PUBLIC_FORECAST_DAYS
+    assert result["daily"][-1]["dt"] == "2026-04-19"

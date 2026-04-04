@@ -27,6 +27,9 @@ BATCH_RETRY_DELAYS = (5, 15)
 PUBLIC_CACHE_TTL_SECONDS = 300
 ROME_TZ = ZoneInfo("Europe/Rome")
 METNO_USER_AGENT = "MeteoAI/2.1 https://leprevisioni.netlify.app"
+PUBLIC_FORECAST_DAYS = 16
+PUBLIC_FALLBACK_FORECAST_DAYS = 9
+PUBLIC_HOURLY_FORECAST_HOURS = 24
 SINGLE_CITY_CURRENT_FIELDS = (
     "temperature_2m,relative_humidity_2m,apparent_temperature,cloud_cover,"
     "wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code"
@@ -240,8 +243,8 @@ def _build_single_city_params(lat: float, lon: float, hourly_fields: str) -> dic
         "daily": SINGLE_CITY_DAILY_FIELDS,
         "wind_speed_unit": "kmh",
         "timezone": "Europe/Rome",
-        "forecast_days": 6,
-        "forecast_hours": 24,
+        "forecast_days": PUBLIC_FORECAST_DAYS,
+        "forecast_hours": PUBLIC_HOURLY_FORECAST_HOURS,
     }
 
 
@@ -461,7 +464,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         daily_groups.setdefault(hourly_entry["local_day"], []).append(hourly_entry)
 
     current_hour = hourly_items[0]
-    daily_keys = sorted(daily_groups.keys())[:6]
+    daily_keys = sorted(daily_groups.keys())[:PUBLIC_FALLBACK_FORECAST_DAYS]
     daily = {
         "time": daily_keys,
         "temperature_2m_min": [],
@@ -503,15 +506,15 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
             "weather_code": current_hour["weather_code"],
         },
         "hourly": {
-            "time": [entry["local_hour"] for entry in hourly_items[:24]],
-            "temperature_2m": [entry["temp"] for entry in hourly_items[:24]],
-            "relative_humidity_2m": [entry["humidity"] for entry in hourly_items[:24]],
-            "cloud_cover": [entry["cloud_cover"] for entry in hourly_items[:24]],
-            "wind_speed_10m": [entry["wind_speed"] for entry in hourly_items[:24]],
-            "wind_direction_10m": [entry["wind_direction"] for entry in hourly_items[:24]],
-            "precipitation_probability": [entry["precipitation_probability"] for entry in hourly_items[:24]],
-            "precipitation": [entry["precipitation"] for entry in hourly_items[:24]],
-            "weather_code": [entry["weather_code"] for entry in hourly_items[:24]],
+            "time": [entry["local_hour"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "temperature_2m": [entry["temp"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "relative_humidity_2m": [entry["humidity"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "cloud_cover": [entry["cloud_cover"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "wind_speed_10m": [entry["wind_speed"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "wind_direction_10m": [entry["wind_direction"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "precipitation_probability": [entry["precipitation_probability"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "precipitation": [entry["precipitation"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "weather_code": [entry["weather_code"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
         },
         "daily": daily,
     }
@@ -654,8 +657,9 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
 
     hourly_times = hourly.get("time", [])
     hourly_formatted = []
-    for i, t in enumerate(hourly_times[:24]):
-        wmo = hourly.get("weather_code", [0] * 24)
+    hourly_limit = min(len(hourly_times), PUBLIC_HOURLY_FORECAST_HOURS)
+    for i, t in enumerate(hourly_times[:hourly_limit]):
+        wmo = hourly.get("weather_code", [0] * hourly_limit)
         desc_h, icon_h = wmo_to_description(wmo[i] if i < len(wmo) else 0)
         hourly_formatted.append({
             "dt": t,
@@ -673,8 +677,9 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
 
     daily_times = daily.get("time", [])
     daily_formatted = []
-    for i, t in enumerate(daily_times[:6]):
-        wmo_d = daily.get("weather_code", [0] * 6)
+    daily_limit = len(daily_times)
+    for i, t in enumerate(daily_times[:daily_limit]):
+        wmo_d = daily.get("weather_code", [0] * daily_limit)
         desc_d, icon_d = wmo_to_description(wmo_d[i] if i < len(wmo_d) else 0)
         daily_formatted.append({
             "dt": t,

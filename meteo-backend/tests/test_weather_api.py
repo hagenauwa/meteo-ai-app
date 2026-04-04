@@ -47,41 +47,42 @@ def test_weather_includes_ml_block(monkeypatch):
         yield FakeDb()
 
     async def fake_fetch_single_city(lat, lon):
+        daily_time = [f"2026-04-{day:02d}" for day in range(4, 12)]
         return {
-        "latitude": lat,
-        "longitude": lon,
-        "current": {
-            "temperature_2m": 20,
-            "relative_humidity_2m": 60,
-            "apparent_temperature": 20,
-            "cloud_cover": 40,
-            "wind_speed_10m": 12,
-            "wind_direction_10m": 180,
-            "surface_pressure": 1012,
-            "precipitation": 0,
-            "weather_code": 1,
-        },
-        "hourly": {
-            "time": ["2026-04-04T12:00", "2026-04-04T13:00"],
-            "temperature_2m": [20, 21],
-            "relative_humidity_2m": [60, 61],
-            "cloud_cover": [40, 45],
-            "wind_speed_10m": [12, 13],
-            "wind_direction_10m": [180, 190],
-            "precipitation_probability": [10, 20],
-            "precipitation": [0, 0.1],
-            "weather_code": [1, 2],
-        },
-        "daily": {
-            "time": ["2026-04-04", "2026-04-05"],
-            "temperature_2m_min": [12, 11],
-            "temperature_2m_max": [22, 21],
-            "weather_code": [1, 2],
-            "precipitation_probability_max": [10, 30],
-            "wind_speed_10m_max": [12, 14],
-            "wind_direction_10m_dominant": [180, 210],
-        },
-    }
+            "latitude": lat,
+            "longitude": lon,
+            "current": {
+                "temperature_2m": 20,
+                "relative_humidity_2m": 60,
+                "apparent_temperature": 20,
+                "cloud_cover": 40,
+                "wind_speed_10m": 12,
+                "wind_direction_10m": 180,
+                "surface_pressure": 1012,
+                "precipitation": 0,
+                "weather_code": 1,
+            },
+            "hourly": {
+                "time": ["2026-04-04T12:00", "2026-04-04T13:00"],
+                "temperature_2m": [20, 21],
+                "relative_humidity_2m": [60, 61],
+                "cloud_cover": [40, 45],
+                "wind_speed_10m": [12, 13],
+                "wind_direction_10m": [180, 190],
+                "precipitation_probability": [10, 20],
+                "precipitation": [0, 0.1],
+                "weather_code": [1, 2],
+            },
+            "daily": {
+                "time": daily_time,
+                "temperature_2m_min": [12 + offset for offset in range(len(daily_time))],
+                "temperature_2m_max": [22 + offset for offset in range(len(daily_time))],
+                "weather_code": [1 + (offset % 2) for offset in range(len(daily_time))],
+                "precipitation_probability_max": [10 + (offset * 5) for offset in range(len(daily_time))],
+                "wind_speed_10m_max": [12 + offset for offset in range(len(daily_time))],
+                "wind_direction_10m_dominant": [180 + (offset * 5) for offset in range(len(daily_time))],
+            },
+        }
 
     monkeypatch.setattr(weather_module, "fetch_single_city", fake_fetch_single_city)
     monkeypatch.setattr(weather_module.ml_model, "predict_correction", lambda **kwargs: {
@@ -124,3 +125,5 @@ def test_weather_includes_ml_block(monkeypatch):
     assert data["ml"]["stats"]["verified_predictions"] == 12
     assert data["daily"][0]["ml"]["expected_condition"] == "sereno"
     assert data["daily"][0]["ml"]["adjusted_temp_range"]["max"] == 21.4
+    assert len(data["daily"]) == 8
+    assert data["daily"][-1]["ml"]["badge"] == "Scenario stabile"
