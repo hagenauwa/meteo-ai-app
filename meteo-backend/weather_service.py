@@ -4,6 +4,7 @@ weather_service.py — integrazione con Open-Meteo.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -14,6 +15,24 @@ BATCH_SIZE = 100
 MAX_CONCURRENCY = 6
 TIMEOUT = 30
 ML_FORECAST_LEADS = (1, 2, 3, 4, 5, 6)
+SINGLE_CITY_CURRENT_FIELDS = (
+    "temperature_2m,relative_humidity_2m,apparent_temperature,cloud_cover,"
+    "wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code"
+)
+SINGLE_CITY_DAILY_FIELDS = (
+    "temperature_2m_max,temperature_2m_min,weather_code,"
+    "precipitation_probability_max,wind_speed_10m_max"
+)
+SINGLE_CITY_HOURLY_RICH_FIELDS = (
+    "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,"
+    "precipitation_probability,precipitation,weather_code"
+)
+SINGLE_CITY_HOURLY_COMPAT_FIELDS = (
+    "temperature_2m,relative_humidity_2m,wind_speed_10m,"
+    "precipitation_probability,weather_code"
+)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_utc_timestamp(value: str) -> datetime:
@@ -144,30 +163,130 @@ async def fetch_all_cities_weather(cities: list[dict]) -> dict:
     return {"observations": all_observations, "predictions": all_predictions}
 
 
-async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
-    """
-    Scarica meteo per una singola città per il frontend pubblico.
-    """
-    params = {
+def _build_single_city_params(lat: float, lon: float, hourly_fields: str) -> dict:
+    return {
         "latitude": lat,
         "longitude": lon,
-        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,cloud_cover,wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code",
-        "hourly": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,precipitation_probability,precipitation,weather_code",
-        "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,wind_speed_10m_max",
+        "current": SINGLE_CITY_CURRENT_FIELDS,
+        "hourly": hourly_fields,
+        "daily": SINGLE_CITY_DAILY_FIELDS,
         "wind_speed_unit": "kmh",
         "timezone": "Europe/Rome",
         "forecast_days": 6,
         "forecast_hours": 24,
     }
 
+
+def _response_snippet(response: httpx.Response | None) -> str:
+    if response is None:
+        return ""
+    try:
+        text = response.text
+    except Exception:
+        return ""
+    return " ".join(text.split())[:300]
+
+
+async def _fetch_open_meteo_payload(
+    client: httpx.AsyncClient,
+    *,
+    params: dict,
+    attempt_name: str,
+) -> Optional[dict]:
+    response: httpx.Response | None = None
+    try:
+        response = await client.get(OPEN_METEO_URL, params=params, timeout=TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+    except httpx.TimeoutException as exc:
+        logger.warning(
+            "Open-Meteo single-city timeout (%s) lat=%s lon=%s: %s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            exc,
+        )
+        return None
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "Open-Meteo single-city http_error (%s) lat=%s lon=%s status=%s body=%s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            exc.response.status_code if exc.response else "unknown",
+            _response_snippet(exc.response),
+        )
+        return None
+    except httpx.RequestError as exc:
+        logger.warning(
+            "Open-Meteo single-city network_error (%s) lat=%s lon=%s: %s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            exc,
+        )
+        return None
+    except ValueError as exc:
+        logger.warning(
+            "Open-Meteo single-city invalid_json (%s) lat=%s lon=%s body=%s error=%s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            _response_snippet(response),
+            exc,
+        )
+        return None
+
+    if not isinstance(data, dict):
+        logger.warning(
+            "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s: expected dict got %s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            type(data).__name__,
+        )
+        return None
+
+    missing_sections = [section for section in ("current", "hourly", "daily") if section not in data]
+    if missing_sections:
+        logger.warning(
+            "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s missing=%s keys=%s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            ",".join(missing_sections),
+            ",".join(sorted(data.keys())[:10]),
+        )
+        return None
+
+    return data
+
+
+async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
+    """
+    Scarica meteo per una singola città per il frontend pubblico.
+    """
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(OPEN_METEO_URL, params=params, timeout=TIMEOUT)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"[WARN]  Errore fetch singola città: {e}")
-            return None
+        attempts = (
+            ("rich", SINGLE_CITY_HOURLY_RICH_FIELDS),
+            ("compat", SINGLE_CITY_HOURLY_COMPAT_FIELDS),
+        )
+
+        for attempt_name, hourly_fields in attempts:
+            params = _build_single_city_params(lat, lon, hourly_fields)
+            data = await _fetch_open_meteo_payload(client, params=params, attempt_name=attempt_name)
+            if data is not None:
+                if attempt_name == "compat":
+                    logger.warning(
+                        "Open-Meteo single-city fallback_succeeded lat=%s lon=%s attempt=%s",
+                        lat,
+                        lon,
+                        attempt_name,
+                    )
+                return data
+
+    logger.warning("Open-Meteo single-city fetch failed after fallback lat=%s lon=%s", lat, lon)
+    return None
 
 
 WMO_CODES = {

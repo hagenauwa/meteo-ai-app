@@ -16,6 +16,9 @@
 4. Verifica health check:
    - `GET /health`
    - `GET /ready`
+5. Esegui lo smoke test backend end-to-end:
+   - `python meteo-backend/scripts/smoke_deploy.py`
+   - oppure `python meteo-backend/scripts/smoke_deploy.py https://meteo-ai-backend.onrender.com`
 
 ## Frontend Netlify
 
@@ -34,9 +37,11 @@
    - `GET https://meteo-ai-backend.onrender.com/health`
    - `GET https://meteo-ai-backend.onrender.com/ready`
    - `GET https://meteo-ai-backend.onrender.com/api/weather?city=Roma`
+   - verificare HTTP `200` e presenza dei blocchi `current`, `hourly`, `daily`, `ml`
 2. Frontend:
    - ricerca città
    - meteo attuale
+   - nessun banner o errore "Impossibile ottenere dati meteo da Open-Meteo"
    - widget ML
    - chat
    - preferiti/recenti
