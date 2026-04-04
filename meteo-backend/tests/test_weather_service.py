@@ -99,13 +99,45 @@ def test_fetch_single_city_logs_failure_after_both_attempts(monkeypatch):
     async def fake_fetch(client, *, params, attempt_name):
         return None
 
+    def fake_urllib_fetch(*, params, attempt_name):
+        return None
+
     monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload", fake_fetch)
+    monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload_via_urllib", fake_urllib_fetch)
     monkeypatch.setattr(weather_service.logger, "warning", lambda message, *args: warnings.append(message % args))
 
     result = asyncio.run(weather_service.fetch_single_city(41.9, 12.5))
 
     assert result is None
     assert any("fetch failed after fallback" in warning for warning in warnings)
+
+
+def test_fetch_single_city_uses_urllib_fallback(monkeypatch):
+    calls = []
+    warnings = []
+    expected = {"current": {}, "hourly": {}, "daily": {}}
+
+    async def fake_fetch(client, *, params, attempt_name):
+        calls.append(("httpx", attempt_name, params["hourly"]))
+        return None
+
+    def fake_urllib_fetch(*, params, attempt_name):
+        calls.append(("urllib", attempt_name, params["hourly"]))
+        return expected
+
+    monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload", fake_fetch)
+    monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload_via_urllib", fake_urllib_fetch)
+    monkeypatch.setattr(weather_service.logger, "warning", lambda message, *args: warnings.append(message % args))
+
+    result = asyncio.run(weather_service.fetch_single_city(41.9, 12.5))
+
+    assert result == expected
+    assert calls == [
+        ("httpx", "rich", weather_service.SINGLE_CITY_HOURLY_RICH_FIELDS),
+        ("httpx", "compat", weather_service.SINGLE_CITY_HOURLY_COMPAT_FIELDS),
+        ("urllib", "compat-urllib", weather_service.SINGLE_CITY_HOURLY_COMPAT_FIELDS),
+    ]
+    assert any("compat-urllib" in warning for warning in warnings)
 
 
 def test_fetch_open_meteo_payload_logs_http_error(monkeypatch):

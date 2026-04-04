@@ -4,9 +4,13 @@ weather_service.py — integrazione con Open-Meteo.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import httpx
 
@@ -187,6 +191,32 @@ def _response_snippet(response: httpx.Response | None) -> str:
     return " ".join(text.split())[:300]
 
 
+def _validate_single_city_payload(data: object, *, params: dict, attempt_name: str) -> Optional[dict]:
+    if not isinstance(data, dict):
+        logger.warning(
+            "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s: expected dict got %s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            type(data).__name__,
+        )
+        return None
+
+    missing_sections = [section for section in ("current", "hourly", "daily") if section not in data]
+    if missing_sections:
+        logger.warning(
+            "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s missing=%s keys=%s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            ",".join(missing_sections),
+            ",".join(sorted(data.keys())[:10]),
+        )
+        return None
+
+    return data
+
+
 async def _fetch_open_meteo_payload(
     client: httpx.AsyncClient,
     *,
@@ -237,29 +267,58 @@ async def _fetch_open_meteo_payload(
         )
         return None
 
-    if not isinstance(data, dict):
+    return _validate_single_city_payload(data, params=params, attempt_name=attempt_name)
+
+
+def _fetch_open_meteo_payload_via_urllib(*, params: dict, attempt_name: str) -> Optional[dict]:
+    url = f"{OPEN_METEO_URL}?{urlencode(params)}"
+    try:
+        with urlopen(url, timeout=TIMEOUT) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
         logger.warning(
-            "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s: expected dict got %s",
+            "Open-Meteo single-city http_error (%s) lat=%s lon=%s status=%s body=%s",
             attempt_name,
             params.get("latitude"),
             params.get("longitude"),
-            type(data).__name__,
+            exc.code,
+            " ".join(body.split())[:300],
         )
         return None
-
-    missing_sections = [section for section in ("current", "hourly", "daily") if section not in data]
-    if missing_sections:
+    except URLError as exc:
         logger.warning(
-            "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s missing=%s keys=%s",
+            "Open-Meteo single-city network_error (%s) lat=%s lon=%s: %s",
             attempt_name,
             params.get("latitude"),
             params.get("longitude"),
-            ",".join(missing_sections),
-            ",".join(sorted(data.keys())[:10]),
+            exc.reason,
+        )
+        return None
+    except TimeoutError as exc:
+        logger.warning(
+            "Open-Meteo single-city timeout (%s) lat=%s lon=%s: %s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            exc,
         )
         return None
 
-    return data
+    try:
+        data = json.loads(body)
+    except ValueError as exc:
+        logger.warning(
+            "Open-Meteo single-city invalid_json (%s) lat=%s lon=%s body=%s error=%s",
+            attempt_name,
+            params.get("latitude"),
+            params.get("longitude"),
+            " ".join(body.split())[:300],
+            exc,
+        )
+        return None
+
+    return _validate_single_city_payload(data, params=params, attempt_name=attempt_name)
 
 
 async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
@@ -284,6 +343,16 @@ async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
                         attempt_name,
                     )
                 return data
+
+    compat_params = _build_single_city_params(lat, lon, SINGLE_CITY_HOURLY_COMPAT_FIELDS)
+    data = await asyncio.to_thread(
+        _fetch_open_meteo_payload_via_urllib,
+        params=compat_params,
+        attempt_name="compat-urllib",
+    )
+    if data is not None:
+        logger.warning("Open-Meteo single-city fallback_succeeded lat=%s lon=%s attempt=%s", lat, lon, "compat-urllib")
+        return data
 
     logger.warning("Open-Meteo single-city fetch failed after fallback lat=%s lon=%s", lat, lon)
     return None
