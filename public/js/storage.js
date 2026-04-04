@@ -1,4 +1,4 @@
-import { FAVORITES_KEY, LAST_CITY_KEY, RECENTS_KEY } from "./config.js";
+import { FAVORITES_KEY, RECENTS_KEY } from "./config.js";
 
 function readJson(key, fallback) {
     try {
@@ -36,9 +36,4 @@ export function pushRecent(city) {
         ...getRecents().filter(item => item.name.toLowerCase() !== city.name.toLowerCase()),
     ].slice(0, 8);
     writeJson(RECENTS_KEY, next);
-    localStorage.setItem(LAST_CITY_KEY, city.name);
-}
-
-export function getLastCity() {
-    return localStorage.getItem(LAST_CITY_KEY) || "";
 }

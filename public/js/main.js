@@ -5,7 +5,7 @@ import {
 } from "./api.js";
 import { createAutocomplete } from "./autocomplete.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
-import { getFavorites, getLastCity, getRecents, pushRecent, toggleFavorite } from "./storage.js";
+import { getFavorites, getRecents, pushRecent, toggleFavorite } from "./storage.js";
 
 let currentCity = null;
 let currentPayload = null;
@@ -164,10 +164,4 @@ document.addEventListener("DOMContentLoaded", async () => {
         getLocalMatches: localCityMatches,
         onSelect: executeSearch,
     });
-
-    const lastCity = getLastCity();
-    if (lastCity) {
-        input.value = lastCity;
-        await searchFromInput();
-    }
 });

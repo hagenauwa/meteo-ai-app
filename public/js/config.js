@@ -1,6 +1,5 @@
 export const BACKEND_URL = window.BACKEND_URL || "http://localhost:8000";
 export const CITY_INDEX_CACHE_KEY = "meteo_city_index_v2_all";
-export const LAST_CITY_KEY = "meteo_last_city";
 export const FAVORITES_KEY = "meteo_favorites_v1";
 export const RECENTS_KEY = "meteo_recent_v1";
 
