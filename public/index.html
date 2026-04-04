@@ -3,10 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Previsioni meteo per citta e giorno, con risultati chiari e aggiornati per l'Italia.">
+    <meta name="description" content="Previsioni meteo per città e giorno, con risultati chiari e aggiornati per l'Italia.">
     <meta name="theme-color" content="#0f4c81">
-    <title>Meteo AI | Previsioni per citta e giorno</title>
+    <title>Le Previsioni</title>
     <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -29,7 +32,7 @@
                         <h1>Le Previsioni</h1>
                     </div>
                 </div>
-                <p class="subtitle">Cerca una citta, scegli un giorno e guarda subito cosa aspettarti.</p>
+                <p class="subtitle">Cerca una città, scegli un giorno e guarda subito cosa aspettarti.</p>
             </div>
         </div>
     </header>
@@ -46,7 +49,7 @@
                         <input
                             type="text"
                             id="cityInput"
-                            placeholder="Inserisci una citta italiana (es. Roma, Milano, Napoli)..."
+                            placeholder="Inserisci una città italiana (es. Roma, Milano, Napoli)..."
                             autocomplete="off"
                         >
                         <div id="autocompleteList" class="autocomplete-list hidden"></div>
@@ -78,7 +81,7 @@
 
     <div id="loadingState" class="loading-state hidden">
         <div class="spinner"></div>
-        <p>Sto preparando la previsione migliore per la tua citta...</p>
+        <p>Sto preparando la previsione migliore per la tua città...</p>
     </div>
 
     <div id="errorMessage" class="error-message hidden">
@@ -168,7 +171,7 @@
 
                         <div class="snapshot-details">
                             <div class="detail-item">
-                                <span class="label">Umidita</span>
+                                <span class="label">Umidità</span>
                                 <strong id="humidity" class="value">--%</strong>
                             </div>
                             <div class="detail-item">
@@ -176,7 +179,7 @@
                                 <strong id="windSpeed" class="value">-- km/h</strong>
                             </div>
                             <div class="detail-item">
-                                <span class="label">Visibilita</span>
+                                <span class="label">Visibilità</span>
                                 <strong id="visibility" class="value">-- km</strong>
                             </div>
                             <div class="detail-item">
@@ -202,9 +205,55 @@
     </main>
 
     <footer class="footer">
-        <div class="container">
-            <p>Dati forniti da <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>.</p>
-            <p id="modelNote">Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.</p>
+        <div class="container footer-grid">
+            <div class="footer-copy">
+                <p>Dati forniti da <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>.</p>
+                <p id="modelNote">Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.</p>
+            </div>
+
+            <section class="support-card" aria-labelledby="supportTitle">
+                <div id="supporterPrompt" class="supporter-panel">
+                    <div class="supporter-head">
+                        <div class="supporter-icon" aria-hidden="true">
+                            <i class="fas fa-mug-hot"></i>
+                        </div>
+                        <div>
+                            <p class="supporter-kicker">Sostieni il progetto</p>
+                            <h3 id="supportTitle">Buy me a Coffee</h3>
+                        </div>
+                    </div>
+                    <p class="supporter-copy">Se Le Previsioni ti è utile, puoi offrire un caffè da 1 euro e aiutarmi a finanziare miglioramenti e ricompense future.</p>
+                    <form id="supporterForm" class="supporter-form">
+                        <label class="supporter-label" for="supporterEmail">Email</label>
+                        <div class="supporter-controls">
+                            <input
+                                type="email"
+                                id="supporterEmail"
+                                class="supporter-input"
+                                placeholder="La tua email"
+                                autocomplete="email"
+                                required
+                            >
+                            <button id="supporterSubmitBtn" type="submit" class="btn-primary supporter-button">
+                                <i class="fas fa-mug-hot"></i>
+                                <span>Buy me a Coffee</span>
+                            </button>
+                        </div>
+                    </form>
+                    <p class="supporter-privacy">La tua email viene salvata cifrata per riconoscere chi ci ha sostenuto e preparare future ricompense.</p>
+                    <p id="supporterMessage" class="supporter-message hidden" aria-live="polite"></p>
+                </div>
+
+                <div id="supporterThankYou" class="supporter-thankyou hidden" aria-live="polite">
+                    <div class="supporter-smile" aria-hidden="true">
+                        <i class="fas fa-face-smile"></i>
+                    </div>
+                    <div>
+                        <h3>Thank you!</h3>
+                        <p id="supporterThankYouText">Il tuo supporto è stato registrato in questo browser.</p>
+                    </div>
+                </div>
+            </section>
         </div>
     </footer>
 

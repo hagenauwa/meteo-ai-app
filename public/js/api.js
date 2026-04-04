@@ -67,3 +67,31 @@ export async function fetchWeatherByCity(city) {
     }
     return fetchJson(`${API_ENDPOINTS.weather}?${params.toString()}`);
 }
+
+export async function createSupporterCheckoutSession(email) {
+    return fetchJson(API_ENDPOINTS.supporterCheckout, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+    });
+}
+
+export async function confirmSupporterSession(sessionId) {
+    return fetchJson(API_ENDPOINTS.supporterConfirm, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ session_id: sessionId }),
+    });
+}
+
+export async function getSupporterStatus(token) {
+    return fetchJson(API_ENDPOINTS.supporterStatus, {
+        headers: {
+            "x-supporter-token": token,
+        },
+    });
+}

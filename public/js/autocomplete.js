@@ -31,7 +31,7 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
 
     function renderItems(items) {
         if (!items.length) {
-            renderStatus("Nessuna citta trovata");
+            renderStatus("Nessuna città trovata");
             return;
         }
         list.classList.remove("hidden");
@@ -88,7 +88,7 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
             const requestId = ++latestRequestId;
             const controller = new AbortController();
             currentController = controller;
-            renderStatus("Cerco citta...", { loading: true });
+            renderStatus("Cerco città...", { loading: true });
 
             try {
                 const items = await getSuggestions(requestValue, { signal: controller.signal });

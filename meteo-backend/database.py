@@ -116,6 +116,40 @@ class MlModelStore(Base):
     n_samples   = Column(Integer)
 
 
+class Supporter(Base):
+    """Supporter che ha completato almeno una donazione."""
+    __tablename__ = "supporters"
+
+    id          = Column(Integer, primary_key=True)
+    email_encrypted = Column(LargeBinary, nullable=False)
+    email_lookup_hash = Column(Text, nullable=False, unique=True)
+    created_at  = Column(DateTime(timezone=True), nullable=False)
+    updated_at  = Column(DateTime(timezone=True), nullable=False)
+    donation_count = Column(Integer, nullable=False, default=0)
+    last_donation_at = Column(DateTime(timezone=True))
+    last_amount_cents = Column(Integer)
+    last_currency = Column(Text)
+    stripe_customer_id = Column(Text)
+    stripe_payment_intent_id = Column(Text)
+    last_checkout_session_id = Column(Text)
+
+    tokens = relationship("SupporterToken", back_populates="supporter", lazy="dynamic")
+
+
+class SupporterToken(Base):
+    """Token opaco per riconoscere nello stesso browser un supporter noto."""
+    __tablename__ = "supporter_tokens"
+
+    id          = Column(Integer, primary_key=True)
+    supporter_id = Column(Integer, ForeignKey("supporters.id"), nullable=False)
+    token_hash  = Column(Text, nullable=False, unique=True)
+    user_agent_hash = Column(Text)
+    created_at  = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False)
+
+    supporter = relationship("Supporter", back_populates="tokens")
+
+
 # Indici per performance (compatibili sia SQLite che PostgreSQL)
 Index("idx_obs_city_time",  WeatherObservation.city_id, WeatherObservation.observed_at)
 Index("idx_pred_city_time", MlPrediction.city_id, MlPrediction.predicted_at)
@@ -123,6 +157,9 @@ Index("idx_pred_target_time", MlPrediction.city_id, MlPrediction.target_time)
 Index("idx_pred_verified",  MlPrediction.verified)
 Index("idx_cities_name",    City.name_lower)
 Index("idx_cities_type",    City.locality_type)
+Index("idx_supporters_email_lookup_hash", Supporter.email_lookup_hash)
+Index("idx_supporter_tokens_supporter_id", SupporterToken.supporter_id)
+Index("idx_supporter_tokens_token_hash", SupporterToken.token_hash)
 
 
 def get_db():

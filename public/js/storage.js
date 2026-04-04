@@ -1,4 +1,4 @@
-import { FAVORITES_KEY, RECENTS_KEY } from "./config.js";
+import { FAVORITES_KEY, RECENTS_KEY, SUPPORTER_TOKEN_KEY } from "./config.js";
 
 function readJson(key, fallback) {
     try {
@@ -45,4 +45,16 @@ export function removeRecent(cityName) {
 
 export function clearRecents() {
     writeJson(RECENTS_KEY, []);
+}
+
+export function getSupporterToken() {
+    return localStorage.getItem(SUPPORTER_TOKEN_KEY) || "";
+}
+
+export function setSupporterToken(token) {
+    localStorage.setItem(SUPPORTER_TOKEN_KEY, token);
+}
+
+export function clearSupporterToken() {
+    localStorage.removeItem(SUPPORTER_TOKEN_KEY);
 }

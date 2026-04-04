@@ -1,4 +1,4 @@
-const CACHE_NAME = "meteo-ai-static-v7";
+const CACHE_NAME = "le-previsioni-static-v8";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
@@ -10,6 +10,11 @@ const STATIC_ASSETS = [
     "/js/render.js",
     "/js/autocomplete.js",
     "/js/storage.js",
+    "/js/supporter.js",
+    "/icons/apple-touch-icon.png",
+    "/icons/favicon-32.png",
+    "/icons/icon-192.png",
+    "/icons/icon-512.png",
 ];
 
 async function updateCache(request, response) {

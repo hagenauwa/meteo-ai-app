@@ -5,6 +5,7 @@ import {
 } from "./api.js";
 import { createAutocomplete } from "./autocomplete.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
+import { initializeSupporterWidget } from "./supporter.js";
 import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggleFavorite } from "./storage.js";
 
 let currentCity = null;
@@ -68,14 +69,14 @@ async function searchFromInput() {
     const input = document.getElementById("cityInput");
     const value = input.value.trim();
     if (!value) {
-        showError("Inserisci il nome di una citta.");
+        showError("Inserisci il nome di una città.");
         return;
     }
 
     try {
         const results = await searchCities(value, 1, "all");
         if (!results.length) {
-            throw new Error(`Citta "${value}" non trovata`);
+            throw new Error(`Città "${value}" non trovata`);
         }
         await executeSearch(results[0]);
     } catch (error) {
@@ -106,7 +107,7 @@ function registerFavoriteButton() {
 
     button.addEventListener("click", () => {
         if (!currentCity) {
-            showError("Cerca prima una citta da salvare.");
+            showError("Cerca prima una città da salvare.");
             return;
         }
 
@@ -221,6 +222,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderSavedCities();
     registerFavoriteButton();
     registerPwa();
+    initializeSupporterWidget();
     registerCityInputSelection(input);
     registerCityInputWakeUp(input);
 

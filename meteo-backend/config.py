@@ -19,6 +19,10 @@ class Settings:
     admin_api_token: str
     cities_index_cache_seconds: int
     max_model_store_records: int
+    stripe_secret_key: str
+    stripe_webhook_secret: str
+    supporter_email_encryption_key: str
+    supporter_email_hash_key: str
 
     @property
     def is_production(self) -> bool:
@@ -58,6 +62,10 @@ def load_settings() -> Settings:
         admin_api_token=os.getenv("ADMIN_API_TOKEN", "").strip(),
         cities_index_cache_seconds=int(os.getenv("CITIES_INDEX_CACHE_SECONDS", "3600")),
         max_model_store_records=int(os.getenv("MAX_MODEL_STORE_RECORDS", "5")),
+        stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", "").strip(),
+        stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", "").strip(),
+        supporter_email_encryption_key=os.getenv("SUPPORTER_EMAIL_ENCRYPTION_KEY", "").strip(),
+        supporter_email_hash_key=os.getenv("SUPPORTER_EMAIL_HASH_KEY", "").strip(),
     )
 
 

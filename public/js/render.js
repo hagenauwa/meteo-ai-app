@@ -55,10 +55,10 @@ function buildDaySummary(day) {
     const wind = Math.round(day.wind_speed || 0);
 
     if (rainPct >= 60) {
-        return `${description}. Ombrello consigliato: la probabilita di pioggia e intorno al ${rainPct}%.`;
+        return `${description}. Ombrello consigliato: la probabilità di pioggia è intorno al ${rainPct}%.`;
     }
     if (wind >= 28) {
-        return `${description}. Attenzione a raffiche piu presenti, con vento fino a ${wind} km/h.`;
+        return `${description}. Attenzione a raffiche più presenti, con vento fino a ${wind} km/h.`;
     }
     if (rainPct >= 30) {
         return `${description}. Possibili passaggi instabili, ma con fasi asciutte prevalenti.`;
@@ -154,12 +154,12 @@ function renderHourlyDetail(selectedDay, hourly) {
     section.classList.remove("is-empty");
 
     if (!hoursForDay.length) {
-        hint.textContent = "Per questa data e disponibile solo il riepilogo giornaliero.";
+        hint.textContent = "Per questa data è disponibile solo il riepilogo giornaliero.";
         section.classList.add("is-empty");
 
         const empty = document.createElement("div");
         empty.className = "empty-forecast";
-        empty.textContent = "Il dettaglio ora per ora arrivera quando il backend esporra un orizzonte piu ampio.";
+        empty.textContent = "Il dettaglio ora per ora arriverà quando il backend esporrà un orizzonte più ampio.";
         container.appendChild(empty);
         return;
     }
@@ -187,7 +187,7 @@ function renderModelNote(payload) {
         payload.ml?.rain_prediction?.model_ready
     );
     note.textContent = mlReady
-        ? "Le previsioni vengono affinate automaticamente usando osservazioni meteo reali, nuvolosita e vento."
+        ? "Le previsioni vengono affinate automaticamente usando osservazioni meteo reali, nuvolosità e vento."
         : "Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.";
 }
 
@@ -221,7 +221,7 @@ export function hideError() {
 export function renderWeather(payload, { selectedDayIndex = 0, onDaySelect = () => {} } = {}) {
     const daily = payload.daily || [];
     if (!daily.length) {
-        showError("La previsione giornaliera non e disponibile per questa citta.");
+        showError("La previsione giornaliera non è disponibile per questa città.");
         return;
     }
 
