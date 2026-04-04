@@ -1,6 +1,7 @@
-import { API_ENDPOINTS, CITY_INDEX_CACHE_KEY } from "./config.js";
+import { API_ENDPOINTS } from "./config.js";
 
-let cityIndexPromise = null;
+const CITY_SEARCH_CACHE_LIMIT = 40;
+const citySearchCache = new Map();
 
 export async function apiFetch(url, options = {}) {
     const headers = {
@@ -19,35 +20,40 @@ async function fetchJson(url, options = {}) {
     return body;
 }
 
-export async function loadCityIndex() {
-    if (cityIndexPromise) return cityIndexPromise;
-
-    cityIndexPromise = (async () => {
-        try {
-            const cached = localStorage.getItem(CITY_INDEX_CACHE_KEY);
-            if (cached) {
-                return JSON.parse(cached);
-            }
-        } catch {
-            // ignore cache parse failure
-        }
-
-        const url = `${API_ENDPOINTS.cityIndex}?scope=all&version=v2`;
-        const data = await fetchJson(url);
-        try {
-            localStorage.setItem(CITY_INDEX_CACHE_KEY, JSON.stringify(data));
-        } catch {
-            // ignore storage full
-        }
-        return data;
-    })();
-
-    return cityIndexPromise;
+function getCitySearchCacheKey(query, limit, scope) {
+    return `${scope}:${limit}:${query.trim().toLowerCase()}`;
 }
 
-export async function searchCities(query, limit = 8, scope = "all") {
-    const url = `${API_ENDPOINTS.cities}?q=${encodeURIComponent(query)}&limit=${limit}&scope=${scope}`;
-    return fetchJson(url);
+function storeCitySearchResult(key, data) {
+    if (citySearchCache.has(key)) {
+        citySearchCache.delete(key);
+    }
+
+    citySearchCache.set(key, data);
+    if (citySearchCache.size <= CITY_SEARCH_CACHE_LIMIT) return;
+
+    const oldestKey = citySearchCache.keys().next().value;
+    if (oldestKey) {
+        citySearchCache.delete(oldestKey);
+    }
+}
+
+export async function searchCities(query, limit = 8, scope = "all", options = {}) {
+    const trimmedQuery = query.trim();
+    const cacheKey = getCitySearchCacheKey(trimmedQuery, limit, scope);
+
+    if (citySearchCache.has(cacheKey)) {
+        return citySearchCache.get(cacheKey);
+    }
+
+    const url = `${API_ENDPOINTS.cities}?q=${encodeURIComponent(trimmedQuery)}&limit=${limit}&scope=${scope}`;
+    const data = await fetchJson(url, options);
+    storeCitySearchResult(cacheKey, data);
+    return data;
+}
+
+export function warmCitiesSearch() {
+    return searchCities("r", 1, "all").catch(() => []);
 }
 
 export async function fetchWeatherByCity(city) {

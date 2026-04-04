@@ -1,4 +1,4 @@
-const CACHE_NAME = "meteo-ai-static-v6";
+const CACHE_NAME = "meteo-ai-static-v7";
 const STATIC_ASSETS = [
     "/",
     "/index.html",

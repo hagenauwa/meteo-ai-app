@@ -225,6 +225,22 @@ body {
     font-size: 0.9rem;
 }
 
+.autocomplete-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    color: var(--ink-soft);
+}
+
+.autocomplete-status i {
+    color: var(--accent);
+}
+
+.autocomplete-status.is-loading i {
+    color: var(--accent-strong);
+}
+
 .btn-primary,
 .btn-secondary {
     display: inline-flex;

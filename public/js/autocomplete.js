@@ -1,6 +1,14 @@
-export function createAutocomplete({ input, list, getLocalMatches, onSelect }) {
+export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
     let currentFocus = -1;
     let timer = null;
+    let currentController = null;
+    let latestRequestId = 0;
+
+    function abortPendingRequest() {
+        if (!currentController) return;
+        currentController.abort();
+        currentController = null;
+    }
 
     function closeAllLists() {
         list.classList.add("hidden");
@@ -8,9 +16,22 @@ export function createAutocomplete({ input, list, getLocalMatches, onSelect }) {
         currentFocus = -1;
     }
 
+    function renderStatus(message, { loading = false } = {}) {
+        list.classList.remove("hidden");
+        list.innerHTML = "";
+
+        const item = document.createElement("div");
+        item.className = `autocomplete-status${loading ? " is-loading" : ""}`;
+        item.innerHTML = `
+            <i class="fas ${loading ? "fa-spinner fa-spin" : "fa-circle-info"}"></i>
+            <span>${message}</span>
+        `;
+        list.appendChild(item);
+    }
+
     function renderItems(items) {
         if (!items.length) {
-            closeAllLists();
+            renderStatus("Nessuna citta trovata");
             return;
         }
         list.classList.remove("hidden");
@@ -19,6 +40,7 @@ export function createAutocomplete({ input, list, getLocalMatches, onSelect }) {
             const item = document.createElement("div");
             item.className = "autocomplete-item";
             item.dataset.index = index;
+            item.dataset.selectable = "true";
             item.innerHTML = `
                 <i class="fas fa-map-marker-alt"></i>
                 <span class="city-name">${city.name}</span>
@@ -43,18 +65,49 @@ export function createAutocomplete({ input, list, getLocalMatches, onSelect }) {
 
     input.addEventListener("input", () => {
         const value = input.value.trim();
-        closeAllLists();
-        if (value.length < 2) return;
-
         clearTimeout(timer);
+        abortPendingRequest();
+        currentFocus = -1;
+
+        if (!value.length) {
+            closeAllLists();
+            return;
+        }
+        if (value.length < 2) {
+            closeAllLists();
+            return;
+        }
+
         timer = setTimeout(async () => {
-            const items = await getLocalMatches(value);
-            renderItems(items);
-        }, 80);
+            const requestValue = input.value.trim();
+            if (requestValue.length < 2) {
+                closeAllLists();
+                return;
+            }
+
+            const requestId = ++latestRequestId;
+            const controller = new AbortController();
+            currentController = controller;
+            renderStatus("Cerco citta...", { loading: true });
+
+            try {
+                const items = await getSuggestions(requestValue, { signal: controller.signal });
+                if (requestId !== latestRequestId || input.value.trim() !== requestValue) return;
+                renderItems(items);
+            } catch (error) {
+                if (error?.name === "AbortError") return;
+                if (requestId !== latestRequestId || input.value.trim() !== requestValue) return;
+                renderStatus("Suggerimenti non disponibili");
+            } finally {
+                if (currentController === controller) {
+                    currentController = null;
+                }
+            }
+        }, 120);
     });
 
     input.addEventListener("keydown", event => {
-        const items = list.getElementsByClassName("autocomplete-item");
+        const items = list.querySelectorAll('.autocomplete-item[data-selectable="true"]');
         if (event.key === "ArrowDown") {
             currentFocus++;
             setActive(items);

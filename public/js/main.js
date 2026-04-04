@@ -1,7 +1,7 @@
 import {
     fetchWeatherByCity,
-    loadCityIndex,
     searchCities,
+    warmCitiesSearch,
 } from "./api.js";
 import { createAutocomplete } from "./autocomplete.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
@@ -10,13 +10,6 @@ import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggl
 let currentCity = null;
 let currentPayload = null;
 let selectedDayIndex = 0;
-
-function normalize(value) {
-    return value
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "");
-}
 
 function isFavoriteCity(city) {
     if (!city) return false;
@@ -45,22 +38,6 @@ function renderCurrentView() {
         },
     });
     updateFavoriteButtonState();
-}
-
-async function localCityMatches(query) {
-    const q = normalize(query);
-    const cities = await loadCityIndex();
-    const starts = cities
-        .filter(city => normalize(city.name).startsWith(q))
-        .slice(0, 8);
-
-    if (starts.length >= 8) return starts;
-
-    const found = new Set(starts.map(city => normalize(city.name)));
-    const contains = cities
-        .filter(city => !found.has(normalize(city.name)) && normalize(city.name).includes(q))
-        .slice(0, 8 - starts.length);
-    return [...starts, ...contains];
 }
 
 async function executeSearch(city) {
@@ -225,6 +202,16 @@ function registerCityInputSelection(input) {
     });
 }
 
+function registerCityInputWakeUp(input) {
+    let warmedUp = false;
+
+    input.addEventListener("focus", () => {
+        if (warmedUp) return;
+        warmedUp = true;
+        warmCitiesSearch();
+    });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
     const input = document.getElementById("cityInput");
     const searchBtn = document.getElementById("searchBtn");
@@ -235,6 +222,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     registerFavoriteButton();
     registerPwa();
     registerCityInputSelection(input);
+    registerCityInputWakeUp(input);
 
     searchBtn.addEventListener("click", searchFromInput);
     input.addEventListener("keypress", event => {
@@ -249,7 +237,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     createAutocomplete({
         input,
         list: autocompleteList,
-        getLocalMatches: localCityMatches,
+        getSuggestions: (query, options = {}) => searchCities(query, 8, "all", options),
         onSelect: executeSearch,
     });
 });
