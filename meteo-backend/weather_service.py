@@ -1,41 +1,109 @@
 """
-weather_service.py — Chiamate Open-Meteo bulk API (gratuita, nessuna chiave)
-
-Open-Meteo supporta fino a 100 location per chiamata.
-Con 8.000 comuni → 80 chiamate per coprire tutta Italia.
-Limiti gratuiti: 10.000 chiamate/giorno → abbondante.
+weather_service.py — integrazione con Open-Meteo.
 """
+from __future__ import annotations
+
 import asyncio
-from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
 import httpx
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
-BATCH_SIZE = 100    # Max location per singola chiamata Open-Meteo
-TIMEOUT = 30        # secondi
+BATCH_SIZE = 100
+MAX_CONCURRENCY = 6
+TIMEOUT = 30
+ML_FORECAST_LEADS = (1, 2, 3, 4, 5, 6)
 
 
-async def fetch_weather_batch(
-    cities: List[dict],
-    client: httpx.AsyncClient
-) -> List[dict]:
+def parse_utc_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
+    observations: list[dict] = []
+    predictions: list[dict] = []
+
+    for i, city_data in enumerate(payload):
+        if i >= len(cities):
+            break
+
+        city = cities[i]
+        current = city_data.get("current", {})
+        current_time_raw = current.get("time")
+        if current_time_raw and current.get("temperature_2m") is not None:
+            current_time = parse_utc_timestamp(current_time_raw)
+            observations.append({
+                "city_id": city["id"],
+                "observed_at": current_time,
+                "temp": current.get("temperature_2m"),
+                "humidity": current.get("relative_humidity_2m"),
+                "cloud_cover": current.get("cloud_cover"),
+                "wind_speed": current.get("wind_speed_10m"),
+                "precipitation": current.get("precipitation", 0.0),
+                "weather_code": current.get("weather_code"),
+            })
+
+        hourly = city_data.get("hourly", {})
+        hourly_times = hourly.get("time", [])
+        if not hourly_times:
+            continue
+
+        hourly_map = {}
+        for idx, raw_time in enumerate(hourly_times):
+            hourly_map[parse_utc_timestamp(raw_time)] = idx
+
+        forecast_anchor = parse_utc_timestamp(current_time_raw).replace(minute=0, second=0, microsecond=0)
+        for lead_hours in ML_FORECAST_LEADS:
+            target_time = forecast_anchor + timedelta(hours=lead_hours)
+            idx = hourly_map.get(target_time)
+            if idx is None:
+                continue
+
+            temperatures = hourly.get("temperature_2m", [])
+            forecast_temp = temperatures[idx] if idx < len(temperatures) else None
+            if forecast_temp is None:
+                continue
+
+            humidities = hourly.get("relative_humidity_2m", [])
+            precipitations = hourly.get("precipitation", [])
+            weather_codes = hourly.get("weather_code", [])
+            cloud_covers = hourly.get("cloud_cover", [])
+
+            predictions.append({
+                "city_id": city["id"],
+                "predicted_at": forecast_anchor,
+                "target_time": target_time,
+                "lead_hours": lead_hours,
+                "forecast_source": "open-meteo",
+                "forecast_temp": forecast_temp,
+                "humidity": humidities[idx] if idx < len(humidities) else None,
+                "forecast_precipitation": precipitations[idx] if idx < len(precipitations) else None,
+                "forecast_weather_code": weather_codes[idx] if idx < len(weather_codes) else None,
+                "forecast_cloud_cover": cloud_covers[idx] if idx < len(cloud_covers) else None,
+            })
+
+    return {"observations": observations, "predictions": predictions}
+
+
+async def fetch_weather_batch(cities: list[dict], client: httpx.AsyncClient) -> dict:
     """
-    Chiama Open-Meteo per un batch di città (max 100).
-
-    cities: lista di dict con {id, name, lat, lon}
-    Ritorna lista di dict con {city_id, temp, humidity, cloud_cover, wind_speed, precipitation}
+    Scarica osservazioni correnti e previsioni orarie per un batch di città.
     """
     if not cities:
-        return []
-
-    lats = ",".join(str(c["lat"]) for c in cities)
-    lons = ",".join(str(c["lon"]) for c in cities)
+        return {"observations": [], "predictions": []}
 
     params = {
-        "latitude": lats,
-        "longitude": lons,
+        "latitude": ",".join(str(c["lat"]) for c in cities),
+        "longitude": ",".join(str(c["lon"]) for c in cities),
         "current": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,precipitation,weather_code",
+        "hourly": "temperature_2m,relative_humidity_2m,cloud_cover,precipitation,weather_code",
         "wind_speed_unit": "kmh",
-        "timezone": "Europe/Rome"
+        "timezone": "UTC",
+        "forecast_hours": max(ML_FORECAST_LEADS) + 1,
     }
 
     try:
@@ -44,68 +112,52 @@ async def fetch_weather_batch(
         data = response.json()
     except Exception as e:
         print(f"[WARN]  Errore Open-Meteo batch: {e}")
-        return []
+        return {"observations": [], "predictions": []}
 
-    # Open-Meteo restituisce una lista quando ci sono più location
-    if isinstance(data, dict):
-        data = [data]
-
-    results = []
-    for i, city_data in enumerate(data):
-        if i >= len(cities):
-            break
-        current = city_data.get("current", {})
-        results.append({
-            "city_id":     cities[i]["id"],
-            "temp":        current.get("temperature_2m"),
-            "humidity":    current.get("relative_humidity_2m"),
-            "cloud_cover": current.get("cloud_cover"),
-            "wind_speed":  current.get("wind_speed_10m"),
-            "precipitation": current.get("precipitation", 0.0),
-            "weather_code":  current.get("weather_code")
-        })
-
-    return results
+    payload = data if isinstance(data, list) else [data]
+    return _build_batch_results(cities, payload)
 
 
-async def fetch_all_cities_weather(cities: List[dict]) -> List[dict]:
+async def fetch_all_cities_weather(cities: list[dict]) -> dict:
     """
-    Scarica meteo per tutte le città in batch da BATCH_SIZE.
-    Gestisce automaticamente rate-limiting con piccoli ritardi tra batch.
+    Scarica meteo per tutte le città in batch paralleli a concorrenza limitata.
     """
-    all_results = []
-    batches = [cities[i:i+BATCH_SIZE] for i in range(0, len(cities), BATCH_SIZE)]
+    all_observations: list[dict] = []
+    all_predictions: list[dict] = []
+    batches = [cities[i:i + BATCH_SIZE] for i in range(0, len(cities), BATCH_SIZE)]
 
     print(f"[API] Scaricando meteo per {len(cities)} città in {len(batches)} batch...")
+    semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+
+    async def run_batch(batch: list[dict], client: httpx.AsyncClient) -> dict:
+        async with semaphore:
+            return await fetch_weather_batch(batch, client)
 
     async with httpx.AsyncClient() as client:
-        for idx, batch in enumerate(batches):
-            results = await fetch_weather_batch(batch, client)
-            all_results.extend(results)
+        results = await asyncio.gather(*(run_batch(batch, client) for batch in batches))
 
-            # Piccolo ritardo tra batch per non sovraccaricare l'API
-            if idx < len(batches) - 1:
-                await asyncio.sleep(0.1)
+    for result in results:
+        all_observations.extend(result["observations"])
+        all_predictions.extend(result["predictions"])
 
-    print(f"[OK] Scaricate {len(all_results)} osservazioni meteo")
-    return all_results
+    print(f"[OK] Scaricate {len(all_observations)} osservazioni e {len(all_predictions)} previsioni target-based")
+    return {"observations": all_observations, "predictions": all_predictions}
 
 
 async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
     """
-    Scarica meteo per una singola città (usato dalle API del frontend).
-    Restituisce anche previsioni orarie e giornaliere per compatibilità.
+    Scarica meteo per una singola città per il frontend pubblico.
     """
     params = {
         "latitude": lat,
         "longitude": lon,
         "current": "temperature_2m,relative_humidity_2m,apparent_temperature,cloud_cover,wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code",
-        "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation_probability,weather_code",
+        "hourly": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,precipitation_probability,precipitation,weather_code",
         "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,wind_speed_10m_max",
         "wind_speed_unit": "kmh",
         "timezone": "Europe/Rome",
         "forecast_days": 6,
-        "forecast_hours": 24
+        "forecast_hours": 24,
     }
 
     async with httpx.AsyncClient() as client:
@@ -118,12 +170,11 @@ async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
             return None
 
 
-# Mappatura codici meteo WMO → descrizione + icona (compatibile con frontend esistente)
 WMO_CODES = {
-    0:  ("Cielo sereno", "01d"),
-    1:  ("Prevalentemente sereno", "02d"),
-    2:  ("Parzialmente nuvoloso", "03d"),
-    3:  ("Nuvoloso", "04d"),
+    0: ("Cielo sereno", "01d"),
+    1: ("Prevalentemente sereno", "02d"),
+    2: ("Parzialmente nuvoloso", "03d"),
+    3: ("Nuvoloso", "04d"),
     45: ("Nebbia", "50d"),
     48: ("Nebbia con brina", "50d"),
     51: ("Pioggerella leggera", "09d"),
@@ -144,8 +195,7 @@ WMO_CODES = {
 }
 
 
-def wmo_to_description(code: int, is_night: bool = False) -> tuple:
-    """Converte codice WMO in (descrizione, icona_id)."""
+def wmo_to_description(code: int, is_night: bool = False) -> tuple[str, str]:
     desc, icon = WMO_CODES.get(code, ("Condizioni variabili", "02d"))
     if is_night and icon.endswith("d"):
         icon = icon[:-1] + "n"
@@ -153,49 +203,47 @@ def wmo_to_description(code: int, is_night: bool = False) -> tuple:
 
 
 def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
-    """
-    Converte risposta Open-Meteo nel formato usato dal frontend existente.
-    Mantiene compatibilità con app.js.
-    """
     if not raw_data:
         return None
 
     current = raw_data.get("current", {})
-    hourly  = raw_data.get("hourly", {})
-    daily   = raw_data.get("daily", {})
+    hourly = raw_data.get("hourly", {})
+    daily = raw_data.get("daily", {})
 
     wmo_code = current.get("weather_code", 0)
     description, icon = wmo_to_description(wmo_code)
 
-    # Formato current compatibile con il frontend
     current_formatted = {
-        "temp":        round(current.get("temperature_2m", 0), 1),
-        "feels_like":  round(current.get("apparent_temperature", 0), 1),
-        "humidity":    current.get("relative_humidity_2m", 0),
-        "pressure":    round(current.get("surface_pressure", 1013), 0),
-        "wind_speed":  round(current.get("wind_speed_10m", 0), 1),
-        "wind_deg":    current.get("wind_direction_10m", 0),
-        "visibility":  10000,   # Open-Meteo free non fornisce visibilità, default 10km
-        "clouds":      current.get("cloud_cover", 0),
-        "weather": [{"description": description, "icon": icon}]
+        "temp": round(current.get("temperature_2m", 0), 1),
+        "feels_like": round(current.get("apparent_temperature", 0), 1),
+        "humidity": current.get("relative_humidity_2m", 0),
+        "pressure": round(current.get("surface_pressure", 1013), 0),
+        "wind_speed": round(current.get("wind_speed_10m", 0), 1),
+        "wind_deg": current.get("wind_direction_10m", 0),
+        "visibility": 10000,
+        "clouds": current.get("cloud_cover", 0),
+        "precipitation": current.get("precipitation", 0.0),
+        "weather": [{"description": description, "icon": icon}],
     }
 
-    # Previsioni orarie (prossime 24h)
     hourly_times = hourly.get("time", [])
     hourly_formatted = []
     for i, t in enumerate(hourly_times[:24]):
         wmo = hourly.get("weather_code", [0] * 24)
         desc_h, icon_h = wmo_to_description(wmo[i] if i < len(wmo) else 0)
         hourly_formatted.append({
-            "dt":         t,
-            "temp":       round(hourly["temperature_2m"][i], 1) if i < len(hourly.get("temperature_2m", [])) else 0,
-            "humidity":   hourly["relative_humidity_2m"][i] if i < len(hourly.get("relative_humidity_2m", [])) else 0,
+            "dt": t,
+            "lead_hours": i,
+            "temp": round(hourly["temperature_2m"][i], 1) if i < len(hourly.get("temperature_2m", [])) else 0,
+            "humidity": hourly["relative_humidity_2m"][i] if i < len(hourly.get("relative_humidity_2m", [])) else 0,
+            "cloud_cover": hourly["cloud_cover"][i] if i < len(hourly.get("cloud_cover", [])) else 0,
             "wind_speed": round(hourly["wind_speed_10m"][i], 1) if i < len(hourly.get("wind_speed_10m", [])) else 0,
-            "pop":        (hourly["precipitation_probability"][i] or 0) / 100 if i < len(hourly.get("precipitation_probability", [])) else 0,
-            "weather":    [{"description": desc_h, "icon": icon_h}]
+            "precipitation": hourly["precipitation"][i] if i < len(hourly.get("precipitation", [])) else 0,
+            "pop": (hourly["precipitation_probability"][i] or 0) / 100 if i < len(hourly.get("precipitation_probability", [])) else 0,
+            "weather": [{"description": desc_h, "icon": icon_h}],
+            "weather_code": wmo[i] if i < len(wmo) else 0,
         })
 
-    # Previsioni giornaliere (prossimi 5 giorni)
     daily_times = daily.get("time", [])
     daily_formatted = []
     for i, t in enumerate(daily_times[:6]):
@@ -208,18 +256,19 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
                 "max": round(daily["temperature_2m_max"][i], 1) if i < len(daily.get("temperature_2m_max", [])) else 0,
                 "day": round((daily["temperature_2m_min"][i] + daily["temperature_2m_max"][i]) / 2, 1) if i < len(daily.get("temperature_2m_min", [])) else 0,
             },
-            "humidity":   50,
+            "humidity": 50,
             "wind_speed": round(daily["wind_speed_10m_max"][i], 1) if i < len(daily.get("wind_speed_10m_max", [])) else 0,
-            "pop":        (daily["precipitation_probability_max"][i] or 0) / 100 if i < len(daily.get("precipitation_probability_max", [])) else 0,
-            "weather":    [{"description": desc_d, "icon": icon_d}]
+            "pop": (daily["precipitation_probability_max"][i] or 0) / 100 if i < len(daily.get("precipitation_probability_max", [])) else 0,
+            "weather": [{"description": desc_d, "icon": icon_d}],
+            "weather_code": wmo_d[i] if i < len(wmo_d) else 0,
         })
 
     return {
         "current": current_formatted,
-        "hourly":  hourly_formatted,
-        "daily":   daily_formatted,
-        "lat":     raw_data.get("latitude"),
-        "lon":     raw_data.get("longitude"),
-        "name":    city_name,
-        "timezone": "Europe/Rome"
+        "hourly": hourly_formatted,
+        "daily": daily_formatted,
+        "lat": raw_data.get("latitude"),
+        "lon": raw_data.get("longitude"),
+        "name": city_name,
+        "timezone": "Europe/Rome",
     }

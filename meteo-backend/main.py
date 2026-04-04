@@ -3,16 +3,17 @@ main.py — FastAPI app principale
 
 Avvio: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 """
-import os
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 
-from database import init_db, SessionLocal, City
+from config import settings
+from database import init_db, SessionLocal, City, db_healthcheck
 from scheduler import start_scheduler, stop_scheduler
 import ml_model
 
@@ -80,10 +81,11 @@ app = FastAPI(
 # CORS — permette al frontend Netlify di chiamare questa API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # In produzione: metti l'URL Netlify esatto
+    allow_origins=list(settings.cors_origins),
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Importa e registra i router
 from routers import weather, cities, ml, chat, admin
@@ -99,7 +101,7 @@ app.include_router(admin,   prefix="/api/admin")
 def root():
     return {
         "service": "Meteo AI Backend",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "status": "running",
         "docs": "/docs"
     }
@@ -108,3 +110,20 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/ready")
+def ready():
+    from scheduler import scheduler as current_scheduler
+
+    db_ok = db_healthcheck()
+    model_summary = ml_model.get_public_summary()
+    scheduler_running = bool(current_scheduler.running)
+
+    return {
+        "status": "ready" if db_ok and scheduler_running else "degraded",
+        "database": {"ok": db_ok},
+        "scheduler": {"running": scheduler_running, "jobs": len(current_scheduler.get_jobs())},
+        "ml": model_summary,
+        "env": settings.app_env,
+    }

@@ -1,12 +1,11 @@
 """
-database.py — SQLAlchemy models e connessione PostgreSQL
+database.py — SQLAlchemy models, connessione DB e bootstrap Alembic.
 """
 import os
 from pathlib import Path
-from datetime import datetime, timezone
 from sqlalchemy import (
     create_engine, Column, Integer, BigInteger, Text, Float,
-    Boolean, DateTime, LargeBinary, ForeignKey, Index
+    Boolean, DateTime, LargeBinary, ForeignKey, Index, text
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 from dotenv import load_dotenv
@@ -72,21 +71,31 @@ class WeatherObservation(Base):
 
 
 class MlPrediction(Base):
-    """Previsione salvata per essere verificata dopo 1-6 ore."""
+    """Previsione meteo salvata con target futuro per la verifica successiva."""
     __tablename__ = "ml_predictions"
 
     id             = Column(BigInteger, primary_key=True)
     city_id        = Column(Integer, ForeignKey("cities.id"), nullable=False)
     predicted_at   = Column(DateTime(timezone=True), nullable=False)
+    target_time    = Column(DateTime(timezone=True), nullable=True)
+    lead_hours     = Column(Integer, nullable=True)
+    forecast_source = Column(Text, default="open-meteo")
     predicted_temp = Column(Float, nullable=False)
-    humidity       = Column(Float)
+    forecast_temp  = Column(Float, nullable=True)
+    humidity       = Column(Float)  # umidità prevista all'orario target
     hour           = Column(Integer)
     verified       = Column(Boolean, default=False)
     actual_temp    = Column(Float)
     error          = Column(Float)      # actual_temp - predicted_temp
     verified_at    = Column(DateTime(timezone=True))
-    precipitation  = Column(Float, nullable=True)   # mm misurati all'ora T
-    weather_code   = Column(Integer, nullable=True)  # WMO code all'ora T
+    precipitation  = Column(Float, nullable=True)   # compat legacy / forecast
+    weather_code   = Column(Integer, nullable=True)  # compat legacy / forecast
+    forecast_precipitation = Column(Float, nullable=True)
+    forecast_weather_code  = Column(Integer, nullable=True)
+    forecast_cloud_cover   = Column(Float, nullable=True)
+    actual_precipitation   = Column(Float, nullable=True)
+    actual_weather_code    = Column(Integer, nullable=True)
+    actual_cloud_cover     = Column(Float, nullable=True)
 
     city = relationship("City", back_populates="predictions")
 
@@ -105,6 +114,7 @@ class MlModelStore(Base):
 # Indici per performance (compatibili sia SQLite che PostgreSQL)
 Index("idx_obs_city_time",  WeatherObservation.city_id, WeatherObservation.observed_at)
 Index("idx_pred_city_time", MlPrediction.city_id, MlPrediction.predicted_at)
+Index("idx_pred_target_time", MlPrediction.city_id, MlPrediction.target_time)
 Index("idx_pred_verified",  MlPrediction.verified)
 Index("idx_cities_name",    City.name_lower)
 Index("idx_cities_type",    City.locality_type)
@@ -120,41 +130,27 @@ def get_db():
 
 
 def init_db():
-    """Crea tutte le tabelle se non esistono e applica le migrazioni colonne."""
-    Base.metadata.create_all(bind=engine)
-    _migrate_columns()
+    """Allinea lo schema al `head` Alembic."""
+    run_migrations()
     print("[OK] Database inizializzato")
 
 
-def _migrate_columns():
-    """
-    Aggiunge colonne nuove alle tabelle esistenti (compatibile PostgreSQL e SQLite).
-    ALTER TABLE ... ADD COLUMN IF NOT EXISTS funziona su PostgreSQL;
-    su SQLite usiamo try/except perché non supporta IF NOT EXISTS.
-    """
-    migrations = [
-        ("ml_predictions", "precipitation", "FLOAT"),
-        ("ml_predictions", "weather_code",  "INTEGER"),
-        ("cities",         "locality_type", "TEXT DEFAULT 'comune'"),
-    ]
-    with engine.connect() as conn:
-        for table, column, col_type in migrations:
-            try:
-                if _is_sqlite:
-                    # SQLite: prova ad aggiungere, ignora errore se esiste già
-                    conn.execute(
-                        __import__("sqlalchemy").text(
-                            f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
-                        )
-                    )
-                else:
-                    # PostgreSQL: supporta IF NOT EXISTS
-                    conn.execute(
-                        __import__("sqlalchemy").text(
-                            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
-                        )
-                    )
-                conn.commit()
-                print(f"[MIGR] Aggiunta colonna {table}.{column}")
-            except Exception:
-                conn.rollback()  # colonna già esistente, nessun problema
+def db_healthcheck() -> bool:
+    """Verifica minima di connettività al database."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+def run_migrations():
+    """Esegue `alembic upgrade head` sul database configurato."""
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_ini = Path(__file__).parent / "alembic.ini"
+    config = Config(str(alembic_ini))
+    config.set_main_option("sqlalchemy.url", DATABASE_URL)
+    command.upgrade(config, "head")

@@ -1,68 +1,95 @@
-"""Test per l'endpoint GET /api/cities/index"""
-from fastapi.testclient import TestClient
-from unittest.mock import MagicMock
+"""Test per gli endpoint città."""
+from types import SimpleNamespace
 
-# Importa l'app — assicurati di essere nella directory meteo-backend
-import sys, os
+from fastapi.testclient import TestClient
+
+import sys
+import os
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from main import app
 from database import get_db
 
+
 client = TestClient(app)
 
 
-def make_fake_city(name="Roma", region="Lazio", lat=41.9, lon=12.5, locality_type="comune"):
-    city = MagicMock()
-    city.name = name
-    city.region = region
-    city.lat = lat
-    city.lon = lon
-    city.locality_type = locality_type
-    return city
+def make_fake_city(
+    *,
+    city_id=1,
+    name="Roma",
+    region="Lazio",
+    province="RM",
+    lat=41.9,
+    lon=12.5,
+    locality_type="comune",
+):
+    return SimpleNamespace(
+        id=city_id,
+        name=name,
+        region=region,
+        province=province,
+        lat=lat,
+        lon=lon,
+        locality_type=locality_type,
+        name_lower=name.lower(),
+    )
 
 
-def test_cities_index_returns_list():
-    """L'endpoint restituisce una lista JSON."""
-    fake_cities = [make_fake_city("Roma"), make_fake_city("Milano", "Lombardia", 45.4, 9.1)]
+def override_db(rows):
+    class FakeQuery:
+        def __init__(self, items):
+            self.items = items
 
-    mock_db = MagicMock()
-    mock_db.query.return_value.all.return_value = fake_cities
+        def filter(self, *args, **kwargs):
+            return self
 
-    def override_get_db():
-        yield mock_db
+        def order_by(self, *args, **kwargs):
+            return self
 
-    app.dependency_overrides[get_db] = override_get_db
+        def limit(self, limit):
+            self.items = self.items[:limit]
+            return self
+
+        def all(self):
+            return self.items
+
+        def first(self):
+            return self.items[0] if self.items else None
+
+    class FakeDb:
+        def query(self, *args, **kwargs):
+            return FakeQuery(rows)
+
+    def _override():
+        yield FakeDb()
+
+    return _override
+
+
+def test_cities_index_returns_cacheable_payload():
+    fake_rows = [make_fake_city(), make_fake_city(city_id=2, name="Milano", region="Lombardia", province="MI")]
+    app.dependency_overrides[get_db] = override_db(fake_rows)
     try:
-        response = client.get("/api/cities/index")
+        response = client.get("/api/cities/index?scope=comuni&version=v2")
     finally:
         app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, list)
+    assert response.headers["Cache-Control"].startswith("public")
+    assert response.headers["X-Cities-Index-Version"] == "v2"
+    item = response.json()[0]
+    assert set(item.keys()) == {"name", "region", "province", "lat", "lon", "locality_type"}
 
 
-def test_cities_index_item_shape():
-    """Ogni elemento ha name, region, lat, lon, locality_type — senza id."""
-    fake_cities = [make_fake_city()]
-
-    mock_db = MagicMock()
-    mock_db.query.return_value.all.return_value = fake_cities
-
-    def override_get_db():
-        yield mock_db
-
-    app.dependency_overrides[get_db] = override_get_db
+def test_cities_search_returns_list():
+    fake_rows = [make_fake_city(name="Roma"), make_fake_city(city_id=2, name="Rovigo", region="Veneto", province="RO")]
+    app.dependency_overrides[get_db] = override_db(fake_rows)
     try:
-        response = client.get("/api/cities/index")
+        response = client.get("/api/cities?q=ro&limit=2")
     finally:
         app.dependency_overrides.pop(get_db, None)
 
-    item = response.json()[0]
-    assert "name" in item
-    assert "region" in item
-    assert "lat" in item
-    assert "lon" in item
-    assert "locality_type" in item
-    assert "id" not in item
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)

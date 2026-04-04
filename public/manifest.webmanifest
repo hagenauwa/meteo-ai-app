@@ -1,0 +1,9 @@
+{
+  "name": "Meteo AI",
+  "short_name": "Meteo AI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e9f3fb",
+  "theme_color": "#0f4c81",
+  "description": "Previsioni meteo italiane con correzione AI server-side."
+}

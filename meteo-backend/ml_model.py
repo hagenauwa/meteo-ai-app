@@ -1,152 +1,320 @@
 """
-ml_model.py — Modello ML scikit-learn per correzione temperatura
-
-Algoritmo: Ridge Regression
-Features: ora del giorno, mese, latitudine, umidità, cloud cover, regione (encoded)
-Target: errore = actual_temp - predicted_temp
-
-Il modello viene serializzato (pickle) e salvato in PostgreSQL (tabella ml_model_store).
+ml_model.py — modelli ML per correzione temperatura e probabilità pioggia.
 """
-import io
+from __future__ import annotations
+
 import pickle
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
-from sklearn.linear_model import Ridge, LogisticRegression
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.metrics import accuracy_score, mean_absolute_error
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error
-
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from database import SessionLocal, MlPrediction, MlModelStore, City
+
+from database import City, MlModelStore, MlPrediction, SessionLocal
 
 # Pipeline globali caricate in memoria all'avvio
 _pipeline: Optional[Pipeline] = None
 _rain_pipeline: Optional[Pipeline] = None
 _label_encoder: Optional[LabelEncoder] = None
-_known_regions: list = []
+_known_regions: list[str] = []
+_latest_summary: dict = {
+    "model_ready": False,
+    "rain_model_ready": False,
+    "model_mae": None,
+    "baseline_mae": None,
+    "rain_accuracy": None,
+    "rain_baseline_accuracy": None,
+    "model_samples": None,
+    "model_trained_at": None,
+}
 
 
-def _build_features(hour: int, month: int, lat: float, humidity: float,
-                    cloud_cover: float, region: str) -> np.ndarray:
-    """Costruisce il vettore features normalizzato per una singola osservazione."""
-    global _label_encoder, _known_regions
-
-    # Encoding regione
+def _build_features(
+    *,
+    forecast_temp: float,
+    humidity: float,
+    hour: int,
+    month: int,
+    lat: float,
+    region: str,
+    cloud_cover: float,
+    lead_hours: int,
+) -> np.ndarray:
+    """Costruisce il vettore features per una singola previsione."""
     region_code = 0
     if _label_encoder and region in _known_regions:
         region_code = int(_label_encoder.transform([region])[0])
 
-    return np.array([[hour, month, lat, humidity or 50.0, cloud_cover or 50.0, region_code]])
+    return np.array([[
+        forecast_temp,
+        humidity or 50.0,
+        hour,
+        month,
+        lat,
+        cloud_cover or 50.0,
+        max(0, lead_hours or 0),
+        region_code,
+    ]])
+
+
+def _prepare_training_rows(db: Session) -> list[dict]:
+    rows = (
+        db.query(
+            MlPrediction.predicted_at,
+            MlPrediction.target_time,
+            MlPrediction.predicted_temp,
+            MlPrediction.forecast_temp,
+            MlPrediction.humidity,
+            MlPrediction.forecast_cloud_cover,
+            MlPrediction.lead_hours,
+            MlPrediction.error,
+            MlPrediction.actual_precipitation,
+            City.lat,
+            City.region,
+        )
+        .join(City, MlPrediction.city_id == City.id)
+        .filter(MlPrediction.verified.is_(True))
+        .filter(MlPrediction.actual_temp.isnot(None))
+        .filter(MlPrediction.error.isnot(None))
+        .all()
+    )
+
+    prepared: list[dict] = []
+    for row in rows:
+        target_time = row.target_time or row.predicted_at
+        if not target_time:
+            continue
+        forecast_temp = row.forecast_temp if row.forecast_temp is not None else row.predicted_temp
+        prepared.append({
+            "target_time": target_time,
+            "forecast_temp": forecast_temp,
+            "humidity": row.humidity or 50.0,
+            "hour": target_time.hour,
+            "month": target_time.month,
+            "lat": row.lat or 43.0,
+            "cloud_cover": row.forecast_cloud_cover or 50.0,
+            "lead_hours": row.lead_hours or 0,
+            "region": row.region or "Sconosciuta",
+            "error": row.error,
+            "actual_precipitation": row.actual_precipitation,
+        })
+    prepared.sort(key=lambda item: item["target_time"])
+    return prepared
+
+
+def _encode_regions(rows: list[dict]) -> LabelEncoder:
+    global _known_regions, _label_encoder
+
+    regions = sorted({row["region"] for row in rows} or {"Sconosciuta"})
+    encoder = LabelEncoder()
+    encoder.fit(regions)
+    _known_regions = regions
+    _label_encoder = encoder
+    return encoder
+
+
+def _build_temperature_matrices(rows: list[dict], encoder: LabelEncoder) -> tuple[np.ndarray, np.ndarray]:
+    X, y = [], []
+    for row in rows:
+        region_code = int(encoder.transform([row["region"]])[0])
+        X.append([
+            row["forecast_temp"],
+            row["humidity"],
+            row["hour"],
+            row["month"],
+            row["lat"],
+            row["cloud_cover"],
+            row["lead_hours"],
+            region_code,
+        ])
+        y.append(row["error"])
+    return np.array(X), np.array(y)
+
+
+def _build_rain_matrices(rows: list[dict], encoder: LabelEncoder) -> tuple[np.ndarray, np.ndarray]:
+    X, y = [], []
+    for row in rows:
+        region_code = int(encoder.transform([row["region"]])[0])
+        X.append([
+            row["forecast_temp"],
+            row["humidity"],
+            row["hour"],
+            row["month"],
+            row["lat"],
+            row["cloud_cover"],
+            row["lead_hours"],
+            region_code,
+        ])
+        y.append(1 if (row["actual_precipitation"] or 0.0) > 0.1 else 0)
+    return np.array(X), np.array(y)
+
+
+def _train_temperature_pipeline(rows: list[dict]) -> dict:
+    encoder = _encode_regions(rows)
+    X, y = _build_temperature_matrices(rows, encoder)
+
+    if len(X) < 10:
+        return {"success": False, "message": "Campioni insufficienti per split temporale"}
+
+    split_idx = max(int(len(X) * 0.8), 1)
+    if split_idx >= len(X):
+        split_idx = len(X) - 1
+
+    X_train, X_val = X[:split_idx], X[split_idx:]
+    y_train, y_val = y[:split_idx], y[split_idx:]
+
+    baseline_mae = float(np.mean(np.abs(y_val)))
+
+    pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("ridge", Ridge(alpha=1.0)),
+    ])
+    pipeline.fit(X_train, y_train)
+
+    y_pred = pipeline.predict(X_val)
+    mae = float(mean_absolute_error(y_val, y_pred))
+
+    if mae >= baseline_mae:
+        return {
+            "success": False,
+            "message": f"Il modello non supera il baseline (MAE {mae:.3f} vs {baseline_mae:.3f})",
+            "baseline_mae": baseline_mae,
+            "mae": mae,
+            "pipeline": None,
+            "encoder": encoder,
+        }
+
+    return {
+        "success": True,
+        "pipeline": pipeline,
+        "encoder": encoder,
+        "mae": mae,
+        "baseline_mae": baseline_mae,
+        "n_samples": len(rows),
+    }
+
+
+def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
+    rain_rows = [row for row in rows if row["actual_precipitation"] is not None]
+    if len(rain_rows) < 20:
+        return {"success": False, "message": "Dati insufficienti per il modello pioggia"}
+
+    X, y = _build_rain_matrices(rain_rows, encoder)
+    if len(set(y.tolist())) < 2:
+        return {"success": False, "message": "Solo una classe disponibile per la pioggia"}
+
+    split_idx = max(int(len(X) * 0.8), 1)
+    if split_idx >= len(X):
+        split_idx = len(X) - 1
+
+    X_train, X_val = X[:split_idx], X[split_idx:]
+    y_train, y_val = y[:split_idx], y[split_idx:]
+
+    baseline_acc = max(float(np.mean(y_val)), 1.0 - float(np.mean(y_val)))
+
+    pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(class_weight="balanced", max_iter=1000)),
+    ])
+    pipeline.fit(X_train, y_train)
+
+    acc = float(accuracy_score(y_val, pipeline.predict(X_val)))
+    if acc < baseline_acc:
+        return {
+            "success": False,
+            "message": f"Il modello pioggia non supera il baseline ({acc:.3f} vs {baseline_acc:.3f})",
+            "accuracy": acc,
+            "baseline_accuracy": baseline_acc,
+        }
+
+    return {
+        "success": True,
+        "pipeline": pipeline,
+        "accuracy": acc,
+        "baseline_accuracy": baseline_acc,
+        "n_samples": len(rain_rows),
+        "rain_share": round(float(np.mean(y)), 3),
+    }
 
 
 def train(min_samples: int = 100) -> dict:
     """
-    Addestra il modello Ridge Regression sulle previsioni verificate.
-    Salva il modello serializzato nel DB (include _rain_pipeline se già addestrato).
-    Ritorna dizionario con metriche.
+    Addestra i modelli sulle previsioni verificate con target_time futuro.
+    Promuove il modello solo se batte un baseline semplice.
     """
-    global _pipeline, _rain_pipeline, _label_encoder, _known_regions
+    global _pipeline, _rain_pipeline, _latest_summary
 
     db: Session = SessionLocal()
     try:
-        # Carica predictions verificate con join su cities per avere lat e region
-        rows = (
-            db.query(
-                MlPrediction.predicted_temp,
-                MlPrediction.humidity,
-                MlPrediction.hour,
-                MlPrediction.error,
-                MlPrediction.predicted_at,
-                City.lat,
-                City.region
-            )
-            .join(City, MlPrediction.city_id == City.id)
-            .filter(MlPrediction.verified == True)
-            .filter(MlPrediction.error.isnot(None))
-            .all()
-        )
-
+        rows = _prepare_training_rows(db)
         if len(rows) < min_samples:
             return {
                 "success": False,
-                "message": f"Dati insufficienti: {len(rows)} campioni (minimo {min_samples})"
+                "message": f"Dati insufficienti: {len(rows)} campioni (minimo {min_samples})",
             }
 
-        print(f"[TRAIN] Training su {len(rows)} campioni verificati...")
+        temp_result = _train_temperature_pipeline(rows)
+        if not temp_result["success"]:
+            return {
+                "success": False,
+                "message": temp_result["message"],
+                "baseline_mae": temp_result.get("baseline_mae"),
+                "mae": temp_result.get("mae"),
+            }
 
-        # Prepara features
-        regions = list(set(r.region or "Sconosciuta" for r in rows))
-        _known_regions = regions
-        le = LabelEncoder()
-        le.fit(regions)
-        _label_encoder = le
+        pipeline = temp_result["pipeline"]
+        encoder = temp_result["encoder"]
+        rain_result = _train_rain_pipeline(rows, encoder)
+        rain_pipeline = rain_result["pipeline"] if rain_result.get("success") else None
 
-        X, y = [], []
-        for r in rows:
-            region = r.region or "Sconosciuta"
-            region_code = int(le.transform([region])[0])
-            month = r.predicted_at.month if r.predicted_at else 6
-            X.append([
-                r.hour or 12,
-                month,
-                r.lat or 43.0,
-                r.humidity or 50.0,
-                50.0,           # cloud_cover non disponibile nelle predictions, default 50
-                region_code
-            ])
-            y.append(r.error)
-
-        X = np.array(X)
-        y = np.array(y)
-
-        # Split train/validation
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-
-        # Pipeline: StandardScaler + Ridge
-        pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("ridge",  Ridge(alpha=1.0))
-        ])
-        pipeline.fit(X_train, y_train)
-
-        # Valutazione
-        y_pred = pipeline.predict(X_val)
-        mae = float(mean_absolute_error(y_val, y_pred))
-
-        print(f"[OK] Modello addestrato — MAE: {mae:.3f}°C su {len(X_val)} campioni di validazione")
-
-        # Serializza modello (pipeline temperatura + pioggia + label encoder)
         model_data = pickle.dumps({
-            "pipeline":      pipeline,
-            "rain_pipeline": _rain_pipeline,  # None se non ancora addestrato
-            "le":            le,
-            "regions":       regions
+            "pipeline": pipeline,
+            "rain_pipeline": rain_pipeline,
+            "le": encoder,
+            "regions": _known_regions,
+            "baseline_mae": temp_result["baseline_mae"],
+            "rain_accuracy": rain_result.get("accuracy"),
+            "rain_baseline_accuracy": rain_result.get("baseline_accuracy"),
         })
 
-        # Salva in DB
         record = MlModelStore(
-            trained_at  = datetime.now(timezone.utc),
-            model_bytes = model_data,
-            mae         = mae,
-            n_samples   = len(rows)
+            trained_at=datetime.now(timezone.utc),
+            model_bytes=model_data,
+            mae=temp_result["mae"],
+            n_samples=temp_result["n_samples"],
         )
         db.add(record)
         db.commit()
 
-        # Aggiorna istanza globale
         _pipeline = pipeline
-
-        return {
-            "success":    True,
-            "mae":        mae,
-            "n_samples":  len(rows),
-            "trained_at": record.trained_at.isoformat()
+        _rain_pipeline = rain_pipeline
+        _latest_summary = {
+            "model_ready": True,
+            "rain_model_ready": rain_pipeline is not None,
+            "model_mae": temp_result["mae"],
+            "baseline_mae": temp_result["baseline_mae"],
+            "rain_accuracy": rain_result.get("accuracy"),
+            "rain_baseline_accuracy": rain_result.get("baseline_accuracy"),
+            "model_samples": temp_result["n_samples"],
+            "model_trained_at": record.trained_at.isoformat(),
         }
 
+        return {
+            "success": True,
+            "mae": temp_result["mae"],
+            "baseline_mae": temp_result["baseline_mae"],
+            "n_samples": temp_result["n_samples"],
+            "trained_at": record.trained_at.isoformat(),
+            "rain_accuracy": rain_result.get("accuracy"),
+            "rain_baseline_accuracy": rain_result.get("baseline_accuracy"),
+            "rain_model_ready": rain_pipeline is not None,
+            "rain_message": None if rain_pipeline is not None else rain_result.get("message"),
+        }
     except Exception as e:
         print(f"[ERROR] Errore training ML: {e}")
         return {"success": False, "message": str(e)}
@@ -155,24 +323,40 @@ def train(min_samples: int = 100) -> dict:
 
 
 def load_latest_model() -> bool:
-    """Carica l'ultimo modello salvato dal DB in memoria."""
-    global _pipeline, _rain_pipeline, _label_encoder, _known_regions
+    """Carica in memoria l'ultimo modello promosso."""
+    global _pipeline, _rain_pipeline, _label_encoder, _known_regions, _latest_summary
 
     db: Session = SessionLocal()
     try:
         record = db.query(MlModelStore).order_by(MlModelStore.trained_at.desc()).first()
         if not record or not record.model_bytes:
             print("[INFO]  Nessun modello ML salvato nel DB")
+            _latest_summary = {
+                **_latest_summary,
+                "model_ready": False,
+                "rain_model_ready": False,
+                "model_trained_at": None,
+                "model_mae": None,
+                "model_samples": None,
+            }
             return False
 
         data = pickle.loads(record.model_bytes)
-        _pipeline      = data["pipeline"]
-        _rain_pipeline = data.get("rain_pipeline")   # None per modelli vecchi
+        _pipeline = data["pipeline"]
+        _rain_pipeline = data.get("rain_pipeline")
         _label_encoder = data["le"]
         _known_regions = data.get("regions", [])
-        mae_str = f"{record.mae:.3f}°C" if record.mae else "N/A"
-        rain_str = "con modello pioggia" if _rain_pipeline else "senza modello pioggia"
-        print(f"[OK] Modello ML caricato (addestrato: {record.trained_at}, MAE: {mae_str}, {rain_str})")
+        _latest_summary = {
+            "model_ready": _pipeline is not None,
+            "rain_model_ready": _rain_pipeline is not None,
+            "model_mae": record.mae,
+            "baseline_mae": data.get("baseline_mae"),
+            "rain_accuracy": data.get("rain_accuracy"),
+            "rain_baseline_accuracy": data.get("rain_baseline_accuracy"),
+            "model_samples": record.n_samples,
+            "model_trained_at": record.trained_at.isoformat(),
+        }
+        print(f"[OK] Modello ML caricato (addestrato: {record.trained_at}, MAE: {record.mae})")
         return True
     except Exception as e:
         print(f"[WARN]  Errore caricamento modello: {e}")
@@ -182,31 +366,36 @@ def load_latest_model() -> bool:
 
 
 def predict_correction(
+    *,
     temp: float,
     humidity: float,
     hour: int,
     month: int,
     lat: float,
     region: str,
-    cloud_cover: float = 50.0
+    cloud_cover: float = 50.0,
+    lead_hours: int = 0,
 ) -> dict:
     """
-    Predice la correzione da applicare alla temperatura.
-    Ritorna dict con correction (°C) e corrected_temp.
+    Predice la correzione da applicare alla temperatura prevista.
     """
-    global _pipeline
-
     if _pipeline is None:
         return {"correction": 0.0, "corrected_temp": temp, "model_ready": False}
 
     try:
-        features = _build_features(hour, month, lat, humidity, cloud_cover, region)
+        features = _build_features(
+            forecast_temp=temp,
+            humidity=humidity,
+            hour=hour,
+            month=month,
+            lat=lat,
+            region=region,
+            cloud_cover=cloud_cover,
+            lead_hours=lead_hours,
+        )
         correction = float(_pipeline.predict(features)[0])
-
-        # Limite sicurezza: max ±5°C
         correction = max(-5.0, min(5.0, correction))
 
-        # Confidence basata su valore assoluto della correzione
         if abs(correction) < 0.3:
             confidence = "bassa"
         elif abs(correction) < 1.0:
@@ -215,143 +404,46 @@ def predict_correction(
             confidence = "alta"
 
         return {
-            "correction":     round(correction, 2),
+            "correction": round(correction, 2),
             "corrected_temp": round(temp + correction, 1),
-            "model_ready":    True,
-            "confidence":     confidence
+            "model_ready": True,
+            "confidence": confidence,
         }
     except Exception as e:
         return {"correction": 0.0, "corrected_temp": temp, "model_ready": False, "error": str(e)}
 
 
-def train_rain_model(min_samples: int = 100) -> dict:
-    """
-    Addestra LogisticRegression per previsione pioggia/non-pioggia.
-    Usa MlPrediction verificate con precipitation IS NOT NULL.
-    Aggiorna _rain_pipeline in memoria e salva in DB (aggiornando l'ultimo record).
-    """
-    global _rain_pipeline, _pipeline, _label_encoder, _known_regions
-
-    db: Session = SessionLocal()
-    try:
-        rows = (
-            db.query(
-                MlPrediction.humidity,
-                MlPrediction.hour,
-                MlPrediction.precipitation,
-                MlPrediction.predicted_at,
-                City.lat,
-                City.region
-            )
-            .join(City, MlPrediction.city_id == City.id)
-            .filter(MlPrediction.verified == True)
-            .filter(MlPrediction.precipitation.isnot(None))
-            .all()
-        )
-
-        if len(rows) < min_samples:
-            return {
-                "success": False,
-                "message": f"Dati insufficienti per modello pioggia: {len(rows)}/{min_samples}"
-            }
-
-        print(f"[TRAIN] Training modello pioggia su {len(rows)} campioni...")
-
-        X, y = [], []
-        for r in rows:
-            month = r.predicted_at.month if r.predicted_at else 6
-            region = r.region or "Sconosciuta"
-            region_code = 0
-            if _label_encoder and region in _known_regions:
-                region_code = int(_label_encoder.transform([region])[0])
-            X.append([
-                r.hour or 12,
-                month,
-                r.lat or 43.0,
-                r.humidity or 50.0,
-                50.0,   # cloud_cover default
-                region_code
-            ])
-            y.append(1 if (r.precipitation or 0) > 0.1 else 0)
-
-        X = np.array(X)
-        y = np.array(y)
-
-        if len(set(y)) < 2:
-            return {"success": False, "message": "Solo una classe nei dati (tutto sole o tutto pioggia)"}
-
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
-
-        rain_pipeline = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf",    LogisticRegression(class_weight="balanced", max_iter=1000))
-        ])
-        rain_pipeline.fit(X_train, y_train)
-
-        acc = float(accuracy_score(y_val, rain_pipeline.predict(X_val)))
-        rain_share = round(float(sum(y)) / len(y), 3)
-        print(f"[OK] Modello pioggia — Accuracy: {acc:.3f}, giorni pioggia: {rain_share:.1%}")
-
-        _rain_pipeline = rain_pipeline
-
-        # Aggiorna il pickle dell'ultimo record con entrambi i modelli
-        model_data = pickle.dumps({
-            "pipeline":      _pipeline,
-            "rain_pipeline": _rain_pipeline,
-            "le":            _label_encoder,
-            "regions":       _known_regions
-        })
-        record = db.query(MlModelStore).order_by(MlModelStore.trained_at.desc()).first()
-        if record:
-            record.model_bytes = model_data
-        else:
-            record = MlModelStore(
-                trained_at  = datetime.now(timezone.utc),
-                model_bytes = model_data,
-                mae         = None,
-                n_samples   = len(rows)
-            )
-            db.add(record)
-        db.commit()
-
-        return {
-            "success":    True,
-            "accuracy":   acc,
-            "n_samples":  len(rows),
-            "rain_share": rain_share
-        }
-
-    except Exception as e:
-        print(f"[ERROR] Errore training modello pioggia: {e}")
-        return {"success": False, "message": str(e)}
-    finally:
-        db.close()
-
-
 def predict_rain_probability(
+    *,
+    forecast_temp: float,
     humidity: float,
     hour: int,
     month: int,
     lat: float,
     region: str,
-    cloud_cover: float = 50.0
+    cloud_cover: float = 50.0,
+    lead_hours: int = 0,
 ) -> dict:
     """
-    Predice la probabilità di pioggia per una città.
-    Ritorna dict con rain_probability, will_rain, model_ready, confidence.
+    Predice la probabilità di pioggia per una previsione futura.
     """
-    global _rain_pipeline
-
     if _rain_pipeline is None:
         return {
             "model_ready": False,
-            "message": "Modello pioggia non ancora addestrato — servono dati storici (~24h)"
+            "message": "Modello pioggia non ancora disponibile",
         }
 
     try:
-        features = _build_features(hour, month, lat, humidity, cloud_cover, region)
+        features = _build_features(
+            forecast_temp=forecast_temp,
+            humidity=humidity,
+            hour=hour,
+            month=month,
+            lat=lat,
+            region=region,
+            cloud_cover=cloud_cover,
+            lead_hours=lead_hours,
+        )
         proba = _rain_pipeline.predict_proba(features)[0]
         rain_prob = float(proba[1])
 
@@ -364,40 +456,46 @@ def predict_rain_probability(
 
         return {
             "rain_probability": round(rain_prob, 3),
-            "will_rain":        rain_prob >= 0.5,
-            "model_ready":      True,
-            "confidence":       confidence
+            "will_rain": rain_prob >= 0.5,
+            "model_ready": True,
+            "confidence": confidence,
         }
     except Exception as e:
         return {"model_ready": False, "error": str(e)}
 
 
+def get_public_summary() -> dict:
+    return dict(_latest_summary)
+
+
 def get_stats() -> dict:
-    """Ritorna statistiche sul modello e sulle predictions."""
+    """Statistiche aggregate sul modello e sul dataset."""
     db: Session = SessionLocal()
     try:
-        total = db.query(MlPrediction).count()
-        verified = db.query(MlPrediction).filter(MlPrediction.verified == True).count()
+        total = db.query(func.count(MlPrediction.id)).scalar() or 0
+        verified = db.query(func.count(MlPrediction.id)).filter(MlPrediction.verified.is_(True)).scalar() or 0
+        avg_error = db.query(func.avg(func.abs(MlPrediction.error))).filter(
+            MlPrediction.verified.is_(True),
+            MlPrediction.error.isnot(None),
+        ).scalar()
 
-        latest_model = db.query(MlModelStore).order_by(MlModelStore.trained_at.desc()).first()
-
-        avg_error = None
-        if verified > 0:
-            errors = db.query(MlPrediction.error).filter(
-                MlPrediction.verified == True,
-                MlPrediction.error.isnot(None)
-            ).all()
-            avg_error = round(float(np.mean([abs(e[0]) for e in errors])), 3)
+        lead_error_rows = (
+            db.query(MlPrediction.lead_hours, func.avg(func.abs(MlPrediction.error)))
+            .filter(MlPrediction.verified.is_(True), MlPrediction.error.isnot(None))
+            .group_by(MlPrediction.lead_hours)
+            .order_by(MlPrediction.lead_hours)
+            .all()
+        )
 
         return {
-            "total_predictions":    total,
-            "verified_predictions": verified,
-            "avg_error_celsius":    avg_error,
-            "model_ready":          _pipeline is not None,
-            "rain_model_ready":     _rain_pipeline is not None,
-            "model_trained_at":     latest_model.trained_at.isoformat() if latest_model else None,
-            "model_mae":            latest_model.mae if latest_model else None,
-            "model_samples":        latest_model.n_samples if latest_model else None,
+            "total_predictions": int(total),
+            "verified_predictions": int(verified),
+            "avg_error_celsius": round(float(avg_error), 3) if avg_error is not None else None,
+            "lead_time_error": [
+                {"lead_hours": lead_hours or 0, "avg_abs_error": round(float(value), 3)}
+                for lead_hours, value in lead_error_rows
+            ],
+            **get_public_summary(),
         }
     finally:
         db.close()

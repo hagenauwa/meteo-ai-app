@@ -1,7 +1,7 @@
 {
   "name": "meteo-ai-app",
   "version": "1.0.0",
-  "description": "Web App Previsioni Meteo con Machine Learning - Implementazione Vanilla JS + TensorFlow.js",
+  "description": "Web app meteo italiana con backend FastAPI, ML server-side e frontend statico su Netlify",
   "main": "index.html",
   "scripts": {
     "dev": "netlify dev",
@@ -12,9 +12,10 @@
     "meteo",
     "previsioni",
     "machine-learning",
-    "tensorflow",
+    "fastapi",
+    "open-meteo",
     "netlify",
-    "openweather"
+    "render"
   ],
   "author": "",
   "license": "MIT",

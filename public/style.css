@@ -368,6 +368,32 @@ body {
     transform: translateY(-2px);
 }
 
+.saved-cities {
+    margin-top: 16px;
+    display: grid;
+    gap: 10px;
+}
+
+.saved-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.saved-group .label {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.9rem;
+}
+
+.saved-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+}
+
 /* ============================================
    STATO CARICAMENTO E ERRORI
    ============================================ */
@@ -833,6 +859,11 @@ body {
 .ml-controls button {
     font-size: 0.9rem;
     padding: 12px 20px;
+}
+
+.ml-controls button[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* ============================================
