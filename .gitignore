@@ -41,3 +41,7 @@ __pycache__/
 meteo-backend/*.db
 meteo-backend/*.db-shm
 meteo-backend/*.db-wal
+
+# Documentazione locale per Codex/ops
+AGENTS.md
+docs/ops-learnings.md
