@@ -4,7 +4,7 @@ services:
     runtime: python
     rootDir: meteo-backend
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m alembic -c alembic.ini upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: if [ -f alembic.ini ]; then python -m alembic -c alembic.ini upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT; else cd meteo-backend && python -m alembic -c alembic.ini upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT; fi
     healthCheckPath: /ready
     envVars:
       - key: DATABASE_URL
