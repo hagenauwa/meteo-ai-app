@@ -37,3 +37,12 @@ export function pushRecent(city) {
     ].slice(0, 8);
     writeJson(RECENTS_KEY, next);
 }
+
+export function removeRecent(cityName) {
+    const next = getRecents().filter(item => item.name.toLowerCase() !== cityName.toLowerCase());
+    writeJson(RECENTS_KEY, next);
+}
+
+export function clearRecents() {
+    writeJson(RECENTS_KEY, []);
+}

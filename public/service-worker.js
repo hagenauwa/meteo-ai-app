@@ -1,4 +1,4 @@
-const CACHE_NAME = "meteo-ai-static-v5";
+const CACHE_NAME = "meteo-ai-static-v6";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
@@ -24,7 +24,7 @@ async function updateCache(request, response) {
 
 async function networkFirst(request) {
     try {
-        const response = await fetch(request);
+        const response = await fetch(new Request(request, { cache: "no-store" }));
         return updateCache(request, response);
     } catch (error) {
         const cached = await caches.match(request);
@@ -55,6 +55,12 @@ self.addEventListener("activate", event => {
             )
             .then(() => self.clients.claim())
     );
+});
+
+self.addEventListener("message", event => {
+    if (event.data?.type === "SKIP_WAITING") {
+        self.skipWaiting();
+    }
 });
 
 self.addEventListener("fetch", event => {

@@ -239,7 +239,7 @@ export function renderWeather(payload, { selectedDayIndex = 0, onDaySelect = () 
     showLoading(false);
 }
 
-export function renderChipList(targetId, cities, onClick) {
+export function renderChipList(targetId, cities, onClick, { onRemove = null } = {}) {
     const container = document.getElementById(targetId);
     if (!container) return;
     container.innerHTML = "";
@@ -250,8 +250,34 @@ export function renderChipList(targetId, cities, onClick) {
     }
 
     cities.forEach(city => {
+        if (onRemove) {
+            const row = document.createElement("div");
+            row.className = "city-chip-row";
+
+            const button = document.createElement("button");
+            button.className = "city-chip-main";
+            button.type = "button";
+            button.textContent = city.name;
+            button.addEventListener("click", () => onClick(city));
+
+            const removeButton = document.createElement("button");
+            removeButton.className = "city-chip-remove";
+            removeButton.type = "button";
+            removeButton.setAttribute("aria-label", `Rimuovi ${city.name} dalle recenti`);
+            removeButton.innerHTML = '<i class="fas fa-xmark" aria-hidden="true"></i>';
+            removeButton.addEventListener("click", event => {
+                event.stopPropagation();
+                onRemove(city);
+            });
+
+            row.append(button, removeButton);
+            container.appendChild(row);
+            return;
+        }
+
         const button = document.createElement("button");
         button.className = "city-chip";
+        button.type = "button";
         button.textContent = city.name;
         button.addEventListener("click", () => onClick(city));
         container.appendChild(button);

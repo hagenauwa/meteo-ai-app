@@ -38,7 +38,7 @@
         <div class="container">
             <div class="search-panel">
                 <div class="search-copy">
-                    <h2>Previsioni per citta e giorno, senza rumore.</h2>
+                    <h2>Previsioni per città e giorno, senza rumore.</h2>
                 </div>
 
                 <div class="search-box">
@@ -58,25 +58,18 @@
                 </div>
             </div>
 
-            <div class="quick-cities">
-                <span class="label">Citta popolari</span>
-                <button class="city-chip" data-city="Roma">Roma</button>
-                <button class="city-chip" data-city="Milano">Milano</button>
-                <button class="city-chip" data-city="Napoli">Napoli</button>
-                <button class="city-chip" data-city="Torino">Torino</button>
-                <button class="city-chip" data-city="Firenze">Firenze</button>
-                <button class="city-chip" data-city="Venezia">Venezia</button>
-                <button class="city-chip" data-city="Bologna">Bologna</button>
-                <button class="city-chip" data-city="Palermo">Palermo</button>
-            </div>
-
             <div class="saved-cities">
                 <div class="saved-group">
-                    <span class="label">Preferite</span>
+                    <div class="saved-group-head">
+                        <span class="label">Preferite</span>
+                    </div>
                     <div id="favoritesList" class="saved-chips"></div>
                 </div>
                 <div class="saved-group">
-                    <span class="label">Recenti</span>
+                    <div class="saved-group-head">
+                        <span class="label">Recenti</span>
+                        <button id="clearRecentsBtn" class="saved-action hidden" type="button">Svuota tutto</button>
+                    </div>
                     <div id="recentList" class="saved-chips"></div>
                 </div>
             </div>
