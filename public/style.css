@@ -1,15 +1,15 @@
 :root {
-    --ink: #163042;
-    --ink-soft: #587083;
-    --sky: #f3fbff;
-    --card: rgba(255, 255, 255, 0.86);
+    --ink: #1e293b;
+    --ink-soft: #64748b;
+    --sky: #f1f5f9;
+    --card: rgba(255, 255, 255, 0.88);
     --card-strong: #ffffff;
-    --line: rgba(19, 60, 85, 0.12);
-    --accent: #0f766e;
-    --accent-strong: #115e59;
+    --line: rgba(226, 232, 240, 0.96);
+    --accent: #3b82f6;
+    --accent-strong: #2563eb;
     --sun: #f59e0b;
-    --storm: #133c55;
-    --shadow: 0 20px 60px rgba(18, 53, 75, 0.12);
+    --storm: #0f4c81;
+    --shadow: 0 20px 60px rgba(15, 23, 42, 0.14);
     --radius-lg: 28px;
     --radius-md: 18px;
     --radius-sm: 14px;
@@ -31,9 +31,9 @@ body {
     font-family: "Manrope", system-ui, sans-serif;
     color: var(--ink);
     background:
-        radial-gradient(circle at top left, rgba(125, 211, 252, 0.45), transparent 28%),
-        radial-gradient(circle at top right, rgba(253, 224, 71, 0.28), transparent 22%),
-        linear-gradient(180deg, #dff6ff 0%, #eef7f2 46%, #f7fbfc 100%);
+        radial-gradient(circle at top left, rgba(59, 130, 246, 0.3), transparent 26%),
+        radial-gradient(circle at top right, rgba(139, 92, 246, 0.24), transparent 22%),
+        linear-gradient(135deg, #dbeafe 0%, #e0e7ff 42%, #f8fafc 100%);
 }
 
 .container {
@@ -69,7 +69,7 @@ body {
     height: 60px;
     border-radius: 18px;
     color: #fff;
-    background: linear-gradient(135deg, #0f766e, #155e75);
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
     box-shadow: var(--shadow);
     font-size: 1.7rem;
 }
@@ -97,6 +97,10 @@ body {
 
 .logo h1 {
     font-size: clamp(2rem, 4vw, 3rem);
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 .subtitle {
@@ -115,9 +119,9 @@ body {
     grid-template-columns: 1.2fr 1fr;
     gap: 28px;
     padding: 30px;
-    border: 1px solid rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.72);
     border-radius: 32px;
-    background: rgba(255, 255, 255, 0.44);
+    background: rgba(255, 255, 255, 0.68);
     backdrop-filter: blur(18px);
     box-shadow: var(--shadow);
 }
@@ -149,24 +153,24 @@ body {
 #cityInput {
     width: 100%;
     min-height: 58px;
-    border: 1px solid rgba(19, 60, 85, 0.08);
+    border: 1px solid rgba(226, 232, 240, 0.96);
     border-radius: 18px;
     padding: 0 18px;
     background: rgba(255, 255, 255, 0.92);
     color: var(--ink);
     font: inherit;
-    box-shadow: 0 12px 30px rgba(19, 60, 85, 0.08);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
     transition: border-color var(--transition), transform var(--transition);
 }
 
 #cityInput:focus {
     outline: none;
-    border-color: rgba(17, 94, 89, 0.55);
+    border-color: rgba(59, 130, 246, 0.55);
     transform: translateY(-1px);
 }
 
 #cityInput::placeholder {
-    color: #7a93a3;
+    color: var(--ink-soft);
 }
 
 .autocomplete-list {
@@ -176,7 +180,7 @@ body {
     right: 0;
     z-index: 30;
     overflow: hidden;
-    border: 1px solid rgba(19, 60, 85, 0.08);
+    border: 1px solid rgba(226, 232, 240, 0.96);
     border-radius: 18px;
     background: rgba(255, 255, 255, 0.98);
     box-shadow: var(--shadow);
@@ -188,7 +192,7 @@ body {
     gap: 12px;
     padding: 14px 16px;
     cursor: pointer;
-    border-bottom: 1px solid rgba(19, 60, 85, 0.08);
+    border-bottom: 1px solid rgba(226, 232, 240, 0.9);
     transition: background var(--transition);
 }
 
@@ -198,7 +202,7 @@ body {
 
 .autocomplete-item:hover,
 .autocomplete-item.active {
-    background: rgba(15, 118, 110, 0.08);
+    background: rgba(59, 130, 246, 0.08);
 }
 
 .autocomplete-item i {
@@ -233,8 +237,8 @@ body {
 
 .btn-primary {
     color: #fff;
-    background: linear-gradient(135deg, #0f766e, #155e75);
-    box-shadow: 0 18px 34px rgba(17, 94, 89, 0.28);
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    box-shadow: 0 18px 34px rgba(59, 130, 246, 0.28);
 }
 
 .btn-primary:hover,
@@ -246,13 +250,13 @@ body {
 
 .btn-secondary {
     color: var(--ink);
-    background: rgba(255, 255, 255, 0.82);
-    border: 1px solid rgba(19, 60, 85, 0.08);
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(226, 232, 240, 0.96);
 }
 
 .btn-secondary.is-active {
     color: #fff;
-    background: linear-gradient(135deg, #0f766e, #155e75);
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
 }
 
 .quick-cities,
@@ -283,10 +287,10 @@ body {
 }
 
 .city-chip {
-    border: 1px solid rgba(19, 60, 85, 0.09);
+    border: 1px solid rgba(226, 232, 240, 0.96);
     border-radius: 999px;
     padding: 10px 14px;
-    background: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.78);
     color: var(--ink);
     font: inherit;
     cursor: pointer;
@@ -321,7 +325,7 @@ body {
     height: 48px;
     margin: 0 auto 16px;
     border-radius: 50%;
-    border: 4px solid rgba(17, 94, 89, 0.14);
+    border: 4px solid rgba(59, 130, 246, 0.16);
     border-top-color: var(--accent);
     animation: spin 0.85s linear infinite;
 }
@@ -348,8 +352,8 @@ body {
 .planner-shell {
     padding: 28px;
     border-radius: 32px;
-    background: rgba(255, 255, 255, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.62);
     backdrop-filter: blur(16px);
     box-shadow: var(--shadow);
 }
@@ -402,7 +406,7 @@ body {
 
 .forecast-badge {
     color: var(--accent-strong);
-    background: rgba(15, 118, 110, 0.1);
+    background: rgba(59, 130, 246, 0.1);
 }
 
 .day-selector {
@@ -414,7 +418,7 @@ body {
 
 .day-pill {
     text-align: left;
-    border: 1px solid rgba(19, 60, 85, 0.08);
+    border: 1px solid rgba(226, 232, 240, 0.96);
     border-radius: 22px;
     padding: 16px;
     background: rgba(255, 255, 255, 0.72);
@@ -423,8 +427,8 @@ body {
 }
 
 .day-pill.active {
-    border-color: rgba(17, 94, 89, 0.4);
-    background: linear-gradient(180deg, rgba(15, 118, 110, 0.12), rgba(21, 94, 117, 0.06));
+    border-color: rgba(59, 130, 246, 0.4);
+    background: linear-gradient(180deg, rgba(59, 130, 246, 0.14), rgba(139, 92, 246, 0.08));
 }
 
 .day-pill-top,
@@ -459,7 +463,7 @@ body {
     border: 1px solid var(--line);
     border-radius: 28px;
     background: var(--card);
-    box-shadow: 0 16px 40px rgba(18, 53, 75, 0.08);
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
 }
 
 .selected-day-panel {
@@ -479,7 +483,7 @@ body {
 
 .panel-badge {
     color: #fff;
-    background: linear-gradient(135deg, #133c55, #155e75);
+    background: linear-gradient(135deg, var(--storm), var(--accent));
 }
 
 .selected-day-main {
@@ -532,8 +536,8 @@ body {
 .detail-item {
     padding: 16px;
     border-radius: 18px;
-    background: rgba(255, 255, 255, 0.84);
-    border: 1px solid rgba(19, 60, 85, 0.08);
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(226, 232, 240, 0.96);
 }
 
 .stat-label,
@@ -617,7 +621,7 @@ body {
     border-radius: 20px;
     text-align: center;
     background: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(19, 60, 85, 0.08);
+    border: 1px solid rgba(226, 232, 240, 0.96);
 }
 
 .hour-card .time,
@@ -651,7 +655,7 @@ body {
     border-radius: 18px;
     color: var(--ink-soft);
     background: rgba(255, 255, 255, 0.72);
-    border: 1px dashed rgba(19, 60, 85, 0.14);
+    border: 1px dashed rgba(148, 163, 184, 0.45);
 }
 
 .footer {
