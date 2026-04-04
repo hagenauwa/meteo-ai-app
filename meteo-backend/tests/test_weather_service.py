@@ -54,6 +54,7 @@ def test_build_batch_results_creates_future_predictions():
 
 
 def test_fetch_single_city_returns_first_attempt_payload(monkeypatch):
+    weather_service._public_weather_cache.clear()
     calls = []
     expected = {"current": {}, "hourly": {}, "daily": {}}
 
@@ -70,6 +71,7 @@ def test_fetch_single_city_returns_first_attempt_payload(monkeypatch):
 
 
 def test_fetch_single_city_falls_back_to_compat(monkeypatch):
+    weather_service._public_weather_cache.clear()
     calls = []
     warnings = []
     expected = {"current": {}, "hourly": {}, "daily": {}}
@@ -94,6 +96,7 @@ def test_fetch_single_city_falls_back_to_compat(monkeypatch):
 
 
 def test_fetch_single_city_logs_failure_after_both_attempts(monkeypatch):
+    weather_service._public_weather_cache.clear()
     warnings = []
 
     async def fake_fetch(client, *, params, attempt_name):
@@ -102,8 +105,12 @@ def test_fetch_single_city_logs_failure_after_both_attempts(monkeypatch):
     def fake_urllib_fetch(*, params, attempt_name):
         return None
 
+    async def fake_metno_fetch(lat, lon):
+        return None
+
     monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload", fake_fetch)
     monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload_via_urllib", fake_urllib_fetch)
+    monkeypatch.setattr(weather_service, "_fetch_metno_payload", fake_metno_fetch)
     monkeypatch.setattr(weather_service.logger, "warning", lambda message, *args: warnings.append(message % args))
 
     result = asyncio.run(weather_service.fetch_single_city(41.9, 12.5))
@@ -113,6 +120,7 @@ def test_fetch_single_city_logs_failure_after_both_attempts(monkeypatch):
 
 
 def test_fetch_single_city_uses_urllib_fallback(monkeypatch):
+    weather_service._public_weather_cache.clear()
     calls = []
     warnings = []
     expected = {"current": {}, "hourly": {}, "daily": {}}
@@ -138,6 +146,38 @@ def test_fetch_single_city_uses_urllib_fallback(monkeypatch):
         ("urllib", "compat-urllib", weather_service.SINGLE_CITY_HOURLY_COMPAT_FIELDS),
     ]
     assert any("compat-urllib" in warning for warning in warnings)
+
+
+def test_fetch_single_city_uses_metno_fallback(monkeypatch):
+    weather_service._public_weather_cache.clear()
+    calls = []
+    expected = {"current": {}, "hourly": {}, "daily": {}}
+
+    async def fake_fetch(client, *, params, attempt_name):
+        calls.append(("httpx", attempt_name))
+        return None
+
+    def fake_urllib_fetch(*, params, attempt_name):
+        calls.append(("urllib", attempt_name))
+        return None
+
+    async def fake_metno_fetch(lat, lon):
+        calls.append(("metno", "fallback"))
+        return expected
+
+    monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload", fake_fetch)
+    monkeypatch.setattr(weather_service, "_fetch_open_meteo_payload_via_urllib", fake_urllib_fetch)
+    monkeypatch.setattr(weather_service, "_fetch_metno_payload", fake_metno_fetch)
+
+    result = asyncio.run(weather_service.fetch_single_city(41.9, 12.5))
+
+    assert result == expected
+    assert calls == [
+        ("httpx", "rich"),
+        ("httpx", "compat"),
+        ("urllib", "compat-urllib"),
+        ("metno", "fallback"),
+    ]
 
 
 def test_fetch_open_meteo_payload_logs_http_error(monkeypatch):
@@ -171,3 +211,58 @@ def test_fetch_open_meteo_payload_logs_http_error(monkeypatch):
     assert result is None
     assert any("http_error" in warning for warning in warnings)
     assert any("status=503" in warning for warning in warnings)
+
+
+def test_convert_metno_payload_to_open_meteo_shape():
+    payload = {
+        "properties": {
+            "timeseries": [
+                {
+                    "time": "2026-04-04T10:00:00Z",
+                    "data": {
+                        "instant": {
+                            "details": {
+                                "air_pressure_at_sea_level": 1018,
+                                "air_temperature": 20.5,
+                                "cloud_area_fraction": 35,
+                                "relative_humidity": 60,
+                                "wind_from_direction": 180,
+                                "wind_speed": 5.0,
+                            }
+                        },
+                        "next_1_hours": {
+                            "summary": {"symbol_code": "partlycloudy_day"},
+                            "details": {"precipitation_amount": 0.0},
+                        },
+                    },
+                },
+                {
+                    "time": "2026-04-04T11:00:00Z",
+                    "data": {
+                        "instant": {
+                            "details": {
+                                "air_pressure_at_sea_level": 1017,
+                                "air_temperature": 21.5,
+                                "cloud_area_fraction": 40,
+                                "relative_humidity": 58,
+                                "wind_from_direction": 190,
+                                "wind_speed": 6.0,
+                            }
+                        },
+                        "next_1_hours": {
+                            "summary": {"symbol_code": "lightrain_day"},
+                            "details": {"precipitation_amount": 0.2},
+                        },
+                    },
+                },
+            ]
+        }
+    }
+
+    result = weather_service._convert_metno_to_open_meteo_payload(payload, lat=41.9, lon=12.5)
+
+    assert result is not None
+    assert result["current"]["temperature_2m"] == 20.5
+    assert result["current"]["weather_code"] == 2
+    assert result["hourly"]["weather_code"][1] == 61
+    assert result["daily"]["time"]

@@ -6,19 +6,27 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 import httpx
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+METNO_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
 BATCH_SIZE = 100
-MAX_CONCURRENCY = 6
+MAX_CONCURRENCY = 1
 TIMEOUT = 30
 ML_FORECAST_LEADS = (1, 2, 3, 4, 5, 6)
+BATCH_DELAY_SECONDS = 0.75
+BATCH_RETRY_DELAYS = (5, 15)
+PUBLIC_CACHE_TTL_SECONDS = 300
+ROME_TZ = ZoneInfo("Europe/Rome")
+METNO_USER_AGENT = "MeteoAI/2.1 https://leprevisioni.netlify.app"
 SINGLE_CITY_CURRENT_FIELDS = (
     "temperature_2m,relative_humidity_2m,apparent_temperature,cloud_cover,"
     "wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code"
@@ -37,6 +45,11 @@ SINGLE_CITY_HOURLY_COMPAT_FIELDS = (
 )
 
 logger = logging.getLogger(__name__)
+_public_weather_cache: dict[tuple[float, float], tuple[datetime, dict]] = {}
+
+
+class OpenMeteoRateLimited(Exception):
+    """Raised when Open-Meteo returns HTTP 429 and the caller should back off."""
 
 
 def parse_utc_timestamp(value: str) -> datetime:
@@ -44,6 +57,33 @@ def parse_utc_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _warn(message: str):
+    print(f"[WARN]  {message}")
+    logger.warning(message)
+
+
+def _cache_key(lat: float, lon: float) -> tuple[float, float]:
+    return (round(lat, 4), round(lon, 4))
+
+
+def _get_cached_public_weather(lat: float, lon: float) -> Optional[dict]:
+    entry = _public_weather_cache.get(_cache_key(lat, lon))
+    if not entry:
+        return None
+    expires_at, payload = entry
+    if expires_at <= datetime.now(timezone.utc):
+        _public_weather_cache.pop(_cache_key(lat, lon), None)
+        return None
+    return payload
+
+
+def _set_cached_public_weather(lat: float, lon: float, payload: dict):
+    _public_weather_cache[_cache_key(lat, lon)] = (
+        datetime.now(timezone.utc) + timedelta(seconds=PUBLIC_CACHE_TTL_SECONDS),
+        payload,
+    )
 
 
 def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
@@ -129,13 +169,28 @@ async def fetch_weather_batch(cities: list[dict], client: httpx.AsyncClient) -> 
         "forecast_hours": max(ML_FORECAST_LEADS) + 1,
     }
 
-    try:
-        response = await client.get(OPEN_METEO_URL, params=params, timeout=TIMEOUT)
-        response.raise_for_status()
-        data = response.json()
-    except Exception as e:
-        print(f"[WARN]  Errore Open-Meteo batch: {e}")
-        return {"observations": [], "predictions": []}
+    for retry_index, delay in enumerate((0, *BATCH_RETRY_DELAYS), start=1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            response = await client.get(OPEN_METEO_URL, params=params, timeout=TIMEOUT)
+            response.raise_for_status()
+            data = response.json()
+            break
+        except httpx.HTTPStatusError as exc:
+            if exc.response is not None and exc.response.status_code == 429:
+                _warn(
+                    f"Errore Open-Meteo batch: rate limit 429 sul tentativo {retry_index} "
+                    f"(batch di {len(cities)} città)"
+                )
+                if retry_index == len(BATCH_RETRY_DELAYS) + 1:
+                    raise OpenMeteoRateLimited("Open-Meteo rate limited the batch fetch") from exc
+                continue
+            _warn(f"Errore Open-Meteo batch: {exc}")
+            return {"observations": [], "predictions": []}
+        except Exception as exc:
+            _warn(f"Errore Open-Meteo batch: {exc}")
+            return {"observations": [], "predictions": []}
 
     payload = data if isinstance(data, list) else [data]
     return _build_batch_results(cities, payload)
@@ -143,25 +198,29 @@ async def fetch_weather_batch(cities: list[dict], client: httpx.AsyncClient) -> 
 
 async def fetch_all_cities_weather(cities: list[dict]) -> dict:
     """
-    Scarica meteo per tutte le città in batch paralleli a concorrenza limitata.
+    Scarica meteo per tutte le città in batch con pacing prudente per evitare 429.
     """
     all_observations: list[dict] = []
     all_predictions: list[dict] = []
     batches = [cities[i:i + BATCH_SIZE] for i in range(0, len(cities), BATCH_SIZE)]
 
     print(f"[API] Scaricando meteo per {len(cities)} città in {len(batches)} batch...")
-    semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
-
-    async def run_batch(batch: list[dict], client: httpx.AsyncClient) -> dict:
-        async with semaphore:
-            return await fetch_weather_batch(batch, client)
-
     async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(*(run_batch(batch, client) for batch in batches))
+        for index, batch in enumerate(batches):
+            try:
+                result = await fetch_weather_batch(batch, client)
+            except OpenMeteoRateLimited:
+                _warn(
+                    f"Scheduler batch interrotto dopo {index} batch su {len(batches)} "
+                    f"per ridurre la pressione su Open-Meteo"
+                )
+                break
 
-    for result in results:
-        all_observations.extend(result["observations"])
-        all_predictions.extend(result["predictions"])
+            all_observations.extend(result["observations"])
+            all_predictions.extend(result["predictions"])
+
+            if index < len(batches) - 1:
+                await asyncio.sleep(BATCH_DELAY_SECONDS)
 
     print(f"[OK] Scaricate {len(all_observations)} osservazioni e {len(all_predictions)} previsioni target-based")
     return {"observations": all_observations, "predictions": all_predictions}
@@ -188,6 +247,10 @@ def _response_snippet(response: httpx.Response | None) -> str:
         text = response.text
     except Exception:
         return ""
+    return " ".join(text.split())[:300]
+
+
+def _response_snippet_from_text(text: str) -> str:
     return " ".join(text.split())[:300]
 
 
@@ -225,45 +288,39 @@ async def _fetch_open_meteo_payload(
 ) -> Optional[dict]:
     response: httpx.Response | None = None
     try:
-        response = await client.get(OPEN_METEO_URL, params=params, timeout=TIMEOUT)
+        response = await client.get(
+            OPEN_METEO_URL,
+            params=params,
+            timeout=TIMEOUT,
+            headers={"User-Agent": METNO_USER_AGENT},
+        )
         response.raise_for_status()
         data = response.json()
     except httpx.TimeoutException as exc:
-        logger.warning(
-            "Open-Meteo single-city timeout (%s) lat=%s lon=%s: %s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            exc,
+        _warn(
+            "Open-Meteo single-city timeout "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')}: {exc}"
         )
         return None
     except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "Open-Meteo single-city http_error (%s) lat=%s lon=%s status=%s body=%s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            exc.response.status_code if exc.response else "unknown",
-            _response_snippet(exc.response),
+        _warn(
+            "Open-Meteo single-city http_error "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')} "
+            f"status={exc.response.status_code if exc.response else 'unknown'} "
+            f"body={_response_snippet(exc.response)}"
         )
         return None
     except httpx.RequestError as exc:
-        logger.warning(
-            "Open-Meteo single-city network_error (%s) lat=%s lon=%s: %s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            exc,
+        _warn(
+            "Open-Meteo single-city network_error "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')}: {exc}"
         )
         return None
     except ValueError as exc:
-        logger.warning(
-            "Open-Meteo single-city invalid_json (%s) lat=%s lon=%s body=%s error=%s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            _response_snippet(response),
-            exc,
+        _warn(
+            "Open-Meteo single-city invalid_json "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')} "
+            f"body={_response_snippet(response)} error={exc}"
         )
         return None
 
@@ -273,58 +330,211 @@ async def _fetch_open_meteo_payload(
 def _fetch_open_meteo_payload_via_urllib(*, params: dict, attempt_name: str) -> Optional[dict]:
     url = f"{OPEN_METEO_URL}?{urlencode(params)}"
     try:
-        with urlopen(url, timeout=TIMEOUT) as response:
+        request = Request(url, headers={"User-Agent": METNO_USER_AGENT})
+        with urlopen(request, timeout=TIMEOUT) as response:
             body = response.read().decode("utf-8", errors="replace")
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        logger.warning(
-            "Open-Meteo single-city http_error (%s) lat=%s lon=%s status=%s body=%s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            exc.code,
-            " ".join(body.split())[:300],
+        _warn(
+            "Open-Meteo single-city http_error "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')} "
+            f"status={exc.code} body={_response_snippet_from_text(body)}"
         )
         return None
     except URLError as exc:
-        logger.warning(
-            "Open-Meteo single-city network_error (%s) lat=%s lon=%s: %s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            exc.reason,
+        _warn(
+            "Open-Meteo single-city network_error "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')}: {exc.reason}"
         )
         return None
     except TimeoutError as exc:
-        logger.warning(
-            "Open-Meteo single-city timeout (%s) lat=%s lon=%s: %s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            exc,
+        _warn(
+            "Open-Meteo single-city timeout "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')}: {exc}"
         )
         return None
 
     try:
         data = json.loads(body)
     except ValueError as exc:
-        logger.warning(
-            "Open-Meteo single-city invalid_json (%s) lat=%s lon=%s body=%s error=%s",
-            attempt_name,
-            params.get("latitude"),
-            params.get("longitude"),
-            " ".join(body.split())[:300],
-            exc,
+        _warn(
+            "Open-Meteo single-city invalid_json "
+            f"({attempt_name}) lat={params.get('latitude')} lon={params.get('longitude')} "
+            f"body={_response_snippet_from_text(body)} error={exc}"
         )
         return None
 
     return _validate_single_city_payload(data, params=params, attempt_name=attempt_name)
 
 
+def _metno_symbol_to_wmo(symbol_code: str | None) -> int:
+    if not symbol_code:
+        return 2
+    base = symbol_code
+    for suffix in ("_day", "_night", "_polartwilight"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+
+    if "thunder" in base:
+        return 95
+    if "snow" in base:
+        if "heavy" in base:
+            return 75
+        if "light" in base:
+            return 71
+        return 73
+    if "sleet" in base:
+        return 61
+    if "showers" in base:
+        if "heavy" in base:
+            return 82
+        if "light" in base:
+            return 80
+        return 81
+    if "rain" in base:
+        if "heavy" in base:
+            return 65
+        if "light" in base:
+            return 61
+        return 63
+    if "fog" in base:
+        return 45
+    if base == "clearsky":
+        return 0
+    if base == "fair":
+        return 1
+    if base == "partlycloudy":
+        return 2
+    if base == "cloudy":
+        return 3
+    return 2
+
+
+def _format_local_hour(dt: datetime) -> str:
+    return dt.astimezone(ROME_TZ).strftime("%Y-%m-%dT%H:%M")
+
+
+def _format_local_day(dt: datetime) -> str:
+    return dt.astimezone(ROME_TZ).strftime("%Y-%m-%d")
+
+
+def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: float) -> Optional[dict]:
+    try:
+        timeseries = payload["properties"]["timeseries"]
+    except (KeyError, TypeError):
+        return None
+
+    if not timeseries:
+        return None
+
+    hourly_items = []
+    daily_groups: dict[str, list[dict]] = {}
+    for item in timeseries:
+        timestamp = parse_utc_timestamp(item["time"])
+        details = item["data"]["instant"]["details"]
+        next_1 = item["data"].get("next_1_hours", {})
+        summary = next_1.get("summary") or item["data"].get("next_6_hours", {}).get("summary") or {}
+        precipitation = (next_1.get("details") or {}).get("precipitation_amount", 0.0)
+        weather_code = _metno_symbol_to_wmo(summary.get("symbol_code"))
+
+        hourly_entry = {
+            "timestamp": timestamp,
+            "local_hour": _format_local_hour(timestamp),
+            "local_day": _format_local_day(timestamp),
+            "temp": details.get("air_temperature", 0.0),
+            "humidity": details.get("relative_humidity", 0),
+            "cloud_cover": details.get("cloud_area_fraction", 0),
+            "wind_speed": (details.get("wind_speed", 0.0) or 0.0) * 3.6,
+            "wind_direction": details.get("wind_from_direction", 0),
+            "pressure": details.get("air_pressure_at_sea_level", 1013),
+            "precipitation": precipitation or 0.0,
+            "precipitation_probability": 100 if (precipitation or 0.0) > 0 else 0,
+            "weather_code": weather_code,
+        }
+        hourly_items.append(hourly_entry)
+        daily_groups.setdefault(hourly_entry["local_day"], []).append(hourly_entry)
+
+    current_hour = hourly_items[0]
+    daily_keys = sorted(daily_groups.keys())[:6]
+    daily = {
+        "time": daily_keys,
+        "temperature_2m_min": [],
+        "temperature_2m_max": [],
+        "weather_code": [],
+        "precipitation_probability_max": [],
+        "wind_speed_10m_max": [],
+    }
+
+    for day in daily_keys:
+        items = daily_groups[day]
+        temps = [entry["temp"] for entry in items]
+        winds = [entry["wind_speed"] for entry in items]
+        pops = [entry["precipitation_probability"] for entry in items]
+        preferred = next((entry for entry in items if entry["local_hour"].endswith("12:00")), items[len(items) // 2])
+        common_code = Counter(entry["weather_code"] for entry in items).most_common(1)[0][0]
+        daily["temperature_2m_min"].append(min(temps))
+        daily["temperature_2m_max"].append(max(temps))
+        daily["weather_code"].append(preferred["weather_code"] or common_code)
+        daily["precipitation_probability_max"].append(max(pops))
+        daily["wind_speed_10m_max"].append(max(winds))
+
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": "Europe/Rome",
+        "current": {
+            "time": current_hour["local_hour"],
+            "temperature_2m": current_hour["temp"],
+            "relative_humidity_2m": current_hour["humidity"],
+            "apparent_temperature": current_hour["temp"],
+            "cloud_cover": current_hour["cloud_cover"],
+            "wind_speed_10m": current_hour["wind_speed"],
+            "wind_direction_10m": current_hour["wind_direction"],
+            "surface_pressure": current_hour["pressure"],
+            "precipitation": current_hour["precipitation"],
+            "weather_code": current_hour["weather_code"],
+        },
+        "hourly": {
+            "time": [entry["local_hour"] for entry in hourly_items[:24]],
+            "temperature_2m": [entry["temp"] for entry in hourly_items[:24]],
+            "relative_humidity_2m": [entry["humidity"] for entry in hourly_items[:24]],
+            "cloud_cover": [entry["cloud_cover"] for entry in hourly_items[:24]],
+            "wind_speed_10m": [entry["wind_speed"] for entry in hourly_items[:24]],
+            "precipitation_probability": [entry["precipitation_probability"] for entry in hourly_items[:24]],
+            "precipitation": [entry["precipitation"] for entry in hourly_items[:24]],
+            "weather_code": [entry["weather_code"] for entry in hourly_items[:24]],
+        },
+        "daily": daily,
+    }
+
+
+async def _fetch_metno_payload(lat: float, lon: float) -> Optional[dict]:
+    headers = {"User-Agent": METNO_USER_AGENT}
+    params = {"lat": lat, "lon": lon}
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(METNO_URL, params=params, headers=headers, timeout=TIMEOUT)
+            response.raise_for_status()
+            data = response.json()
+    except Exception as exc:
+        _warn(f"Fallback met.no fallito lat={lat} lon={lon}: {exc}")
+        return None
+
+    converted = _convert_metno_to_open_meteo_payload(data, lat=lat, lon=lon)
+    if not converted:
+        _warn(f"Fallback met.no ha restituito payload non convertibile lat={lat} lon={lon}")
+    return converted
+
+
 async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
     """
     Scarica meteo per una singola città per il frontend pubblico.
     """
+    cached = _get_cached_public_weather(lat, lon)
+    if cached is not None:
+        return cached
+
     async with httpx.AsyncClient() as client:
         attempts = (
             ("rich", SINGLE_CITY_HOURLY_RICH_FIELDS),
@@ -342,6 +552,7 @@ async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
                         lon,
                         attempt_name,
                     )
+                _set_cached_public_weather(lat, lon, data)
                 return data
 
     compat_params = _build_single_city_params(lat, lon, SINGLE_CITY_HOURLY_COMPAT_FIELDS)
@@ -352,6 +563,13 @@ async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
     )
     if data is not None:
         logger.warning("Open-Meteo single-city fallback_succeeded lat=%s lon=%s attempt=%s", lat, lon, "compat-urllib")
+        _set_cached_public_weather(lat, lon, data)
+        return data
+
+    data = await _fetch_metno_payload(lat, lon)
+    if data is not None:
+        _warn(f"Single-city weather served via met.no fallback lat={lat} lon={lon}")
+        _set_cached_public_weather(lat, lon, data)
         return data
 
     logger.warning("Open-Meteo single-city fetch failed after fallback lat=%s lon=%s", lat, lon)
