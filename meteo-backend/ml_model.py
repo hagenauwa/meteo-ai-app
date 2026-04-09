@@ -3,8 +3,9 @@ ml_model.py — modelli ML per correzione temperatura, probabilità pioggia e co
 """
 from __future__ import annotations
 
+import copy
 import pickle
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -25,6 +26,7 @@ RAIN_WEATHER_CODES = {
     80, 81, 82,
     95, 96, 99,
 }
+STATS_CACHE_TTL_SECONDS = 45
 
 # Pipeline globali caricate in memoria all'avvio
 _pipeline: Optional[Pipeline] = None
@@ -45,10 +47,16 @@ _latest_summary: dict = {
     "model_samples": None,
     "model_trained_at": None,
 }
+_stats_cache: dict[str, object] | None = None
 
 
 def _safe_float(value: float | int | None, fallback: float = 0.0) -> float:
     return float(value if value is not None else fallback)
+
+
+def _invalidate_stats_cache():
+    global _stats_cache
+    _stats_cache = None
 
 
 def _normalize_wind_direction(value: float | int | None) -> float:
@@ -533,6 +541,7 @@ def train(min_samples: int = 100) -> dict:
             "model_samples": temp_result["n_samples"],
             "model_trained_at": record.trained_at.isoformat(),
         }
+        _invalidate_stats_cache()
 
         return {
             "success": True,
@@ -561,6 +570,7 @@ def load_latest_model() -> bool:
     global _pipeline, _rain_pipeline, _condition_pipeline, _label_encoder, _known_regions, _latest_summary
 
     db: Session = SessionLocal()
+    _invalidate_stats_cache()
     try:
         record = db.query(MlModelStore).order_by(MlModelStore.trained_at.desc()).first()
         if not record or not record.model_bytes:
@@ -846,6 +856,15 @@ def get_public_summary() -> dict:
 
 def get_stats() -> dict:
     """Statistiche aggregate sul modello e sul dataset."""
+    global _stats_cache
+
+    now = datetime.now(timezone.utc)
+    if _stats_cache:
+        expires_at = _stats_cache.get("expires_at")
+        cached_value = _stats_cache.get("value")
+        if isinstance(expires_at, datetime) and expires_at > now and isinstance(cached_value, dict):
+            return copy.deepcopy(cached_value)
+
     db: Session = SessionLocal()
     try:
         total = db.query(func.count(MlPrediction.id)).scalar() or 0
@@ -863,7 +882,7 @@ def get_stats() -> dict:
             .all()
         )
 
-        return {
+        stats = {
             "total_predictions": int(total),
             "verified_predictions": int(verified),
             "avg_error_celsius": round(float(avg_error), 3) if avg_error is not None else None,
@@ -873,5 +892,10 @@ def get_stats() -> dict:
             ],
             **get_public_summary(),
         }
+        _stats_cache = {
+            "expires_at": datetime.now(timezone.utc) + timedelta(seconds=STATS_CACHE_TTL_SECONDS),
+            "value": stats,
+        }
+        return copy.deepcopy(stats)
     finally:
         db.close()

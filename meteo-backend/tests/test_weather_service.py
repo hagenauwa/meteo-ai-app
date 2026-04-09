@@ -354,3 +354,38 @@ def test_format_weather_for_frontend_preserves_sixteen_daily_entries():
     assert result is not None
     assert len(result["daily"]) == weather_service.PUBLIC_FORECAST_DAYS
     assert result["daily"][-1]["dt"] == "2026-04-19"
+
+
+def test_public_weather_cache_evicts_oldest_when_limit_exceeded(monkeypatch):
+    weather_service._public_weather_cache.clear()
+    monkeypatch.setattr(weather_service, "PUBLIC_CACHE_MAX_ENTRIES", 2)
+
+    payload_rome = {"name": "Roma"}
+    payload_milan = {"name": "Milano"}
+    payload_turin = {"name": "Torino"}
+
+    weather_service._set_cached_public_weather(41.9, 12.5, payload_rome)
+    weather_service._set_cached_public_weather(45.4, 9.1, payload_milan)
+    weather_service._set_cached_public_weather(45.1, 7.7, payload_turin)
+
+    assert len(weather_service._public_weather_cache) == 2
+    assert weather_service._get_cached_public_weather(41.9, 12.5) is None
+    assert weather_service._get_cached_public_weather(45.4, 9.1) == payload_milan
+    assert weather_service._get_cached_public_weather(45.1, 7.7) == payload_turin
+
+
+def test_public_weather_cache_prunes_expired_before_eviction(monkeypatch):
+    weather_service._public_weather_cache.clear()
+    monkeypatch.setattr(weather_service, "PUBLIC_CACHE_MAX_ENTRIES", 2)
+
+    expired_key = weather_service._cache_key(40.0, 10.0)
+    weather_service._public_weather_cache[expired_key] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1),
+        {"name": "Expired"},
+    )
+
+    weather_service._set_cached_public_weather(41.9, 12.5, {"name": "Roma"})
+    weather_service._set_cached_public_weather(45.4, 9.1, {"name": "Milano"})
+
+    assert expired_key not in weather_service._public_weather_cache
+    assert len(weather_service._public_weather_cache) == 2

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+from apscheduler.schedulers.base import SchedulerAlreadyRunningError, SchedulerNotRunningError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
@@ -254,14 +255,30 @@ def start_scheduler():
         replace_existing=True,
         max_instances=1,
     )
-    scheduler.start()
+
+    if scheduler.running:
+        print("[SCHED] Scheduler gia avviato — configurazione confermata")
+        return
+
+    try:
+        scheduler.start()
+    except SchedulerAlreadyRunningError:
+        pass
+
     print("[SCHED] Scheduler avviato — ciclo ogni ora attivo")
 
 
 def stop_scheduler():
-    if scheduler.running:
+    if not scheduler.running:
+        print("[SCHED] Scheduler gia fermo")
+        return
+
+    try:
         scheduler.shutdown(wait=False)
-        print("[SCHED] Scheduler fermato")
+    except SchedulerNotRunningError:
+        return
+
+    print("[SCHED] Scheduler fermato")
 
 
 async def run_cycle_now():

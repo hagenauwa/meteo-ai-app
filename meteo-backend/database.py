@@ -154,6 +154,7 @@ class SupporterToken(Base):
 Index("idx_obs_city_time",  WeatherObservation.city_id, WeatherObservation.observed_at)
 Index("idx_pred_city_time", MlPrediction.city_id, MlPrediction.predicted_at)
 Index("idx_pred_target_time", MlPrediction.city_id, MlPrediction.target_time)
+Index("idx_pred_verify_lookup", MlPrediction.city_id, MlPrediction.target_time, MlPrediction.verified)
 Index("idx_pred_verified",  MlPrediction.verified)
 Index("idx_cities_name",    City.name_lower)
 Index("idx_cities_type",    City.locality_type)

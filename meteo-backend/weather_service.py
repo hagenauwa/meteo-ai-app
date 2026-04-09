@@ -25,6 +25,7 @@ ML_FORECAST_LEADS = (1, 2, 3, 4, 5, 6)
 BATCH_DELAY_SECONDS = 0.75
 BATCH_RETRY_DELAYS = (5, 15)
 PUBLIC_CACHE_TTL_SECONDS = 300
+PUBLIC_CACHE_MAX_ENTRIES = 512
 ROME_TZ = ZoneInfo("Europe/Rome")
 METNO_USER_AGENT = "MeteoAI/2.1 https://leprevisioni.netlify.app"
 PUBLIC_FORECAST_DAYS = 16
@@ -71,22 +72,52 @@ def _cache_key(lat: float, lon: float) -> tuple[float, float]:
     return (round(lat, 4), round(lon, 4))
 
 
+def _prune_public_weather_cache(now: datetime | None = None):
+    now = now or datetime.now(timezone.utc)
+
+    expired_keys = [
+        cache_key
+        for cache_key, (expires_at, _) in _public_weather_cache.items()
+        if expires_at <= now
+    ]
+    for cache_key in expired_keys:
+        _public_weather_cache.pop(cache_key, None)
+
+    while len(_public_weather_cache) > PUBLIC_CACHE_MAX_ENTRIES:
+        oldest_cache_key = next(iter(_public_weather_cache))
+        _public_weather_cache.pop(oldest_cache_key, None)
+
+
 def _get_cached_public_weather(lat: float, lon: float) -> Optional[dict]:
-    entry = _public_weather_cache.get(_cache_key(lat, lon))
+    now = datetime.now(timezone.utc)
+    _prune_public_weather_cache(now)
+
+    cache_key = _cache_key(lat, lon)
+    entry = _public_weather_cache.get(cache_key)
     if not entry:
         return None
+
     expires_at, payload = entry
-    if expires_at <= datetime.now(timezone.utc):
-        _public_weather_cache.pop(_cache_key(lat, lon), None)
+    if expires_at <= now:
+        _public_weather_cache.pop(cache_key, None)
         return None
+
     return payload
 
 
 def _set_cached_public_weather(lat: float, lon: float, payload: dict):
-    _public_weather_cache[_cache_key(lat, lon)] = (
-        datetime.now(timezone.utc) + timedelta(seconds=PUBLIC_CACHE_TTL_SECONDS),
+    now = datetime.now(timezone.utc)
+    cache_key = _cache_key(lat, lon)
+    expires_at = now + timedelta(seconds=PUBLIC_CACHE_TTL_SECONDS)
+
+    if cache_key in _public_weather_cache:
+        _public_weather_cache.pop(cache_key, None)
+
+    _public_weather_cache[cache_key] = (
+        expires_at,
         payload,
     )
+    _prune_public_weather_cache(now)
 
 
 def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
