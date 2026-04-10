@@ -1,5 +1,6 @@
 import {
     fetchWeatherByCity,
+    fetchMlEnrichment,
     searchCities,
     warmCitiesSearch,
 } from "./api.js";
@@ -11,6 +12,29 @@ import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggl
 let currentCity = null;
 let currentPayload = null;
 let selectedDayIndex = 0;
+let latestSearchToken = 0;
+
+function applyMlEnrichment(payload, enrichment) {
+    if (!payload || !enrichment) return payload;
+
+    const merged = {
+        ...payload,
+        ml: enrichment.ml || payload.ml,
+    };
+
+    if (Array.isArray(payload.daily) && Array.isArray(enrichment.daily_ml)) {
+        merged.daily = payload.daily.map((day, index) => {
+            const dayMl = enrichment.daily_ml[index];
+            if (!dayMl) return day;
+            return {
+                ...day,
+                ml: dayMl,
+            };
+        });
+    }
+
+    return merged;
+}
 
 function isFavoriteCity(city) {
     if (!city) return false;
@@ -42,11 +66,14 @@ function renderCurrentView() {
 }
 
 async function executeSearch(city) {
+    const searchToken = ++latestSearchToken;
     hideError();
     showLoading(true);
 
     try {
         const payload = await fetchWeatherByCity(city);
+        if (searchToken !== latestSearchToken) return;
+
         currentPayload = payload;
         currentCity = {
             name: payload.city?.name || payload.name,
@@ -60,7 +87,19 @@ async function executeSearch(city) {
         pushRecent(currentCity);
         renderSavedCities();
         renderCurrentView();
+
+        fetchMlEnrichment(currentCity, payload)
+            .then(enrichment => {
+                if (!enrichment) return;
+                if (searchToken !== latestSearchToken) return;
+                currentPayload = applyMlEnrichment(currentPayload, enrichment);
+                renderCurrentView();
+            })
+            .catch(() => {
+                // Meteo già mostrato: il blocco ML è un arricchimento opzionale.
+            });
     } catch (error) {
+        if (searchToken !== latestSearchToken) return;
         showError(error.message || "Errore durante la ricerca meteo");
     }
 }
@@ -74,7 +113,7 @@ async function searchFromInput() {
     }
 
     try {
-        const results = await searchCities(value, 1, "all");
+        const results = await searchCities(value, 1, "comuni");
         if (!results.length) {
             throw new Error(`Città "${value}" non trovata`);
         }
@@ -239,7 +278,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     createAutocomplete({
         input,
         list: autocompleteList,
-        getSuggestions: (query, options = {}) => searchCities(query, 8, "all", options),
+        getSuggestions: (query, options = {}) => searchCities(query, 8, "comuni", options),
         onSelect: executeSearch,
     });
 });
