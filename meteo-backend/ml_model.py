@@ -83,6 +83,27 @@ def _invalidate_stats_cache():
     _stats_cache = None
 
 
+def _get_cached_stats_value(*, allow_stale: bool) -> dict | None:
+    if not _stats_cache:
+        return None
+
+    expires_at = _stats_cache.get("expires_at")
+    cached_value = _stats_cache.get("value")
+    if not isinstance(cached_value, dict):
+        return None
+
+    if not allow_stale:
+        now = datetime.now(timezone.utc)
+        if not isinstance(expires_at, datetime) or expires_at <= now:
+            return None
+
+    return copy.deepcopy(cached_value)
+
+
+def get_cached_stats(*, allow_stale: bool = False) -> dict | None:
+    return _get_cached_stats_value(allow_stale=allow_stale)
+
+
 def _normalize_wind_direction(value: float | int | None) -> float:
     if value is None:
         return 0.0
@@ -410,8 +431,13 @@ def _build_condition_features_v2(
     ]])
 
 
-def _prepare_training_rows(db: Session) -> list[dict]:
-    rows = (
+def _prepare_training_rows(
+    db: Session,
+    *,
+    window_start: datetime | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    query = (
         db.query(
             MlPrediction.predicted_at,
             MlPrediction.target_time,
@@ -439,8 +465,18 @@ def _prepare_training_rows(db: Session) -> list[dict]:
         .filter(MlPrediction.verified.is_(True))
         .filter(MlPrediction.actual_temp.isnot(None))
         .filter(MlPrediction.error.isnot(None))
-        .all()
     )
+
+    if window_start is not None:
+        query = query.filter(
+            MlPrediction.verified_at.isnot(None),
+            MlPrediction.verified_at >= window_start,
+        )
+
+    if limit is not None and limit > 0:
+        query = query.order_by(MlPrediction.verified_at.desc(), MlPrediction.id.desc()).limit(int(limit))
+
+    rows = query.all()
 
     prepared: list[dict] = []
     for row in rows:
@@ -1107,13 +1143,11 @@ def evaluate_shadow_window() -> dict:
     db: Session = SessionLocal()
     try:
         window_start = now - timedelta(days=settings.ml_kpi_window_days)
-        rows = _prepare_training_rows(db)
-        rows = [
-            row
-            for row in rows
-            if row.get("target_time") and row["target_time"] >= window_start
-        ]
-        rows = rows[-MAX_KPI_EVAL_ROWS:]
+        rows = _prepare_training_rows(
+            db,
+            window_start=window_start,
+            limit=MAX_KPI_EVAL_ROWS,
+        )
 
         if len(rows) < 200:
             return {
@@ -1812,24 +1846,22 @@ def get_public_summary() -> dict:
 
 
 def _recent_rows_for_kpis(db: Session, window_start: datetime) -> list[dict]:
-    rows = _prepare_training_rows(db)
-    recent = [
-        row for row in rows
-        if row.get("verified_at") and row["verified_at"] >= window_start
-    ]
-    return recent[-MAX_KPI_EVAL_ROWS:]
+    return _prepare_training_rows(
+        db,
+        window_start=window_start,
+        limit=MAX_KPI_EVAL_ROWS,
+    )
 
 
 def get_stats() -> dict:
     """Statistiche aggregate sul modello e sul dataset."""
     global _stats_cache
 
+    cached = _get_cached_stats_value(allow_stale=False)
+    if cached is not None:
+        return cached
+
     now = datetime.now(timezone.utc)
-    if _stats_cache:
-        expires_at = _stats_cache.get("expires_at")
-        cached_value = _stats_cache.get("value")
-        if isinstance(expires_at, datetime) and expires_at > now and isinstance(cached_value, dict):
-            return copy.deepcopy(cached_value)
 
     db: Session = SessionLocal()
     try:

@@ -112,7 +112,11 @@ def test_weather_includes_ml_block(monkeypatch):
         "model_variant": "v1",
     })
     monkeypatch.setattr(weather_module.ml_model, "get_public_summary", lambda: {"model_ready": True})
-    monkeypatch.setattr(weather_module.ml_model, "get_stats", lambda: {"verified_predictions": 12, "lead_time_error": []})
+    monkeypatch.setattr(
+        weather_module.ml_model,
+        "get_cached_stats",
+        lambda **kwargs: {"verified_predictions": 12, "lead_time_error": []},
+    )
 
     app.dependency_overrides[get_db] = override_get_db
     try:

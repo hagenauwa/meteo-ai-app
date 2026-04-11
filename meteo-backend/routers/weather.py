@@ -92,7 +92,20 @@ async def get_weather(
         now = datetime.now()
         region = city_row.region if city_row else "Sconosciuta"
         current = formatted["current"]
-        stats = ml_model.get_stats()
+        stats = ml_model.get_cached_stats(allow_stale=True)
+        if stats is None:
+            stats = {
+                "total_predictions": None,
+                "verified_predictions": None,
+                "avg_error_celsius": None,
+                "lead_time_error": [],
+                "rain_brier_14d": None,
+                "rain_f1_14d": None,
+                "condition_macro_f1_14d": None,
+                "temp_mae_14d_by_lead": [],
+                "model_variant": "provider",
+                **ml_model.get_public_summary(),
+            }
         correction = ml_model.predict_correction(
             temp=current["temp"],
             humidity=current.get("humidity", 50),
