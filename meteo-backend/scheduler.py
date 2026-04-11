@@ -22,6 +22,7 @@ OBSERVATION_RETENTION_DAYS = 30
 PREDICTION_RETENTION_DAYS = 45
 
 _last_training: datetime | None = None
+_last_training_verified_total: int | None = None
 scheduler = AsyncIOScheduler(timezone="Europe/Rome")
 
 
@@ -179,7 +180,7 @@ def _db_cleanup(now: datetime) -> dict:
 
 
 async def hourly_cycle():
-    global _last_training
+    global _last_training, _last_training_verified_total
 
     print(f"\n{'=' * 60}")
     print(f"[CYCLE] CICLO AUTO-LEARNING — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -205,16 +206,28 @@ async def hourly_cycle():
 
     now = datetime.now(timezone.utc)
     total_verified = await asyncio.to_thread(_db_count_verified)
+    if _last_training_verified_total is None:
+        _last_training_verified_total = 0 if not ml_model.get_public_summary().get("model_ready") else total_verified
+
+    new_verified_since_last = max(0, total_verified - (_last_training_verified_total or 0))
     should_retrain = (
         total_verified >= MIN_VERIFIED_FOR_TRAINING
         and (_last_training is None or (now - _last_training).total_seconds() >= RETRAIN_EVERY_HOURS * 3600)
+        and (
+            not ml_model.get_public_summary().get("model_ready")
+            or new_verified_since_last >= settings.ml_min_new_verified_for_retrain
+        )
     )
 
     if should_retrain:
-        print(f"[TRAIN] Avvio training su {total_verified} campioni verificati")
+        print(
+            f"[TRAIN] Avvio training su {total_verified} campioni verificati "
+            f"(nuovi dal precedente: {new_verified_since_last})"
+        )
         result = await asyncio.to_thread(ml_model.train, 100)
         if result["success"]:
             _last_training = now
+            _last_training_verified_total = total_verified
             print(
                 f"[DONE] Modello temperatura aggiornato — MAE: {result['mae']:.3f} "
                 f"(baseline {result['baseline_mae']:.3f})"
@@ -235,6 +248,24 @@ async def hourly_cycle():
                 print(f"[INFO] Modello condizioni non promosso: {result['condition_message']}")
         else:
             print(f"[WARN] Training non promosso: {result.get('message')}")
+    else:
+        print(
+            f"[TRAIN] Skip retrain: total_verified={total_verified} "
+            f"new_verified_since_last={new_verified_since_last} "
+            f"min_new_required={settings.ml_min_new_verified_for_retrain}"
+        )
+
+    shadow_state = await asyncio.to_thread(ml_model.evaluate_shadow_window)
+    if shadow_state.get("checked"):
+        print(
+            "[SHADOW] checked pass=%s streak=%s rollout_allowed=%s force_v1=%s"
+            % (
+                shadow_state.get("pass"),
+                shadow_state.get("consecutive_positive_windows"),
+                shadow_state.get("rollout_allowed"),
+                shadow_state.get("runtime_force_v1"),
+            )
+        )
 
     cleanup = await asyncio.to_thread(_db_cleanup, now)
     if any(cleanup.values()):

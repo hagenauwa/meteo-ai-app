@@ -108,6 +108,8 @@ def test_weather_includes_ml_block(monkeypatch):
         "adjusted_temp_range": {"min": 11.4, "max": 21.4},
         "summary": "Cielo sereno con basso rischio di pioggia.",
         "badge": "Scenario stabile",
+        "horizon_support": "full",
+        "model_variant": "v1",
     })
     monkeypatch.setattr(weather_module.ml_model, "get_public_summary", lambda: {"model_ready": True})
     monkeypatch.setattr(weather_module.ml_model, "get_stats", lambda: {"verified_predictions": 12, "lead_time_error": []})
@@ -125,5 +127,7 @@ def test_weather_includes_ml_block(monkeypatch):
     assert data["ml"]["stats"]["verified_predictions"] == 12
     assert data["daily"][0]["ml"]["expected_condition"] == "sereno"
     assert data["daily"][0]["ml"]["adjusted_temp_range"]["max"] == 21.4
+    assert data["daily"][0]["ml"]["horizon_support"] == "full"
+    assert data["daily"][0]["ml"]["model_variant"] == "v1"
     assert len(data["daily"]) == 8
     assert data["daily"][-1]["ml"]["badge"] == "Scenario stabile"

@@ -74,6 +74,8 @@ def test_ml_enrich_returns_current_and_daily_blocks(monkeypatch):
             "adjusted_temp_range": {"min": 10.3, "max": 20.3},
             "summary": "Scenario stabile",
             "badge": "Scenario stabile",
+            "horizon_support": "full",
+            "model_variant": "v1",
         }
 
     monkeypatch.setattr(ml_module.ml_model, "build_daily_insight", fake_daily_insight)
@@ -129,4 +131,6 @@ def test_ml_enrich_returns_current_and_daily_blocks(monkeypatch):
     assert payload["ml"]["summary"]["model_ready"] is True
     assert len(payload["daily_ml"]) == 2
     assert payload["daily_ml"][0]["badge"] == "Scenario stabile"
+    assert payload["daily_ml"][0]["horizon_support"] == "full"
+    assert payload["daily_ml"][0]["model_variant"] == "v1"
     assert lead_hours_calls == [14, 38]

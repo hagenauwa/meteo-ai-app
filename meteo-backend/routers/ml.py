@@ -53,7 +53,7 @@ class EnrichRequest(BaseModel):
     daily: list[EnrichDayPayload] = Field(default_factory=list, min_length=1, max_length=16)
 
 
-def _resolve_city_context(city: str, db: Session) -> tuple[float, str]:
+def _resolve_city_context(city: str, db: Session) -> tuple[float, float, str]:
     q_lower = city.strip().lower()
     city_row = (
         db.query(City)
@@ -62,8 +62,9 @@ def _resolve_city_context(city: str, db: Session) -> tuple[float, str]:
         .first()
     )
     lat = city_row.lat if city_row else 43.0
+    lon = city_row.lon if city_row else 12.0
     region = city_row.region if city_row else "Sconosciuta"
-    return lat, region
+    return lat, lon, region
 
 
 def _resolve_region_for_enrich(payload: EnrichCityPayload, db: Session) -> str:
@@ -102,7 +103,7 @@ async def get_correction(
     if hour is None:
         hour = now.hour
 
-    lat, region = _resolve_city_context(city, db)
+    lat, _, region = _resolve_city_context(city, db)
     return ml_model.predict_correction(
         temp=temp,
         humidity=humidity,
@@ -144,9 +145,11 @@ async def enrich_forecast(
         hour=now.hour,
         month=now.month,
         lat=payload.city.lat,
+        lon=payload.city.lon,
         region=region,
         cloud_cover=payload.current.clouds or 50.0,
         lead_hours=0,
+        city_name=payload.city.name,
     )
 
     daily_ml: list[dict] = []
@@ -155,8 +158,10 @@ async def enrich_forecast(
             ml_model.build_daily_insight(
                 day=day.model_dump(mode="python"),
                 lat=payload.city.lat,
+                lon=payload.city.lon,
                 region=region,
                 lead_hours=max(0, (index * 24) + 14),
+                city_name=payload.city.name,
             )
         )
 
@@ -184,16 +189,18 @@ async def get_rain_prediction(
     if hour is None:
         hour = now.hour
 
-    lat, region = _resolve_city_context(city, db)
+    lat, lon, region = _resolve_city_context(city, db)
     return ml_model.predict_rain_probability(
         forecast_temp=temp,
         humidity=humidity,
         hour=hour,
         month=now.month,
         lat=lat,
+        lon=lon,
         region=region,
         cloud_cover=cloud_cover,
         lead_hours=lead_hours,
+        city_name=city,
     )
 
 

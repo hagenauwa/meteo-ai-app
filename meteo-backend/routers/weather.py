@@ -109,9 +109,14 @@ async def get_weather(
             hour=now.hour,
             month=now.month,
             lat=resolved["lat"],
+            lon=resolved["lon"],
             region=region,
             cloud_cover=current.get("clouds", 50),
             lead_hours=0,
+            forecast_precipitation=current.get("precipitation"),
+            forecast_wind_speed=current.get("wind_speed"),
+            forecast_wind_direction=current.get("wind_deg"),
+            city_name=resolved["name"],
         )
         formatted["ml"] = {
             "correction": correction,
@@ -124,8 +129,10 @@ async def get_weather(
             day["ml"] = ml_model.build_daily_insight(
                 day=day,
                 lat=resolved["lat"],
+                lon=resolved["lon"],
                 region=region,
                 lead_hours=max(0, (index * 24) + 14),
+                city_name=resolved["name"],
             )
 
     if city_row:

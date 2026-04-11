@@ -11,6 +11,12 @@ def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _as_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str
@@ -19,6 +25,11 @@ class Settings:
     admin_api_token: str
     cities_index_cache_seconds: int
     max_model_store_records: int
+    ml_v2_enabled: bool
+    ml_v2_shadow_only: bool
+    ml_v2_rollout_percent: int
+    ml_kpi_window_days: int
+    ml_min_new_verified_for_retrain: int
     stripe_secret_key: str
     stripe_webhook_secret: str
     supporter_email_encryption_key: str
@@ -62,6 +73,11 @@ def load_settings() -> Settings:
         admin_api_token=os.getenv("ADMIN_API_TOKEN", "").strip(),
         cities_index_cache_seconds=int(os.getenv("CITIES_INDEX_CACHE_SECONDS", "3600")),
         max_model_store_records=int(os.getenv("MAX_MODEL_STORE_RECORDS", "5")),
+        ml_v2_enabled=_as_bool(os.getenv("ML_V2_ENABLED"), default=True),
+        ml_v2_shadow_only=_as_bool(os.getenv("ML_V2_SHADOW_ONLY"), default=True),
+        ml_v2_rollout_percent=max(0, min(100, int(os.getenv("ML_V2_ROLLOUT_PERCENT", "0")))),
+        ml_kpi_window_days=max(3, int(os.getenv("ML_KPI_WINDOW_DAYS", "14"))),
+        ml_min_new_verified_for_retrain=max(50, int(os.getenv("ML_MIN_NEW_VERIFIED_FOR_RETRAIN", "500"))),
         stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", "").strip(),
         stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", "").strip(),
         supporter_email_encryption_key=os.getenv("SUPPORTER_EMAIL_ENCRYPTION_KEY", "").strip(),
