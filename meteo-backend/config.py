@@ -19,21 +19,21 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    app_env: str
-    frontend_origin: str
-    cors_origins: tuple[str, ...]
-    admin_api_token: str
-    cities_index_cache_seconds: int
-    max_model_store_records: int
-    ml_v2_enabled: bool
-    ml_v2_shadow_only: bool
-    ml_v2_rollout_percent: int
-    ml_kpi_window_days: int
-    ml_min_new_verified_for_retrain: int
-    stripe_secret_key: str
-    stripe_webhook_secret: str
-    supporter_email_encryption_key: str
-    supporter_email_hash_key: str
+    app_env: str = "development"
+    frontend_origin: str = "https://leprevisioni.netlify.app"
+    cors_origins: tuple[str, ...] = ("https://leprevisioni.netlify.app",)
+    admin_api_token: str = ""
+    cities_index_cache_seconds: int = 3600
+    max_model_store_records: int = 5
+    ml_v2_enabled: bool = True
+    ml_v2_shadow_only: bool = True
+    ml_v2_rollout_percent: int = 0
+    ml_kpi_window_days: int = 14
+    ml_min_new_verified_for_retrain: int = 500
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    supporter_email_encryption_key: str = ""
+    supporter_email_hash_key: str = ""
 
     @property
     def is_production(self) -> bool:

@@ -21,7 +21,8 @@ METNO_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
 BATCH_SIZE = 100
 MAX_CONCURRENCY = 1
 TIMEOUT = 30
-ML_FORECAST_LEADS = (1, 2, 3, 4, 5, 6)
+# Lead corti per nowcasting + target di meta giornata per i primi giorni pubblici.
+ML_FORECAST_LEADS = (1, 2, 3, 4, 5, 6, 14, 38, 62, 86, 110, 134, 158)
 BATCH_DELAY_SECONDS = 0.75
 BATCH_RETRY_DELAYS = (5, 15)
 PUBLIC_CACHE_TTL_SECONDS = 300
@@ -683,6 +684,7 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
         "visibility": 10000,
         "clouds": current.get("cloud_cover", 0),
         "precipitation": current.get("precipitation", 0.0),
+        "weather_code": wmo_code,
         "weather": [{"description": description, "icon": icon}],
     }
 

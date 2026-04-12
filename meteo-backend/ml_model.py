@@ -31,6 +31,23 @@ RAIN_WEATHER_CODES = {
 STATS_CACHE_TTL_SECONDS = 45
 MAX_KPI_EVAL_ROWS = 2500
 SHADOW_REQUIRED_STREAK = 3
+RECENCY_HALF_LIFE_DAYS = 21
+LEAD_BUCKETS = (
+    "short",
+    "intraday",
+    "day1",
+    "day2_3",
+    "day4_7",
+    "day8_plus",
+)
+BLEND_BUCKET_ML_WEIGHT_LIMITS = {
+    "short": (0.2, 0.7),
+    "intraday": (0.15, 0.65),
+    "day1": (0.15, 0.55),
+    "day2_3": (0.1, 0.45),
+    "day4_7": (0.05, 0.35),
+    "day8_plus": (0.0, 0.2),
+}
 
 # Pipeline globali caricate in memoria all'avvio
 _pipeline: Optional[Pipeline] = None
@@ -42,6 +59,8 @@ _rain_platt_v2: dict | None = None
 _condition_platt_v2: dict | None = None
 _label_encoder: Optional[LabelEncoder] = None
 _known_regions: list[str] = []
+_temperature_feature_variant = "v1"
+_blend_profiles: dict[str, dict[str, dict[str, float | int]]] = {"v1": {}, "v2": {}}
 
 _latest_summary: dict = {
     "model_ready": False,
@@ -57,6 +76,7 @@ _latest_summary: dict = {
     "condition_baseline_accuracy": None,
     "rain_brier_v2": None,
     "condition_macro_f1_v2": None,
+    "temperature_model_variant": None,
     "model_samples": None,
     "model_trained_at": None,
 }
@@ -134,6 +154,34 @@ def _month_cos(month: int) -> float:
     return float(np.cos((2.0 * np.pi * month_zero) / 12.0))
 
 
+def _lead_bucket_name(lead_hours: int | None) -> str:
+    lead = max(0, int(lead_hours or 0))
+    if lead <= 6:
+        return "short"
+    if lead <= 24:
+        return "intraday"
+    if lead <= 48:
+        return "day1"
+    if lead <= 96:
+        return "day2_3"
+    if lead <= 168:
+        return "day4_7"
+    return "day8_plus"
+
+
+def _lead_bucket_flags(lead_hours: int | None) -> list[float]:
+    bucket = _lead_bucket_name(lead_hours)
+    return [1.0 if bucket == label else 0.0 for label in LEAD_BUCKETS]
+
+
+def _lead_bucket_code(lead_hours: int | None) -> int:
+    return LEAD_BUCKETS.index(_lead_bucket_name(lead_hours))
+
+
+def _lead_hours_feature(lead_hours: int | None) -> int:
+    return max(0, min(int(lead_hours or 0), 240))
+
+
 def _condition_from_inputs(
     *,
     weather_code: int | None,
@@ -192,15 +240,26 @@ def _lead_support_count(lead_hours: int) -> int:
         return 0
 
     rows = value.get("temp_mae_14d_by_lead")
-    if not isinstance(rows, list):
+    if isinstance(rows, list):
+        lookup = {
+            int(item.get("lead_hours", 0)): int(item.get("samples", 0))
+            for item in rows
+            if isinstance(item, dict)
+        }
+        if int(lead_hours) in lookup:
+            return lookup[int(lead_hours)]
+
+    bucket_rows = value.get("temp_mae_14d_by_bucket")
+    if not isinstance(bucket_rows, list):
         return 0
 
+    bucket = _lead_bucket_name(lead_hours)
     lookup = {
-        int(item.get("lead_hours", 0)): int(item.get("samples", 0))
-        for item in rows
+        str(item.get("bucket", "")): int(item.get("samples", 0))
+        for item in bucket_rows
         if isinstance(item, dict)
     }
-    return lookup.get(int(lead_hours), 0)
+    return lookup.get(bucket, 0)
 
 
 def _empirical_confidence(label: str, lead_hours: int) -> str:
@@ -242,9 +301,22 @@ def _daily_summary(condition_label: str, rain_probability: float, wind_speed: fl
 def _horizon_support(lead_hours: int) -> str:
     if lead_hours < 48:
         return "full"
-    if lead_hours < 96:
+    if lead_hours <= 168:
         return "limited"
     return "provider_only"
+
+
+def _recency_sample_weights(rows: list[dict]) -> np.ndarray:
+    if not rows:
+        return np.array([], dtype=float)
+
+    reference_time = max(row.get("verified_at") or row["target_time"] for row in rows)
+    weights = []
+    for row in rows:
+        sample_time = row.get("verified_at") or row["target_time"]
+        age_days = max(0.0, (reference_time - sample_time).total_seconds() / 86400.0)
+        weights.append(max(0.2, 0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS)))
+    return np.array(weights, dtype=float)
 
 
 def _city_rollout_bucket(city_name: str | None) -> int:
@@ -301,8 +373,49 @@ def _build_features(
         month,
         lat,
         cloud_cover or 50.0,
-        max(0, lead_hours or 0),
+        _lead_hours_feature(lead_hours),
         _region_code(region),
+    ]])
+
+
+def _build_temperature_features_v2(
+    *,
+    forecast_temp: float,
+    humidity: float | None,
+    hour: int,
+    month: int,
+    lat: float,
+    lon: float | None,
+    region: str,
+    cloud_cover: float | None,
+    lead_hours: int,
+    forecast_precipitation: float | None,
+    forecast_wind_speed: float | None,
+    forecast_wind_direction: float | None,
+    forecast_weather_code: int | None,
+) -> np.ndarray:
+    return np.array([[
+        forecast_temp,
+        _safe_float(humidity, 50.0),
+        _safe_float(cloud_cover, 50.0),
+        _safe_float(forecast_precipitation, 0.0),
+        _safe_float(forecast_wind_speed, 0.0),
+        _normalize_wind_direction(forecast_wind_direction),
+        int(forecast_weather_code or 0),
+        _lead_hours_feature(lead_hours),
+        _hour_sin(hour),
+        _hour_cos(hour),
+        _month_sin(month),
+        _month_cos(month),
+        _safe_float(lat, 43.0),
+        _safe_float(lon, 12.0),
+        _region_code(region),
+        *_lead_bucket_flags(lead_hours),
+        1.0 if humidity is None else 0.0,
+        1.0 if cloud_cover is None else 0.0,
+        1.0 if forecast_precipitation is None else 0.0,
+        1.0 if forecast_wind_speed is None else 0.0,
+        1.0 if forecast_weather_code is None else 0.0,
     ]])
 
 
@@ -330,7 +443,7 @@ def _build_rain_features_v2(
         _safe_float(forecast_wind_speed, 0.0),
         _normalize_wind_direction(forecast_wind_direction),
         int(forecast_weather_code or 0),
-        max(0, int(lead_hours or 0)),
+        _lead_hours_feature(lead_hours),
         _hour_sin(hour),
         _hour_cos(hour),
         _month_sin(month),
@@ -338,6 +451,7 @@ def _build_rain_features_v2(
         _safe_float(lat, 43.0),
         _safe_float(lon, 12.0),
         _region_code(region),
+        *_lead_bucket_flags(lead_hours),
         1.0 if humidity is None else 0.0,
         1.0 if cloud_cover is None else 0.0,
         1.0 if forecast_precipitation is None else 0.0,
@@ -415,7 +529,7 @@ def _build_condition_features_v2(
         _normalize_wind_direction(forecast_wind_direction),
         int(forecast_weather_code or 0),
         CONDITION_TO_CODE[provider_condition],
-        max(0, int(lead_hours or 0)),
+        _lead_hours_feature(lead_hours),
         _hour_sin(hour),
         _hour_cos(hour),
         _month_sin(month),
@@ -423,6 +537,7 @@ def _build_condition_features_v2(
         _safe_float(lat, 43.0),
         _safe_float(lon, 12.0),
         _region_code(region),
+        *_lead_bucket_flags(lead_hours),
         1.0 if humidity is None else 0.0,
         1.0 if cloud_cover is None else 0.0,
         1.0 if forecast_precipitation is None else 0.0,
@@ -537,6 +652,30 @@ def _build_temperature_matrices(rows: list[dict], encoder: LabelEncoder) -> tupl
             row["lead_hours"],
             region_code,
         ])
+        y.append(row["error"])
+    return np.array(X), np.array(y)
+
+
+def _build_temperature_matrices_v2(rows: list[dict], encoder: LabelEncoder) -> tuple[np.ndarray, np.ndarray]:
+    X, y = [], []
+    for row in rows:
+        _ = encoder
+        features = _build_temperature_features_v2(
+            forecast_temp=row["forecast_temp"],
+            humidity=row["humidity"],
+            hour=row["hour"],
+            month=row["month"],
+            lat=row["lat"],
+            lon=row["lon"],
+            region=row["region"],
+            cloud_cover=row["cloud_cover"],
+            lead_hours=row["lead_hours"],
+            forecast_precipitation=row["forecast_precipitation"],
+            forecast_wind_speed=row["forecast_wind_speed"],
+            forecast_wind_direction=row["forecast_wind_direction"],
+            forecast_weather_code=row["forecast_weather_code"],
+        )
+        X.append(features[0].tolist())
         y.append(row["error"])
     return np.array(X), np.array(y)
 
@@ -763,6 +902,46 @@ def _train_temperature_pipeline(rows: list[dict]) -> dict:
         "mae": mae,
         "baseline_mae": baseline_mae,
         "n_samples": len(rows),
+        "feature_variant": "v1",
+    }
+
+
+def _train_temperature_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
+    X, y = _build_temperature_matrices_v2(rows, encoder)
+    split = _split_train_validation(X, y)
+    if split is None:
+        return {"success": False, "message": "Campioni insufficienti per split temporale temperatura v2"}
+
+    X_train, X_val, y_train, y_val = split
+    baseline_mae = float(np.mean(np.abs(y_val)))
+    train_rows = rows[:len(X_train)]
+    sample_weights = _recency_sample_weights(train_rows)
+
+    pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("ridge", Ridge(alpha=1.0)),
+    ])
+    pipeline.fit(X_train, y_train, ridge__sample_weight=sample_weights)
+
+    mae = float(mean_absolute_error(y_val, pipeline.predict(X_val)))
+    if mae >= baseline_mae:
+        return {
+            "success": False,
+            "message": f"Il modello temperatura v2 non supera il baseline (MAE {mae:.3f} vs {baseline_mae:.3f})",
+            "baseline_mae": baseline_mae,
+            "mae": mae,
+            "pipeline": None,
+            "feature_variant": "v2",
+        }
+
+    return {
+        "success": True,
+        "pipeline": pipeline,
+        "encoder": encoder,
+        "mae": mae,
+        "baseline_mae": baseline_mae,
+        "n_samples": len(rows),
+        "feature_variant": "v2",
     }
 
 
@@ -813,11 +992,13 @@ def _train_rain_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
         return {"success": False, "message": "Campioni insufficienti per il modello pioggia v2"}
 
     X_train, X_val, y_train, y_val = split
+    train_rows = [row for row in rows if row["actual_precipitation"] is not None][:len(X_train)]
+    sample_weights = _recency_sample_weights(train_rows)
     pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(class_weight="balanced", max_iter=2000)),
     ])
-    pipeline.fit(X_train, y_train)
+    pipeline.fit(X_train, y_train, clf__sample_weight=sample_weights)
 
     raw_probs = pipeline.predict_proba(X_val)[:, 1]
     platt = _fit_platt_scaler(raw_probs, y_val)
@@ -908,11 +1089,17 @@ def _train_condition_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dic
         return {"success": False, "message": "Campioni insufficienti per il modello condizioni v2"}
 
     X_train, X_val, y_train, y_val = split
+    train_rows = [
+        row
+        for row in rows
+        if row["actual_weather_code"] is not None or row["actual_cloud_cover"] is not None or row["actual_precipitation"] is not None
+    ][:len(X_train)]
+    sample_weights = _recency_sample_weights(train_rows)
     pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(class_weight="balanced", max_iter=3000, multi_class="multinomial")),
     ])
-    pipeline.fit(X_train, y_train)
+    pipeline.fit(X_train, y_train, clf__sample_weight=sample_weights)
 
     raw_probs = pipeline.predict_proba(X_val)
     platt = _fit_multiclass_platt(raw_probs, y_val)
@@ -1085,6 +1272,106 @@ def _compute_variant_kpis(rows: list[dict], variant: str) -> dict:
     return metrics
 
 
+def _provider_rain_probability_proxy(row: dict) -> float:
+    forecast_precipitation = _safe_float(row.get("forecast_precipitation"), 0.0)
+    weather_code = row.get("forecast_weather_code")
+    cloud_cover = _safe_float(row.get("cloud_cover"), 50.0)
+
+    if weather_code in RAIN_WEATHER_CODES or forecast_precipitation >= 1.0:
+        return 0.85
+    if forecast_precipitation >= 0.3:
+        return 0.65
+    if forecast_precipitation > 0.0:
+        return 0.45
+    if cloud_cover >= 80:
+        return 0.3
+    if cloud_cover >= 55:
+        return 0.2
+    return 0.08
+
+
+def _compute_rain_kpis_by_bucket(rows: list[dict], variant: str) -> dict[str, dict[str, float | int | None]]:
+    grouped: dict[str, dict[str, list[float] | list[int]]] = {}
+
+    for row in rows:
+        if row.get("actual_precipitation") is None:
+            continue
+
+        prob = _rain_probability_for_row(row, variant)
+        if prob is None:
+            continue
+
+        bucket = _lead_bucket_name(row.get("lead_hours"))
+        entry = grouped.setdefault(bucket, {"truth": [], "probs": [], "provider_probs": []})
+        entry["truth"].append(1 if (row.get("actual_precipitation") or 0.0) > 0.1 else 0)
+        entry["probs"].append(float(prob))
+        entry["provider_probs"].append(_provider_rain_probability_proxy(row))
+
+    bucket_metrics: dict[str, dict[str, float | int | None]] = {}
+    for bucket in LEAD_BUCKETS:
+        entry = grouped.get(bucket)
+        if not entry:
+            continue
+
+        truth = np.array(entry["truth"], dtype=float)
+        probs = np.array(entry["probs"], dtype=float)
+        provider_probs = np.array(entry["provider_probs"], dtype=float)
+        bucket_metrics[bucket] = {
+            "samples": int(len(truth)),
+            "rain_brier": float(np.mean((probs - truth) ** 2)),
+            "provider_brier": float(np.mean((provider_probs - truth) ** 2)),
+            "rain_f1": float(f1_score(truth, (probs >= 0.5).astype(int), zero_division=0)),
+        }
+
+    return bucket_metrics
+
+
+def _compute_blend_profile(rows: list[dict], variant: str) -> dict[str, dict[str, float | int]]:
+    bucket_kpis = _compute_rain_kpis_by_bucket(rows, variant)
+    profile: dict[str, dict[str, float | int]] = {}
+
+    for bucket in LEAD_BUCKETS:
+        metrics = bucket_kpis.get(bucket)
+        min_weight, max_weight = BLEND_BUCKET_ML_WEIGHT_LIMITS[bucket]
+        if not metrics:
+            profile[bucket] = {
+                "ml_weight": round(float(min_weight), 3),
+                "samples": 0,
+                "rain_brier": None,
+                "provider_brier": None,
+            }
+            continue
+
+        samples = int(metrics.get("samples", 0) or 0)
+        rain_brier_value = metrics.get("rain_brier")
+        provider_brier_value = metrics.get("provider_brier")
+        rain_brier = float(0.25 if rain_brier_value is None else rain_brier_value)
+        provider_brier = float(0.25 if provider_brier_value is None else provider_brier_value)
+        support_factor = min(1.0, samples / 200.0)
+        relative_skill = max(0.0, min(1.0, (provider_brier - rain_brier + 0.25) / 0.5))
+        ml_weight = min_weight + ((max_weight - min_weight) * support_factor * relative_skill)
+
+        profile[bucket] = {
+            "ml_weight": round(float(ml_weight), 3),
+            "samples": samples,
+            "rain_brier": round(rain_brier, 4),
+            "provider_brier": round(provider_brier, 4),
+        }
+
+    return profile
+
+
+def _rain_blend_weight(lead_hours: int, model_variant: str) -> float:
+    bucket = _lead_bucket_name(lead_hours)
+    profile = _blend_profiles.get(model_variant, {})
+    bucket_profile = profile.get(bucket, {})
+    if isinstance(bucket_profile, dict) and bucket_profile.get("ml_weight") is not None:
+        return float(bucket_profile["ml_weight"])
+
+    min_weight, _ = BLEND_BUCKET_ML_WEIGHT_LIMITS[bucket]
+    return float(min_weight)
+
+
 def _kpi_gate(v1: dict, v2: dict) -> dict:
     rain_brier_v1 = v1.get("rain_brier")
     rain_brier_v2 = v2.get("rain_brier")
@@ -1202,7 +1489,7 @@ def train(min_samples: int = 100) -> dict:
     """
     global _pipeline, _rain_pipeline, _condition_pipeline
     global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v2, _condition_platt_v2
-    global _latest_summary
+    global _latest_summary, _temperature_feature_variant, _blend_profiles
 
     db: Session = SessionLocal()
     try:
@@ -1213,17 +1500,22 @@ def train(min_samples: int = 100) -> dict:
                 "message": f"Dati insufficienti: {len(rows)} campioni (minimo {min_samples})",
             }
 
-        temp_result = _train_temperature_pipeline(rows)
-        if not temp_result["success"]:
+        encoder = _encode_regions(rows)
+        temp_result_v1 = _train_temperature_pipeline(rows)
+        temp_result_v2 = _train_temperature_pipeline_v2(rows, encoder)
+        temp_candidates = [result for result in (temp_result_v2, temp_result_v1) if result.get("success")]
+        if not temp_candidates:
+            best_temp_result = temp_result_v2 if temp_result_v2.get("mae") is not None else temp_result_v1
             return {
                 "success": False,
-                "message": temp_result["message"],
-                "baseline_mae": temp_result.get("baseline_mae"),
-                "mae": temp_result.get("mae"),
+                "message": best_temp_result["message"],
+                "baseline_mae": best_temp_result.get("baseline_mae"),
+                "mae": best_temp_result.get("mae"),
             }
 
+        temp_result = min(temp_candidates, key=lambda result: float(result["mae"]))
         pipeline = temp_result["pipeline"]
-        encoder = temp_result["encoder"]
+        temperature_feature_variant = temp_result.get("feature_variant", "v1")
 
         rain_result = _train_rain_pipeline(rows, encoder)
         condition_result = _train_condition_pipeline(rows, encoder)
@@ -1243,8 +1535,10 @@ def train(min_samples: int = 100) -> dict:
             "pass": False,
             "reason": "v2_not_ready",
         }
+        blend_profile_v1 = {bucket: {"ml_weight": limits[0], "samples": 0} for bucket, limits in BLEND_BUCKET_ML_WEIGHT_LIMITS.items()}
+        blend_profile_v2 = {bucket: {"ml_weight": limits[0], "samples": 0} for bucket, limits in BLEND_BUCKET_ML_WEIGHT_LIMITS.items()}
 
-        if rain_pipeline is not None and condition_pipeline is not None and rain_pipeline_v2 is not None and condition_pipeline_v2 is not None:
+        if rain_pipeline is not None and condition_pipeline is not None:
             old_state = {
                 "rain_pipeline": _rain_pipeline,
                 "condition_pipeline": _condition_pipeline,
@@ -1264,15 +1558,24 @@ def train(min_samples: int = 100) -> dict:
                 window_start = datetime.now(timezone.utc) - timedelta(days=settings.ml_kpi_window_days)
                 backtest_rows = [row for row in rows if row["target_time"] >= window_start][-MAX_KPI_EVAL_ROWS:]
                 if len(backtest_rows) >= 200:
-                    v1 = _compute_variant_kpis(backtest_rows, "v1")
-                    v2 = _compute_variant_kpis(backtest_rows, "v2")
-                    backtest = {
-                        "rows": len(backtest_rows),
-                        "v1": v1,
-                        "v2": v2,
-                        "gate": _kpi_gate(v1, v2),
-                    }
-                    backtest["pass"] = bool(backtest["gate"].get("pass"))
+                    blend_profile_v1 = _compute_blend_profile(backtest_rows, "v1")
+                    if rain_pipeline_v2 is not None and condition_pipeline_v2 is not None:
+                        v1 = _compute_variant_kpis(backtest_rows, "v1")
+                        v2 = _compute_variant_kpis(backtest_rows, "v2")
+                        blend_profile_v2 = _compute_blend_profile(backtest_rows, "v2")
+                        backtest = {
+                            "rows": len(backtest_rows),
+                            "v1": v1,
+                            "v2": v2,
+                            "gate": _kpi_gate(v1, v2),
+                        }
+                        backtest["pass"] = bool(backtest["gate"].get("pass"))
+                    else:
+                        backtest = {
+                            "pass": False,
+                            "reason": "v2_not_ready",
+                            "rows": len(backtest_rows),
+                        }
                 else:
                     backtest = {
                         "pass": False,
@@ -1295,12 +1598,17 @@ def train(min_samples: int = 100) -> dict:
 
         model_data = pickle.dumps({
             "pipeline": pipeline,
+            "temperature_feature_variant": temperature_feature_variant,
             "rain_pipeline": rain_pipeline,
             "condition_pipeline": condition_pipeline,
             "rain_pipeline_v2": rain_pipeline_v2,
             "condition_pipeline_v2": condition_pipeline_v2,
             "rain_platt_v2": rain_platt_v2,
             "condition_platt_v2": condition_platt_v2,
+            "blend_profiles": {
+                "v1": blend_profile_v1,
+                "v2": blend_profile_v2,
+            },
             "le": encoder,
             "regions": _known_regions,
             "baseline_mae": temp_result["baseline_mae"],
@@ -1328,6 +1636,11 @@ def train(min_samples: int = 100) -> dict:
         _condition_pipeline_v2 = condition_pipeline_v2
         _rain_platt_v2 = rain_platt_v2
         _condition_platt_v2 = condition_platt_v2
+        _temperature_feature_variant = temperature_feature_variant
+        _blend_profiles = {
+            "v1": blend_profile_v1,
+            "v2": blend_profile_v2,
+        }
 
         _latest_summary = {
             "model_ready": True,
@@ -1343,6 +1656,7 @@ def train(min_samples: int = 100) -> dict:
             "condition_baseline_accuracy": condition_result.get("baseline_accuracy"),
             "rain_brier_v2": rain_v2_result.get("brier"),
             "condition_macro_f1_v2": condition_v2_result.get("macro_f1"),
+            "temperature_model_variant": temperature_feature_variant,
             "model_samples": temp_result["n_samples"],
             "model_trained_at": record.trained_at.isoformat(),
         }
@@ -1353,6 +1667,7 @@ def train(min_samples: int = 100) -> dict:
             "mae": temp_result["mae"],
             "baseline_mae": temp_result["baseline_mae"],
             "n_samples": temp_result["n_samples"],
+            "temperature_model_variant": temperature_feature_variant,
             "trained_at": record.trained_at.isoformat(),
             "rain_accuracy": rain_result.get("accuracy"),
             "rain_baseline_accuracy": rain_result.get("baseline_accuracy"),
@@ -1377,7 +1692,7 @@ def load_latest_model() -> bool:
     """Carica in memoria l'ultimo modello promosso."""
     global _pipeline, _rain_pipeline, _condition_pipeline
     global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v2, _condition_platt_v2
-    global _label_encoder, _known_regions, _latest_summary
+    global _label_encoder, _known_regions, _latest_summary, _temperature_feature_variant, _blend_profiles
 
     db: Session = SessionLocal()
     _invalidate_stats_cache()
@@ -1392,6 +1707,8 @@ def load_latest_model() -> bool:
             _condition_pipeline_v2 = None
             _rain_platt_v2 = None
             _condition_platt_v2 = None
+            _temperature_feature_variant = "v1"
+            _blend_profiles = {"v1": {}, "v2": {}}
             _latest_summary = {
                 **_latest_summary,
                 "model_ready": False,
@@ -1399,6 +1716,7 @@ def load_latest_model() -> bool:
                 "condition_model_ready": False,
                 "rain_model_v2_ready": False,
                 "condition_model_v2_ready": False,
+                "temperature_model_variant": None,
                 "model_trained_at": None,
                 "model_mae": None,
                 "condition_accuracy": None,
@@ -1415,6 +1733,8 @@ def load_latest_model() -> bool:
         _condition_pipeline_v2 = data.get("condition_pipeline_v2")
         _rain_platt_v2 = data.get("rain_platt_v2")
         _condition_platt_v2 = data.get("condition_platt_v2")
+        _temperature_feature_variant = data.get("temperature_feature_variant", "v1")
+        _blend_profiles = data.get("blend_profiles") or {"v1": {}, "v2": {}}
         _label_encoder = data["le"]
         _known_regions = data.get("regions", [])
 
@@ -1432,6 +1752,7 @@ def load_latest_model() -> bool:
             "condition_baseline_accuracy": data.get("condition_baseline_accuracy"),
             "rain_brier_v2": data.get("rain_brier_v2"),
             "condition_macro_f1_v2": data.get("condition_macro_f1_v2"),
+            "temperature_model_variant": _temperature_feature_variant,
             "model_samples": record.n_samples,
             "model_trained_at": record.trained_at.isoformat(),
         }
@@ -1452,34 +1773,56 @@ def predict_correction(
     month: int,
     lat: float,
     region: str,
+    lon: float | None = None,
     cloud_cover: float = 50.0,
     lead_hours: int = 0,
+    forecast_precipitation: float | None = None,
+    forecast_wind_speed: float | None = None,
+    forecast_wind_direction: float | None = None,
+    forecast_weather_code: int | None = None,
 ) -> dict:
     """Predice la correzione da applicare alla temperatura prevista."""
     if _pipeline is None:
         return {"correction": 0.0, "corrected_temp": temp, "model_ready": False, "model_variant": "provider"}
 
     try:
-        features = _build_features(
-            forecast_temp=temp,
-            humidity=humidity,
-            hour=hour,
-            month=month,
-            lat=lat,
-            region=region,
-            cloud_cover=cloud_cover,
-            lead_hours=lead_hours,
-        )
+        if _temperature_feature_variant == "v2":
+            features = _build_temperature_features_v2(
+                forecast_temp=temp,
+                humidity=humidity,
+                hour=hour,
+                month=month,
+                lat=lat,
+                lon=lon,
+                region=region,
+                cloud_cover=cloud_cover,
+                lead_hours=lead_hours,
+                forecast_precipitation=forecast_precipitation,
+                forecast_wind_speed=forecast_wind_speed,
+                forecast_wind_direction=forecast_wind_direction,
+                forecast_weather_code=forecast_weather_code,
+            )
+        else:
+            features = _build_features(
+                forecast_temp=temp,
+                humidity=humidity,
+                hour=hour,
+                month=month,
+                lat=lat,
+                region=region,
+                cloud_cover=cloud_cover,
+                lead_hours=lead_hours,
+            )
         correction = float(_pipeline.predict(features)[0])
         correction = max(-5.0, min(5.0, correction))
-        confidence = _confidence_from_score(abs(correction) / 1.5)
+        confidence = _empirical_confidence(_confidence_from_score(abs(correction) / 1.5), lead_hours)
 
         return {
             "correction": round(correction, 2),
             "corrected_temp": round(temp + correction, 1),
             "model_ready": True,
             "confidence": confidence,
-            "model_variant": "v1",
+            "model_variant": _temperature_feature_variant,
         }
     except Exception as e:
         return {
@@ -1740,9 +2083,14 @@ def build_daily_insight(
         hour=hour,
         month=day_date.month,
         lat=lat,
+        lon=lon,
         region=region,
         cloud_cover=cloud_cover,
-        lead_hours=min(lead_hours, 6),
+        lead_hours=lead_hours,
+        forecast_precipitation=forecast_precipitation,
+        forecast_wind_speed=wind_speed,
+        forecast_wind_direction=wind_direction,
+        forecast_weather_code=weather_code,
     )
 
     if support == "provider_only":
@@ -1763,6 +2111,7 @@ def build_daily_insight(
             "model_ready": False,
             "confidence": "provider",
         }
+        blend_weight = 0.0
     else:
         rain = predict_rain_probability(
             forecast_temp=forecast_temp,
@@ -1773,7 +2122,7 @@ def build_daily_insight(
             lon=lon,
             region=region,
             cloud_cover=cloud_cover,
-            lead_hours=min(lead_hours, 6),
+            lead_hours=lead_hours,
             forecast_precipitation=forecast_precipitation,
             forecast_wind_speed=wind_speed,
             forecast_wind_direction=wind_direction,
@@ -1790,7 +2139,7 @@ def build_daily_insight(
             lon=lon,
             region=region,
             cloud_cover=cloud_cover,
-            lead_hours=min(lead_hours, 6),
+            lead_hours=lead_hours,
             forecast_precipitation=forecast_precipitation,
             forecast_wind_speed=wind_speed,
             forecast_wind_direction=wind_direction,
@@ -1799,14 +2148,12 @@ def build_daily_insight(
             force_variant=requested_variant,
         )
 
-        if support == "full":
-            provider_weight, ml_weight = 0.5, 0.5
-        else:
-            provider_weight, ml_weight = 0.75, 0.25
-
         blended_rain = forecast_pop
+        blend_weight = 0.0
         if rain.get("model_ready"):
-            blended_rain = round((forecast_pop * provider_weight) + (rain["rain_probability"] * ml_weight), 3)
+            blend_weight = _rain_blend_weight(lead_hours, rain.get("model_variant", requested_variant))
+            provider_weight = 1.0 - blend_weight
+            blended_rain = round((forecast_pop * provider_weight) + (rain["rain_probability"] * blend_weight), 3)
 
         model_variant = condition.get("model_variant") or rain.get("model_variant") or requested_variant
         if not (rain.get("model_ready") or condition.get("model_ready")):
@@ -1824,6 +2171,7 @@ def build_daily_insight(
         "condition_confidence": confidence,
         "condition_source": condition["source"],
         "rain_probability": blended_rain,
+        "rain_blend_weight": round(float(blend_weight), 3),
         "rain_confidence": rain.get("confidence", "media") if rain.get("model_ready") else "provider",
         "temperature_delta": round(delta, 2),
         "adjusted_temp_range": {
@@ -1842,6 +2190,7 @@ def get_public_summary() -> dict:
         **dict(_latest_summary),
         "shadow": dict(_shadow_state),
         "runtime_force_v1": _runtime_force_v1,
+        "blend_profiles": copy.deepcopy(_blend_profiles),
     }
 
 
@@ -1910,9 +2259,31 @@ def get_stats() -> dict:
         recent_rows = _recent_rows_for_kpis(db, window_start)
         v1_kpis = _compute_variant_kpis(recent_rows, "v1") if recent_rows else {}
         v2_kpis = _compute_variant_kpis(recent_rows, "v2") if recent_rows else {}
+        temp_bucket_metrics: dict[str, dict[str, float | int]] = {}
+        for row in recent_rows:
+            bucket = _lead_bucket_name(row.get("lead_hours"))
+            entry = temp_bucket_metrics.setdefault(bucket, {"samples": 0, "total_abs_error": 0.0})
+            entry["samples"] += 1
+            entry["total_abs_error"] += abs(float(row.get("error") or 0.0))
+
+        temp_mae_14d_by_bucket = [
+            {
+                "bucket": bucket,
+                "samples": int(temp_bucket_metrics[bucket]["samples"]),
+                "mae": round(
+                    float(temp_bucket_metrics[bucket]["total_abs_error"] / max(temp_bucket_metrics[bucket]["samples"], 1)),
+                    3,
+                ),
+            }
+            for bucket in LEAD_BUCKETS
+            if bucket in temp_bucket_metrics
+        ]
+        rain_v1_by_bucket = _compute_rain_kpis_by_bucket(recent_rows, "v1") if recent_rows else {}
+        rain_v2_by_bucket = _compute_rain_kpis_by_bucket(recent_rows, "v2") if recent_rows else {}
 
         serving_variant = _global_model_variant_for_stats()
         serving_kpis = v2_kpis if serving_variant == "v2" else v1_kpis
+        serving_rain_by_bucket = rain_v2_by_bucket if serving_variant == "v2" else rain_v1_by_bucket
 
         stats = {
             "total_predictions": int(total),
@@ -1929,10 +2300,14 @@ def get_stats() -> dict:
             "condition_macro_f1_14d": round(float(serving_kpis.get("condition_macro_f1")), 4)
             if serving_kpis.get("condition_macro_f1") is not None else None,
             "temp_mae_14d_by_lead": temp_mae_14d_by_lead,
+            "temp_mae_14d_by_bucket": temp_mae_14d_by_bucket,
+            "rain_14d_by_bucket": serving_rain_by_bucket,
             "model_variant": serving_variant,
             "kpi_window_days": settings.ml_kpi_window_days,
             "v1_kpis": v1_kpis,
             "v2_kpis": v2_kpis,
+            "rain_v1_by_bucket": rain_v1_by_bucket,
+            "rain_v2_by_bucket": rain_v2_by_bucket,
             **get_public_summary(),
         }
         _stats_cache = {

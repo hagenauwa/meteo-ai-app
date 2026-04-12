@@ -28,8 +28,29 @@ def test_rain_feature_vector_v2_shape_and_missing_flags():
         forecast_weather_code=None,
     )
 
-    assert features.shape == (1, 20)
+    assert features.shape == (1, 26)
     assert features[0, -5:].tolist() == [1.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_temperature_feature_vector_v2_includes_lead_bucket_flags():
+    features = ml_model._build_temperature_features_v2(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        cloud_cover=45.0,
+        lead_hours=72,
+        forecast_precipitation=0.4,
+        forecast_wind_speed=18.0,
+        forecast_wind_direction=180.0,
+        forecast_weather_code=61,
+    )
+
+    assert features.shape == (1, 26)
+    assert features[0, 15:21].tolist() == [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
 
 
 def test_platt_scaler_produces_bounded_probabilities():
@@ -74,6 +95,18 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
         },
     )
     monkeypatch.setattr(ml_model, "_resolve_live_model_variant", lambda city_name=None: "v2")
+    monkeypatch.setattr(
+        ml_model,
+        "_blend_profiles",
+        {
+            "v1": {},
+            "v2": {
+                "intraday": {"ml_weight": 0.5},
+                "day2_3": {"ml_weight": 0.25},
+                "day8_plus": {"ml_weight": 0.0},
+            },
+        },
+    )
 
     day = {
         "dt": "2026-04-11",
@@ -93,7 +126,7 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
         lat=41.9,
         lon=12.5,
         region="Lazio",
-        lead_hours=120,
+        lead_hours=192,
         city_name="Roma",
     )
 
@@ -108,4 +141,3 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
     assert provider_only["horizon_support"] == "provider_only"
     assert provider_only["model_variant"] == "provider"
     assert provider_only["rain_probability"] == 0.2
-

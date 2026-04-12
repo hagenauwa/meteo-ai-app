@@ -103,6 +103,7 @@ async def get_weather(
                 "rain_f1_14d": None,
                 "condition_macro_f1_14d": None,
                 "temp_mae_14d_by_lead": [],
+                "temp_mae_14d_by_bucket": [],
                 "model_variant": "provider",
                 **ml_model.get_public_summary(),
             }
@@ -112,9 +113,14 @@ async def get_weather(
             hour=now.hour,
             month=now.month,
             lat=resolved["lat"],
+            lon=resolved["lon"],
             region=region,
             cloud_cover=current.get("clouds", 50),
             lead_hours=0,
+            forecast_precipitation=current.get("precipitation"),
+            forecast_wind_speed=current.get("wind_speed"),
+            forecast_wind_direction=current.get("wind_deg"),
+            forecast_weather_code=current.get("weather_code"),
         )
         rain = ml_model.predict_rain_probability(
             forecast_temp=current["temp"],
@@ -129,6 +135,7 @@ async def get_weather(
             forecast_precipitation=current.get("precipitation"),
             forecast_wind_speed=current.get("wind_speed"),
             forecast_wind_direction=current.get("wind_deg"),
+            forecast_weather_code=current.get("weather_code"),
             city_name=resolved["name"],
         )
         formatted["ml"] = {

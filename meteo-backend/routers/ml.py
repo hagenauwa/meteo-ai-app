@@ -28,6 +28,10 @@ class EnrichCurrentPayload(BaseModel):
     temp: float
     humidity: float | None = 50.0
     clouds: float | None = 50.0
+    wind_speed: float | None = 0.0
+    wind_deg: float | None = 0.0
+    precipitation: float | None = 0.0
+    weather_code: int | None = None
 
 
 class EnrichDayTempPayload(BaseModel):
@@ -96,23 +100,32 @@ async def get_correction(
     humidity: float = Query(50.0),
     cloud_cover: float = Query(50.0),
     hour: int | None = Query(None),
-    lead_hours: int = Query(0, ge=0, le=24),
+    lead_hours: int = Query(0, ge=0, le=240),
+    forecast_precipitation: float | None = Query(None),
+    forecast_wind_speed: float | None = Query(None),
+    forecast_wind_direction: float | None = Query(None),
+    forecast_weather_code: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
     now = datetime.now()
     if hour is None:
         hour = now.hour
 
-    lat, _, region = _resolve_city_context(city, db)
+    lat, lon, region = _resolve_city_context(city, db)
     return ml_model.predict_correction(
         temp=temp,
         humidity=humidity,
         hour=hour,
         month=now.month,
         lat=lat,
+        lon=lon,
         region=region,
         cloud_cover=cloud_cover,
         lead_hours=lead_hours,
+        forecast_precipitation=forecast_precipitation,
+        forecast_wind_speed=forecast_wind_speed,
+        forecast_wind_direction=forecast_wind_direction,
+        forecast_weather_code=forecast_weather_code,
     )
 
 
@@ -135,9 +148,14 @@ async def enrich_forecast(
         hour=now.hour,
         month=now.month,
         lat=payload.city.lat,
+        lon=payload.city.lon,
         region=region,
         cloud_cover=payload.current.clouds or 50.0,
         lead_hours=0,
+        forecast_precipitation=payload.current.precipitation,
+        forecast_wind_speed=payload.current.wind_speed,
+        forecast_wind_direction=payload.current.wind_deg,
+        forecast_weather_code=payload.current.weather_code,
     )
     rain = ml_model.predict_rain_probability(
         forecast_temp=payload.current.temp,
@@ -182,7 +200,7 @@ async def get_rain_prediction(
     humidity: float = Query(60.0),
     hour: int | None = Query(None),
     cloud_cover: float = Query(50.0),
-    lead_hours: int = Query(0, ge=0, le=24),
+    lead_hours: int = Query(0, ge=0, le=240),
     db: Session = Depends(get_db),
 ):
     now = datetime.now()
