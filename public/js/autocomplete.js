@@ -103,7 +103,7 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
                     currentController = null;
                 }
             }
-        }, 120);
+        }, 250);
     });
 
     input.addEventListener("keydown", event => {

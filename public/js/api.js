@@ -3,11 +3,9 @@ import { API_ENDPOINTS } from "./config.js";
 const CITY_SEARCH_CACHE_LIMIT = 40;
 const citySearchCache = new Map();
 
-const CITIES_INDEX_SCOPE = "comuni";
-const CITIES_INDEX_VERSION = "v2";
-const CITIES_INDEX_STORAGE_KEY = `meteo_cities_index_${CITIES_INDEX_SCOPE}_${CITIES_INDEX_VERSION}`;
-const CITIES_INDEX_STORAGE_TS_KEY = `${CITIES_INDEX_STORAGE_KEY}_ts`;
-const CITIES_INDEX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
+const GEOCODING_RESULT_MULTIPLIER = 3;
+const GEOCODING_MAX_COUNT = 50;
 
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const OPEN_METEO_CURRENT_FIELDS = (
@@ -49,8 +47,6 @@ const WMO_CODES = {
     99: ["Temporale con grandine intensa", "11d"],
 };
 
-let citiesIndexPromise = null;
-
 export async function apiFetch(url, options = {}) {
     const headers = {
         "bypass-tunnel-reminder": "true",
@@ -68,59 +64,57 @@ async function fetchJson(url, options = {}) {
     return body;
 }
 
-function readLocalJson(key, fallback = null) {
-    try {
-        const raw = localStorage.getItem(key);
-        if (!raw) return fallback;
-        return JSON.parse(raw);
-    } catch {
-        return fallback;
-    }
+function normalizeText(value) {
+    return String(value || "").trim().toLowerCase();
 }
 
-function readLocalValue(key, fallback = "") {
-    try {
-        const value = localStorage.getItem(key);
-        return value == null ? fallback : value;
-    } catch {
-        return fallback;
-    }
+function inferLocalityType(raw) {
+    const code = String(raw.feature_code || "").toUpperCase();
+    if (code.startsWith("PPL")) return "comune";
+    if (code.startsWith("ADM")) return "comune";
+    return "comune";
 }
 
-function writeLocalJson(key, value) {
-    try {
-        localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-        // ignore storage quota or private mode errors
-    }
-}
-
-function writeLocalValue(key, value) {
-    try {
-        localStorage.setItem(key, value);
-    } catch {
-        // ignore storage quota or private mode errors
-    }
-}
-
-function normalizeCityRow(city) {
+function normalizeGeocodingResult(raw) {
     return {
-        name: city.name,
-        region: city.region || "",
-        province: city.province || "",
-        lat: city.lat,
-        lon: city.lon,
-        locality_type: city.locality_type || "comune",
-        name_lower: (city.name || "").toLowerCase(),
+        name: raw.name || "",
+        region: raw.admin1 || "",
+        province: raw.admin2 || "",
+        lat: raw.latitude,
+        lon: raw.longitude,
+        locality_type: inferLocalityType(raw),
+        _population: Number(raw.population || 0),
     };
 }
 
-function rankCities(a, b) {
-    const aType = a.locality_type === "comune" ? 0 : 1;
-    const bType = b.locality_type === "comune" ? 0 : 1;
-    if (aType !== bType) return aType - bType;
-    if (a.name.length !== b.name.length) return a.name.length - b.name.length;
-    return a.name_lower.localeCompare(b.name_lower, "it");
+function dedupeGeocodingResults(results) {
+    const unique = new Map();
+    for (const result of results) {
+        const lat = Number(result.lat).toFixed(4);
+        const lon = Number(result.lon).toFixed(4);
+        const key = `${normalizeText(result.name)}|${normalizeText(result.region)}|${lat}|${lon}`;
+        if (!unique.has(key)) {
+            unique.set(key, result);
+        }
+    }
+    return [...unique.values()];
+}
+
+function rankGeocodingResult(a, b, queryLower) {
+    const aName = normalizeText(a.name);
+    const bName = normalizeText(b.name);
+
+    const aExact = aName === queryLower ? 0 : 1;
+    const bExact = bName === queryLower ? 0 : 1;
+    if (aExact !== bExact) return aExact - bExact;
+
+    const aPrefix = aName.startsWith(queryLower) ? 0 : 1;
+    const bPrefix = bName.startsWith(queryLower) ? 0 : 1;
+    if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+
+    if (a._population !== b._population) return b._population - a._population;
+    if (aName.length !== bName.length) return aName.length - bName.length;
+    return aName.localeCompare(bName, "it");
 }
 
 function matchesScope(city, scope) {
@@ -128,62 +122,45 @@ function matchesScope(city, scope) {
     return city.locality_type === (scope === "localita" ? "localita" : "comune");
 }
 
-function searchCitiesInIndex(index, query, limit, scope) {
-    const q = query.trim().toLowerCase();
-    const startsWith = [];
-    const contains = [];
+function formatGeocodingResults(results, query, limit, scope) {
+    const queryLower = normalizeText(query);
+    const normalized = results
+        .filter(item => item?.country_code === "IT")
+        .filter(item => Number.isFinite(Number(item?.latitude)) && Number.isFinite(Number(item?.longitude)))
+        .map(normalizeGeocodingResult)
+        .filter(city => matchesScope(city, scope));
 
-    for (const city of index) {
-        if (!matchesScope(city, scope)) continue;
-        if (city.name_lower.startsWith(q)) {
-            startsWith.push(city);
-        } else if (city.name_lower.includes(q)) {
-            contains.push(city);
-        }
-    }
+    const deduped = dedupeGeocodingResults(normalized);
+    deduped.sort((a, b) => rankGeocodingResult(a, b, queryLower));
 
-    startsWith.sort(rankCities);
-    contains.sort(rankCities);
-    return [...startsWith, ...contains].slice(0, limit).map(city => ({
-        name: city.name,
-        region: city.region,
-        province: city.province,
-        lat: city.lat,
-        lon: city.lon,
-        locality_type: city.locality_type,
-    }));
+    return deduped.slice(0, limit).map(({ _population, ...city }) => city);
 }
 
-async function loadCitiesIndex(options = {}) {
-    if (citiesIndexPromise) {
-        return citiesIndexPromise;
+async function fetchOpenMeteoGeocoding(query, limit, options = {}) {
+    const count = Math.min(
+        GEOCODING_MAX_COUNT,
+        Math.max(limit, limit * GEOCODING_RESULT_MULTIPLIER)
+    );
+
+    const params = new URLSearchParams({
+        name: query,
+        count: String(count),
+        language: "it",
+        format: "json",
+        countryCode: "IT",
+    });
+
+    const response = await fetch(`${OPEN_METEO_GEOCODING_URL}?${params.toString()}`, {
+        method: "GET",
+        signal: options.signal,
+    });
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(body.reason || body.detail || body.message || `Geocoding HTTP ${response.status}`);
     }
 
-    const now = Date.now();
-    const storedAt = Number(readLocalValue(CITIES_INDEX_STORAGE_TS_KEY, "0") || 0);
-    const cached = readLocalJson(CITIES_INDEX_STORAGE_KEY, null);
-    if (Array.isArray(cached) && cached.length && (now - storedAt) < CITIES_INDEX_TTL_MS) {
-        citiesIndexPromise = Promise.resolve(cached.map(normalizeCityRow));
-        return citiesIndexPromise;
-    }
-
-    const url = `${API_ENDPOINTS.citiesIndex}?scope=${CITIES_INDEX_SCOPE}&version=${CITIES_INDEX_VERSION}`;
-    citiesIndexPromise = fetchJson(url, options)
-        .then(data => {
-            if (!Array.isArray(data)) {
-                throw new Error("Indice città non valido");
-            }
-            const normalized = data.map(normalizeCityRow);
-            writeLocalJson(CITIES_INDEX_STORAGE_KEY, normalized);
-            writeLocalValue(CITIES_INDEX_STORAGE_TS_KEY, String(Date.now()));
-            return normalized;
-        })
-        .catch(error => {
-            citiesIndexPromise = null;
-            throw error;
-        });
-
-    return citiesIndexPromise;
+    return Array.isArray(body.results) ? body.results : [];
 }
 
 function getCitySearchCacheKey(query, limit, scope) {
@@ -206,7 +183,7 @@ function storeCitySearchResult(key, data) {
 
 export async function searchCities(query, limit = 8, scope = "all", options = {}) {
     const trimmedQuery = query.trim();
-    if (!trimmedQuery) return [];
+    if (!trimmedQuery || trimmedQuery.length < 2) return [];
 
     const cacheKey = getCitySearchCacheKey(trimmedQuery, limit, scope);
 
@@ -214,14 +191,14 @@ export async function searchCities(query, limit = 8, scope = "all", options = {}
         return citySearchCache.get(cacheKey);
     }
 
-    const cityIndex = await loadCitiesIndex(options);
-    const results = searchCitiesInIndex(cityIndex, trimmedQuery, limit, scope);
+    const rawResults = await fetchOpenMeteoGeocoding(trimmedQuery, limit, options);
+    const results = formatGeocodingResults(rawResults, trimmedQuery, limit, scope);
     storeCitySearchResult(cacheKey, results);
     return results;
 }
 
 export function warmCitiesSearch() {
-    return searchCities("ro", 1, "comuni").catch(() => []);
+    return searchCities("roma", 1, "comuni").catch(() => []);
 }
 
 function wmoToDescription(code, isNight = false) {

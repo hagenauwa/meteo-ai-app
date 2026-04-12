@@ -4,7 +4,6 @@ export const RECENTS_KEY = "meteo_recent_v1";
 export const SUPPORTER_TOKEN_KEY = "le_previsioni_supporter_token_v1";
 
 export const API_ENDPOINTS = {
-    citiesIndex: `${BACKEND_URL}/api/cities/index`,
     mlEnrich: `${BACKEND_URL}/api/ml/enrich`,
     supporterCheckout: `${BACKEND_URL}/api/supporters/checkout-session`,
     supporterConfirm: `${BACKEND_URL}/api/supporters/confirm-session`,
