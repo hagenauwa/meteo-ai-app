@@ -53,6 +53,42 @@ def test_temperature_feature_vector_v2_includes_lead_bucket_flags():
     assert features[0, 15:21].tolist() == [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
 
 
+def test_predict_correction_supports_legacy_temperature_models(monkeypatch):
+    class FakePipeline:
+        def __init__(self):
+            self.last_shape = None
+            self.n_features_in_ = 6
+
+        def predict(self, features):
+            self.last_shape = features.shape
+            return np.array([1.2])
+
+    fake_pipeline = FakePipeline()
+    monkeypatch.setattr(ml_model, "_pipeline", fake_pipeline)
+    monkeypatch.setattr(ml_model, "_temperature_feature_variant", "v1")
+
+    result = ml_model.predict_correction(
+        temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        cloud_cover=45.0,
+        lead_hours=72,
+        forecast_precipitation=0.4,
+        forecast_wind_speed=18.0,
+        forecast_wind_direction=180.0,
+        forecast_weather_code=61,
+    )
+
+    assert fake_pipeline.last_shape == (1, 6)
+    assert result["model_ready"] is True
+    assert result["model_variant"] == "legacy"
+    assert result["corrected_temp"] == 19.2
+
+
 def test_platt_scaler_produces_bounded_probabilities():
     raw_probs = np.array([0.1, 0.2, 0.4, 0.55, 0.6, 0.8, 0.9, 0.3, 0.7, 0.85] * 6)
     y = np.array([0, 0, 0, 1, 1, 1, 1, 0, 1, 1] * 6)

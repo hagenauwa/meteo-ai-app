@@ -378,6 +378,26 @@ def _build_features(
     ]])
 
 
+def _build_temperature_features_legacy_v0(
+    *,
+    forecast_temp: float,
+    humidity: float | None,
+    hour: int,
+    month: int,
+    lat: float,
+    region: str,
+) -> np.ndarray:
+    """Compat con i primi modelli temperatura salvati prima di cloud_cover/lead_hours."""
+    return np.array([[
+        forecast_temp,
+        _safe_float(humidity, 50.0),
+        hour,
+        month,
+        lat,
+        _region_code(region),
+    ]])
+
+
 def _build_temperature_features_v2(
     *,
     forecast_temp: float,
@@ -417,6 +437,89 @@ def _build_temperature_features_v2(
         1.0 if forecast_wind_speed is None else 0.0,
         1.0 if forecast_weather_code is None else 0.0,
     ]])
+
+
+def _temperature_pipeline_feature_count() -> int | None:
+    if _pipeline is None:
+        return None
+
+    try:
+        count = getattr(_pipeline, "n_features_in_", None)
+        if count is not None:
+            return int(count)
+
+        scaler = getattr(_pipeline, "named_steps", {}).get("scaler") if hasattr(_pipeline, "named_steps") else None
+        if scaler is not None and getattr(scaler, "n_features_in_", None) is not None:
+            return int(scaler.n_features_in_)
+    except Exception:
+        return None
+
+    return None
+
+
+def _infer_temperature_feature_variant_from_pipeline(default_variant: str | None = None) -> str:
+    feature_count = _temperature_pipeline_feature_count()
+    if feature_count == 6:
+        return "legacy"
+    if feature_count == 8:
+        return "v1"
+    if feature_count == 21:
+        return "v2"
+    return default_variant or _temperature_feature_variant or "v1"
+
+
+def _build_temperature_features_for_inference(
+    *,
+    forecast_temp: float,
+    humidity: float | None,
+    hour: int,
+    month: int,
+    lat: float,
+    lon: float | None,
+    region: str,
+    cloud_cover: float | None,
+    lead_hours: int,
+    forecast_precipitation: float | None,
+    forecast_wind_speed: float | None,
+    forecast_wind_direction: float | None,
+    forecast_weather_code: int | None,
+) -> tuple[np.ndarray, str]:
+    variant = _infer_temperature_feature_variant_from_pipeline(_temperature_feature_variant)
+    if variant == "legacy":
+        return _build_temperature_features_legacy_v0(
+            forecast_temp=forecast_temp,
+            humidity=humidity,
+            hour=hour,
+            month=month,
+            lat=lat,
+            region=region,
+        ), variant
+    if variant == "v2":
+        return _build_temperature_features_v2(
+            forecast_temp=forecast_temp,
+            humidity=humidity,
+            hour=hour,
+            month=month,
+            lat=lat,
+            lon=lon,
+            region=region,
+            cloud_cover=cloud_cover,
+            lead_hours=lead_hours,
+            forecast_precipitation=forecast_precipitation,
+            forecast_wind_speed=forecast_wind_speed,
+            forecast_wind_direction=forecast_wind_direction,
+            forecast_weather_code=forecast_weather_code,
+        ), variant
+    return _build_features(
+        forecast_temp=forecast_temp,
+        humidity=_safe_float(humidity, 50.0),
+        hour=hour,
+        month=month,
+        lat=lat,
+        region=region,
+        cloud_cover=_safe_float(cloud_cover, 50.0),
+        lead_hours=lead_hours,
+    ), "v1"
 
 
 def _build_rain_features_v2(
@@ -1733,7 +1836,9 @@ def load_latest_model() -> bool:
         _condition_pipeline_v2 = data.get("condition_pipeline_v2")
         _rain_platt_v2 = data.get("rain_platt_v2")
         _condition_platt_v2 = data.get("condition_platt_v2")
-        _temperature_feature_variant = data.get("temperature_feature_variant", "v1")
+        _temperature_feature_variant = _infer_temperature_feature_variant_from_pipeline(
+            data.get("temperature_feature_variant", "v1")
+        )
         _blend_profiles = data.get("blend_profiles") or {"v1": {}, "v2": {}}
         _label_encoder = data["le"]
         _known_regions = data.get("regions", [])
@@ -1752,7 +1857,7 @@ def load_latest_model() -> bool:
             "condition_baseline_accuracy": data.get("condition_baseline_accuracy"),
             "rain_brier_v2": data.get("rain_brier_v2"),
             "condition_macro_f1_v2": data.get("condition_macro_f1_v2"),
-            "temperature_model_variant": _temperature_feature_variant,
+            "temperature_model_variant": _infer_temperature_feature_variant_from_pipeline(_temperature_feature_variant),
             "model_samples": record.n_samples,
             "model_trained_at": record.trained_at.isoformat(),
         }
@@ -1786,33 +1891,21 @@ def predict_correction(
         return {"correction": 0.0, "corrected_temp": temp, "model_ready": False, "model_variant": "provider"}
 
     try:
-        if _temperature_feature_variant == "v2":
-            features = _build_temperature_features_v2(
-                forecast_temp=temp,
-                humidity=humidity,
-                hour=hour,
-                month=month,
-                lat=lat,
-                lon=lon,
-                region=region,
-                cloud_cover=cloud_cover,
-                lead_hours=lead_hours,
-                forecast_precipitation=forecast_precipitation,
-                forecast_wind_speed=forecast_wind_speed,
-                forecast_wind_direction=forecast_wind_direction,
-                forecast_weather_code=forecast_weather_code,
-            )
-        else:
-            features = _build_features(
-                forecast_temp=temp,
-                humidity=humidity,
-                hour=hour,
-                month=month,
-                lat=lat,
-                region=region,
-                cloud_cover=cloud_cover,
-                lead_hours=lead_hours,
-            )
+        features, active_variant = _build_temperature_features_for_inference(
+            forecast_temp=temp,
+            humidity=humidity,
+            hour=hour,
+            month=month,
+            lat=lat,
+            lon=lon,
+            region=region,
+            cloud_cover=cloud_cover,
+            lead_hours=lead_hours,
+            forecast_precipitation=forecast_precipitation,
+            forecast_wind_speed=forecast_wind_speed,
+            forecast_wind_direction=forecast_wind_direction,
+            forecast_weather_code=forecast_weather_code,
+        )
         correction = float(_pipeline.predict(features)[0])
         correction = max(-5.0, min(5.0, correction))
         confidence = _empirical_confidence(_confidence_from_score(abs(correction) / 1.5), lead_hours)
@@ -1822,7 +1915,7 @@ def predict_correction(
             "corrected_temp": round(temp + correction, 1),
             "model_ready": True,
             "confidence": confidence,
-            "model_variant": _temperature_feature_variant,
+            "model_variant": active_variant,
         }
     except Exception as e:
         return {
