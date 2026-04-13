@@ -773,7 +773,7 @@ body {
 }
 
 .weather-icon--partly-cloudy {
-    color: var(--weather-partly-cloudy);
+    color: var(--sun);
 }
 
 .weather-icon--cloud {
