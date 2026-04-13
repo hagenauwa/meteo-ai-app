@@ -5,8 +5,9 @@
   "main": "index.html",
   "scripts": {
     "dev": "netlify dev",
-    "dev:backend": "cross-env APP_ENV=development FRONTEND_ORIGIN=http://localhost:8888 DATABASE_URL=sqlite:///meteo-backend/meteo_ai.db ENABLE_SCHEDULER=false AUTO_LOAD_CITIES=false python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload --app-dir meteo-backend",
-    "dev:backend:full": "cross-env APP_ENV=development FRONTEND_ORIGIN=http://localhost:8888 DATABASE_URL=sqlite:///meteo-backend/meteo_ai.db ENABLE_SCHEDULER=true AUTO_LOAD_CITIES=true python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload --app-dir meteo-backend",
+    "dev:live": "netlify dev --live",
+    "dev:backend": "cross-env APP_ENV=development FRONTEND_ORIGIN=http://localhost:8888 DATABASE_URL=sqlite:///meteo-backend/meteo_ai.db ENABLE_SCHEDULER=false AUTO_LOAD_CITIES=false python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --app-dir meteo-backend",
+    "dev:backend:full": "cross-env APP_ENV=development FRONTEND_ORIGIN=http://localhost:8888 DATABASE_URL=sqlite:///meteo-backend/meteo_ai.db ENABLE_SCHEDULER=true AUTO_LOAD_CITIES=true python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --app-dir meteo-backend",
     "build": "echo 'Static site - no build needed'",
     "deploy": "netlify deploy --prod"
   },

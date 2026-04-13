@@ -27,6 +27,7 @@ class Settings:
     app_env: str = "development"
     frontend_origin: str = "https://leprevisioni.netlify.app"
     cors_origins: tuple[str, ...] = ("https://leprevisioni.netlify.app",)
+    cors_origin_regex: str | None = None
     enable_scheduler: bool = True
     auto_load_cities: bool = True
     admin_api_token: str = ""
@@ -75,10 +76,16 @@ def load_settings() -> Settings:
             seen.add(origin)
             ordered_origins.append(origin)
 
+    cors_origin_regex = None
+    if app_env != "production":
+        # In sviluppo locale possono servire origin LAN o tunnel pubblici temporanei.
+        cors_origin_regex = r"^https?://.+$"
+
     return Settings(
         app_env=app_env,
         frontend_origin=frontend_origin,
         cors_origins=tuple(ordered_origins),
+        cors_origin_regex=cors_origin_regex,
         enable_scheduler=_as_bool(os.getenv("ENABLE_SCHEDULER"), default=app_env == "production"),
         auto_load_cities=_as_bool(os.getenv("AUTO_LOAD_CITIES"), default=app_env == "production"),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", "").strip(),
