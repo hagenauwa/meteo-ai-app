@@ -10,14 +10,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from dotenv import load_dotenv
-
 from config import settings
 from database import init_db, SessionLocal, City, db_healthcheck
 from scheduler import start_scheduler, stop_scheduler
 import ml_model
-
-load_dotenv()
 
 
 def _load_cities_if_empty():
@@ -59,15 +55,22 @@ async def lifespan(app: FastAPI):
     # --- STARTUP ---
     print("\n[METEO]  Meteo AI Backend — avvio in corso...")
     init_db()
-    threading.Thread(target=_load_cities_if_empty, daemon=True).start()
+    if settings.auto_load_cities:
+        threading.Thread(target=_load_cities_if_empty, daemon=True).start()
+    else:
+        print("[CITIES] Bootstrap automatico disattivato in questo ambiente")
     ml_model.load_latest_model()
-    start_scheduler()
+    if settings.enable_scheduler:
+        start_scheduler()
+    else:
+        print("[SCHED] Scheduler disattivato in questo ambiente")
     print("[OK] Backend pronto\n")
 
     yield
 
     # --- SHUTDOWN ---
-    stop_scheduler()
+    if settings.enable_scheduler:
+        stop_scheduler()
     print("[BYE] Backend fermato")
 
 
@@ -118,12 +121,17 @@ def ready():
 
     db_ok = db_healthcheck()
     model_summary = ml_model.get_public_summary()
-    scheduler_running = bool(current_scheduler.running)
+    scheduler_enabled = settings.enable_scheduler
+    scheduler_running = bool(current_scheduler.running) if scheduler_enabled else False
 
     return {
-        "status": "ready" if db_ok and scheduler_running else "degraded",
+        "status": "ready" if db_ok and (scheduler_running or not scheduler_enabled) else "degraded",
         "database": {"ok": db_ok},
-        "scheduler": {"running": scheduler_running, "jobs": len(current_scheduler.get_jobs())},
+        "scheduler": {
+            "enabled": scheduler_enabled,
+            "running": scheduler_running,
+            "jobs": len(current_scheduler.get_jobs()),
+        },
         "ml": model_summary,
         "env": settings.app_env,
     }

@@ -13,6 +13,7 @@ let currentCity = null;
 let currentPayload = null;
 let selectedDayIndex = 0;
 let latestSearchToken = 0;
+const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 function applyMlEnrichment(payload, enrichment) {
     if (!payload || !enrichment) return payload;
@@ -161,58 +162,68 @@ function registerFavoriteButton() {
 }
 
 function registerPwa() {
-    if ("serviceWorker" in navigator) {
-        let isRefreshing = false;
-        let registrationRef = null;
+    if (!("serviceWorker" in navigator)) {
+        return;
+    }
 
-        const reloadForUpdate = () => {
-            if (isRefreshing) return;
-            isRefreshing = true;
-            window.location.reload();
-        };
-
-        const activateWaitingWorker = worker => {
-            if (!worker) return;
-            worker.postMessage({ type: "SKIP_WAITING" });
-        };
-
-        const trackInstallingWorker = worker => {
-            if (!worker) return;
-            worker.addEventListener("statechange", () => {
-                if (worker.state === "installed" && navigator.serviceWorker.controller) {
-                    activateWaitingWorker(worker);
-                }
-            });
-        };
-
-        navigator.serviceWorker.addEventListener("controllerchange", reloadForUpdate);
-
+    if (isLocalDevelopment) {
         navigator.serviceWorker
-            .register("/service-worker.js", { updateViaCache: "none" })
-            .then(registration => {
-                registrationRef = registration;
-                trackInstallingWorker(registration.installing);
-                activateWaitingWorker(registration.waiting);
-
-                registration.addEventListener("updatefound", () => {
-                    trackInstallingWorker(registration.installing);
-                });
-
-                registration.update().catch(() => {});
-            })
+            .getRegistrations()
+            .then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
             .catch(() => {});
+        return;
+    }
 
-        const checkForUpdates = () => {
-            registrationRef?.update().catch(() => {});
-        };
+    let isRefreshing = false;
+    let registrationRef = null;
 
-        window.addEventListener("focus", checkForUpdates);
-        document.addEventListener("visibilitychange", () => {
-            if (document.visibilityState === "visible") {
-                checkForUpdates();
+    const reloadForUpdate = () => {
+        if (isRefreshing) return;
+        isRefreshing = true;
+        window.location.reload();
+    };
+
+    const activateWaitingWorker = worker => {
+        if (!worker) return;
+        worker.postMessage({ type: "SKIP_WAITING" });
+    };
+
+    const trackInstallingWorker = worker => {
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) {
+                activateWaitingWorker(worker);
             }
         });
-    }
+    };
+
+    navigator.serviceWorker.addEventListener("controllerchange", reloadForUpdate);
+
+    navigator.serviceWorker
+        .register("/service-worker.js", { updateViaCache: "none" })
+        .then(registration => {
+            registrationRef = registration;
+            trackInstallingWorker(registration.installing);
+            activateWaitingWorker(registration.waiting);
+
+            registration.addEventListener("updatefound", () => {
+                trackInstallingWorker(registration.installing);
+            });
+
+            registration.update().catch(() => {});
+        })
+        .catch(() => {});
+
+    const checkForUpdates = () => {
+        registrationRef?.update().catch(() => {});
+    };
+
+    window.addEventListener("focus", checkForUpdates);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+            checkForUpdates();
+        }
+    });
 }
 
 function registerCityInputSelection(input) {

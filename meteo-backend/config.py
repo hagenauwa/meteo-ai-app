@@ -6,6 +6,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
 
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
@@ -22,6 +27,8 @@ class Settings:
     app_env: str = "development"
     frontend_origin: str = "https://leprevisioni.netlify.app"
     cors_origins: tuple[str, ...] = ("https://leprevisioni.netlify.app",)
+    enable_scheduler: bool = True
+    auto_load_cities: bool = True
     admin_api_token: str = ""
     cities_index_cache_seconds: int = 3600
     max_model_store_records: int = 5
@@ -55,6 +62,8 @@ def load_settings() -> Settings:
             "http://127.0.0.1:3000",
             "http://localhost:5173",
             "http://127.0.0.1:5173",
+            "http://localhost:8888",
+            "http://127.0.0.1:8888",
             "http://localhost:8000",
             "http://127.0.0.1:8000",
         ])
@@ -70,6 +79,8 @@ def load_settings() -> Settings:
         app_env=app_env,
         frontend_origin=frontend_origin,
         cors_origins=tuple(ordered_origins),
+        enable_scheduler=_as_bool(os.getenv("ENABLE_SCHEDULER"), default=app_env == "production"),
+        auto_load_cities=_as_bool(os.getenv("AUTO_LOAD_CITIES"), default=app_env == "production"),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", "").strip(),
         cities_index_cache_seconds=int(os.getenv("CITIES_INDEX_CACHE_SECONDS", "3600")),
         max_model_store_records=int(os.getenv("MAX_MODEL_STORE_RECORDS", "5")),

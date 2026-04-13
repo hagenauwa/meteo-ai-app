@@ -44,4 +44,6 @@ meteo-backend/*.db-wal
 
 # Documentazione locale per Codex/ops
 AGENTS.md
+CLAUDE.md
+.codex
 docs/ops-learnings.md
