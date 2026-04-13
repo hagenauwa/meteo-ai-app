@@ -14,6 +14,13 @@
     --radius-md: 18px;
     --radius-sm: 14px;
     --transition: 180ms ease;
+    --weather-night: #4c6fff;
+    --weather-partly-cloudy: #4f8ac9;
+    --weather-cloud: #64748b;
+    --weather-rain: #1d4ed8;
+    --weather-storm: #7c3aed;
+    --weather-snow: #38bdf8;
+    --weather-fog: #94a3b8;
 }
 
 * {
@@ -621,7 +628,6 @@ body {
 }
 
 .selected-day-visual i {
-    color: var(--sun);
     font-size: 3.8rem;
 }
 
@@ -712,7 +718,6 @@ body {
 
 .snapshot-icon-wrap i {
     font-size: 3rem;
-    color: var(--sun);
 }
 
 .snapshot-icon-wrap p {
@@ -756,8 +761,39 @@ body {
 
 .hour-card i {
     margin: 12px 0;
-    color: var(--sun);
     font-size: 1.6rem;
+}
+
+.weather-icon--sun {
+    color: var(--sun);
+}
+
+.weather-icon--night {
+    color: var(--weather-night);
+}
+
+.weather-icon--partly-cloudy {
+    color: var(--weather-partly-cloudy);
+}
+
+.weather-icon--cloud {
+    color: var(--weather-cloud);
+}
+
+.weather-icon--rain {
+    color: var(--weather-rain);
+}
+
+.weather-icon--storm {
+    color: var(--weather-storm);
+}
+
+.weather-icon--snow {
+    color: var(--weather-snow);
+}
+
+.weather-icon--fog {
+    color: var(--weather-fog);
 }
 
 .hour-card .temp {

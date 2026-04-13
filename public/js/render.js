@@ -1,5 +1,48 @@
 import { WEATHER_ICONS } from "./config.js";
 
+const CLOUDY_ICON_CODES = new Set(["02d", "02n", "03d", "03n", "04d", "04n"]);
+
+function isNightIcon(iconCode) {
+    return String(iconCode || "").endsWith("n");
+}
+
+function resolveWeatherVisual({ iconCode, rainProbability = 0, preferRainIcon = false } = {}) {
+    let resolvedIconCode = iconCode || "03d";
+
+    if (preferRainIcon && rainProbability >= 0.6 && CLOUDY_ICON_CODES.has(resolvedIconCode)) {
+        resolvedIconCode = isNightIcon(resolvedIconCode) ? "10n" : "10d";
+    }
+
+    const iconClass = WEATHER_ICONS[resolvedIconCode] || "fa-cloud";
+
+    if (resolvedIconCode === "01d") {
+        return { iconClass, tone: "sun" };
+    }
+    if (resolvedIconCode === "01n") {
+        return { iconClass, tone: "night" };
+    }
+    if (resolvedIconCode === "02d" || resolvedIconCode === "02n") {
+        return { iconClass, tone: "partly-cloudy" };
+    }
+    if (resolvedIconCode === "03d" || resolvedIconCode === "03n" || resolvedIconCode === "04d" || resolvedIconCode === "04n") {
+        return { iconClass, tone: "cloud" };
+    }
+    if (resolvedIconCode === "09d" || resolvedIconCode === "09n" || resolvedIconCode === "10d" || resolvedIconCode === "10n") {
+        return { iconClass, tone: "rain" };
+    }
+    if (resolvedIconCode === "11d" || resolvedIconCode === "11n") {
+        return { iconClass, tone: "storm" };
+    }
+    if (resolvedIconCode === "13d" || resolvedIconCode === "13n") {
+        return { iconClass, tone: "snow" };
+    }
+    if (resolvedIconCode === "50d" || resolvedIconCode === "50n") {
+        return { iconClass, tone: "fog" };
+    }
+
+    return { iconClass, tone: "cloud" };
+}
+
 function formatDate(date, options = {}) {
     return new Date(date).toLocaleDateString("it-IT", {
         weekday: "long",
@@ -29,8 +72,10 @@ function formatShortDate(date) {
     });
 }
 
-function getWeatherIcon(iconCode) {
-    return WEATHER_ICONS[iconCode] || "fa-cloud";
+function applyWeatherVisual(node, options) {
+    if (!node) return;
+    const { iconClass, tone } = resolveWeatherVisual(options);
+    node.className = `fas weather-icon weather-icon--${tone} ${iconClass}`;
 }
 
 function getRelativeDayLabel(index, date) {
@@ -125,7 +170,10 @@ function renderSelectedDay(day) {
     setText("selectedDayTag", buildDayTag(day));
 
     const icon = document.getElementById("selectedDayIcon");
-    icon.className = `fas ${getWeatherIcon(day.weather?.[0]?.icon)}`;
+    applyWeatherVisual(icon, {
+        iconCode: day.weather?.[0]?.icon,
+        rainProbability,
+    });
 }
 
 function renderCurrent(payload) {
@@ -141,7 +189,9 @@ function renderCurrent(payload) {
     setText("pressure", `${current.pressure} hPa`);
 
     const icon = document.getElementById("weatherIcon");
-    icon.className = `fas ${getWeatherIcon(current.weather?.[0]?.icon)}`;
+    applyWeatherVisual(icon, {
+        iconCode: current.weather?.[0]?.icon,
+    });
 }
 
 function renderHourlyDetail(selectedDay, hourly) {
@@ -169,9 +219,14 @@ function renderHourlyDetail(selectedDay, hourly) {
     hoursForDay.forEach(hour => {
         const card = document.createElement("article");
         card.className = "hour-card";
+        const { iconClass, tone } = resolveWeatherVisual({
+            iconCode: hour.weather?.[0]?.icon,
+            rainProbability: hour.pop || 0,
+            preferRainIcon: true,
+        });
         card.innerHTML = `
             <span class="time">${formatTime(hour.dt)}</span>
-            <i class="fas ${getWeatherIcon(hour.weather?.[0]?.icon)}"></i>
+            <i class="fas weather-icon weather-icon--${tone} ${iconClass}"></i>
             <strong class="temp">${Math.round(hour.temp)}°</strong>
             <span class="rain">Pioggia ${Math.round((hour.pop || 0) * 100)}%</span>
         `;
