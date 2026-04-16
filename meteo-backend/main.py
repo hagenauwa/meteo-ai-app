@@ -118,7 +118,7 @@ def health():
 
 @app.get("/ready")
 def ready():
-    from scheduler import scheduler as current_scheduler
+    from scheduler import get_training_state_summary, scheduler as current_scheduler
 
     db_ok = db_healthcheck()
     model_summary = ml_model.get_public_summary()
@@ -134,5 +134,6 @@ def ready():
             "jobs": len(current_scheduler.get_jobs()),
         },
         "ml": model_summary,
+        "ml_training": get_training_state_summary(),
         "env": settings.app_env,
     }

@@ -12,7 +12,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 
 from config import settings
-from database import City, MlModelStore, MlPrediction, SessionLocal, WeatherObservation
+from database import City, MlModelStore, MlPrediction, MlTrainingState, SessionLocal, WeatherObservation
 from weather_service import fetch_all_cities_weather
 import ml_model
 
@@ -20,9 +20,8 @@ MIN_VERIFIED_FOR_TRAINING = 500
 RETRAIN_EVERY_HOURS = 6
 OBSERVATION_RETENTION_DAYS = 30
 PREDICTION_RETENTION_DAYS = 45
+TRAINING_STATE_ID = 1
 
-_last_training: datetime | None = None
-_last_training_verified_total: int | None = None
 scheduler = AsyncIOScheduler(timezone="Europe/Rome")
 
 
@@ -145,6 +144,88 @@ def _db_count_verified() -> int:
         return db.query(MlPrediction).filter(MlPrediction.verified.is_(True)).count()
 
 
+def _db_get_or_create_training_state(db) -> MlTrainingState:
+    state = db.get(MlTrainingState, TRAINING_STATE_ID)
+    if state is None:
+        state = MlTrainingState(
+            id=TRAINING_STATE_ID,
+            verified_count_at_last_train=0,
+            last_cycle_status="never_run",
+        )
+        db.add(state)
+        db.flush()
+    return state
+
+
+def _serialize_training_state(state: MlTrainingState) -> dict:
+    return {
+        "last_cycle_started_at": state.last_cycle_started_at.isoformat() if state.last_cycle_started_at else None,
+        "last_cycle_completed_at": state.last_cycle_completed_at.isoformat() if state.last_cycle_completed_at else None,
+        "last_cycle_status": state.last_cycle_status,
+        "last_cycle_message": state.last_cycle_message,
+        "last_cycle_observations": state.last_cycle_observations,
+        "last_cycle_predictions": state.last_cycle_predictions,
+        "last_cycle_verified": state.last_cycle_verified,
+        "last_cycle_avg_error": state.last_cycle_avg_error,
+        "last_successful_train_at": state.last_successful_train_at.isoformat() if state.last_successful_train_at else None,
+        "verified_count_at_last_train": int(state.verified_count_at_last_train or 0),
+        "last_model_store_id": state.last_model_store_id,
+        "last_model_trained_at": state.last_model_trained_at.isoformat() if state.last_model_trained_at else None,
+    }
+
+
+def _empty_training_state() -> dict:
+    return {
+        "last_cycle_started_at": None,
+        "last_cycle_completed_at": None,
+        "last_cycle_status": "unknown",
+        "last_cycle_message": None,
+        "last_cycle_observations": None,
+        "last_cycle_predictions": None,
+        "last_cycle_verified": None,
+        "last_cycle_avg_error": None,
+        "last_successful_train_at": None,
+        "verified_count_at_last_train": 0,
+        "last_model_store_id": None,
+        "last_model_trained_at": None,
+    }
+
+
+def _db_update_training_state(**fields) -> dict:
+    with SessionLocal() as db:
+        state = _db_get_or_create_training_state(db)
+        for key, value in fields.items():
+            setattr(state, key, value)
+        db.commit()
+        db.refresh(state)
+        return _serialize_training_state(state)
+
+
+def _db_read_training_state() -> dict:
+    try:
+        with SessionLocal() as db:
+            state = _db_get_or_create_training_state(db)
+            db.commit()
+            return _serialize_training_state(state)
+    except Exception:
+        return _empty_training_state()
+
+
+def _db_latest_model_info() -> dict | None:
+    with SessionLocal() as db:
+        record = db.query(MlModelStore.id, MlModelStore.trained_at).order_by(MlModelStore.trained_at.desc()).first()
+        if not record:
+            return None
+        return {
+            "id": int(record.id),
+            "trained_at": record.trained_at,
+        }
+
+
+def get_training_state_summary() -> dict:
+    return _db_read_training_state()
+
+
 def _db_cleanup(now: datetime) -> dict:
     obs_cutoff = now - timedelta(days=OBSERVATION_RETENTION_DAYS)
     pred_cutoff = now - timedelta(days=PREDICTION_RETENTION_DAYS)
@@ -180,101 +261,170 @@ def _db_cleanup(now: datetime) -> dict:
 
 
 async def hourly_cycle():
-    global _last_training, _last_training_verified_total
-
+    cycle_started_at = datetime.now(timezone.utc)
     print(f"\n{'=' * 60}")
     print(f"[CYCLE] CICLO AUTO-LEARNING — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * 60}")
-
-    cities = await asyncio.to_thread(_db_get_cities)
-    if not cities:
-        print("[WARN] Nessuna città nel DB")
-        return
-
-    payload = await fetch_all_cities_weather(cities)
-    observations = payload.get("observations", [])
-    predictions = payload.get("predictions", [])
-    if not observations:
-        print("[WARN] Nessuna osservazione scaricata")
-        return
-
-    n_obs, n_pred = await asyncio.to_thread(_db_save_cycle_data, payload)
-    print(f"[SAVE] Salvate {n_obs} osservazioni e {n_pred} previsioni future")
-
-    verified_count, avg_error = await asyncio.to_thread(_db_verify_predictions, observations)
-    print(f"[OK] Verificate {verified_count} predictions (errore medio: {avg_error:.2f}°C)")
-
-    now = datetime.now(timezone.utc)
-    total_verified = await asyncio.to_thread(_db_count_verified)
-    if _last_training_verified_total is None:
-        _last_training_verified_total = 0 if not ml_model.get_public_summary().get("model_ready") else total_verified
-
-    new_verified_since_last = max(0, total_verified - (_last_training_verified_total or 0))
-    should_retrain = (
-        total_verified >= MIN_VERIFIED_FOR_TRAINING
-        and (_last_training is None or (now - _last_training).total_seconds() >= RETRAIN_EVERY_HOURS * 3600)
-        and (
-            not ml_model.get_public_summary().get("model_ready")
-            or new_verified_since_last >= settings.ml_min_new_verified_for_retrain
-        )
+    await asyncio.to_thread(
+        _db_update_training_state,
+        last_cycle_started_at=cycle_started_at,
+        last_cycle_status="running",
+        last_cycle_message="cycle_started",
     )
 
-    if should_retrain:
-        print(
-            f"[TRAIN] Avvio training su {total_verified} campioni verificati "
-            f"(nuovi dal precedente: {new_verified_since_last})"
+    n_obs = 0
+    n_pred = 0
+    verified_count = 0
+    avg_error = 0.0
+    total_verified = 0
+    try:
+        cities = await asyncio.to_thread(_db_get_cities)
+        if not cities:
+            print("[WARN] Nessuna città nel DB")
+            await asyncio.to_thread(
+                _db_update_training_state,
+                last_cycle_completed_at=datetime.now(timezone.utc),
+                last_cycle_status="skipped",
+                last_cycle_message="no_cities",
+                last_cycle_observations=0,
+                last_cycle_predictions=0,
+                last_cycle_verified=0,
+                last_cycle_avg_error=0.0,
+            )
+            return
+
+        payload = await fetch_all_cities_weather(cities)
+        observations = payload.get("observations", [])
+        predictions = payload.get("predictions", [])
+        if not observations:
+            print("[WARN] Nessuna osservazione scaricata")
+            await asyncio.to_thread(
+                _db_update_training_state,
+                last_cycle_completed_at=datetime.now(timezone.utc),
+                last_cycle_status="skipped",
+                last_cycle_message="no_observations",
+                last_cycle_observations=0,
+                last_cycle_predictions=len(predictions),
+                last_cycle_verified=0,
+                last_cycle_avg_error=0.0,
+            )
+            return
+
+        n_obs, n_pred = await asyncio.to_thread(_db_save_cycle_data, payload)
+        print(f"[SAVE] Salvate {n_obs} osservazioni e {n_pred} previsioni future")
+
+        verified_count, avg_error = await asyncio.to_thread(_db_verify_predictions, observations)
+        print(f"[OK] Verificate {verified_count} predictions (errore medio: {avg_error:.2f}°C)")
+
+        now = datetime.now(timezone.utc)
+        total_verified = await asyncio.to_thread(_db_count_verified)
+        training_state = await asyncio.to_thread(_db_read_training_state)
+        last_training_iso = training_state.get("last_successful_train_at")
+        last_training = datetime.fromisoformat(last_training_iso) if last_training_iso else None
+        verified_at_last_train = int(training_state.get("verified_count_at_last_train") or 0)
+        new_verified_since_last = max(0, total_verified - verified_at_last_train)
+        model_ready = bool(ml_model.get_public_summary().get("model_ready"))
+        should_retrain = (
+            total_verified >= MIN_VERIFIED_FOR_TRAINING
+            and (last_training is None or (now - last_training).total_seconds() >= RETRAIN_EVERY_HOURS * 3600)
+            and (
+                not model_ready
+                or new_verified_since_last >= settings.ml_min_new_verified_for_retrain
+            )
         )
-        result = await asyncio.to_thread(ml_model.train, 100)
-        if result["success"]:
-            _last_training = now
-            _last_training_verified_total = total_verified
+
+        cycle_message = "retrain_skipped"
+        if should_retrain:
             print(
-                f"[DONE] Modello temperatura aggiornato — MAE: {result['mae']:.3f} "
-                f"(baseline {result['baseline_mae']:.3f})"
+                f"[TRAIN] Avvio training su {total_verified} campioni verificati "
+                f"(nuovi dal precedente: {new_verified_since_last})"
             )
-            if result.get("rain_model_ready"):
+            result = await asyncio.to_thread(ml_model.train, 100)
+            if result["success"]:
+                latest_model = await asyncio.to_thread(_db_latest_model_info)
+                cycle_message = "train_success"
                 print(
-                    f"[DONE] Modello pioggia — Accuracy: {result.get('rain_accuracy', 0):.3f} "
-                    f"(baseline {result.get('rain_baseline_accuracy', 0):.3f})"
+                    f"[DONE] Modello temperatura aggiornato — MAE: {result['mae']:.3f} "
+                    f"(baseline {result['baseline_mae']:.3f})"
                 )
-            elif result.get("rain_message"):
-                print(f"[INFO] Modello pioggia non promosso: {result['rain_message']}")
-            if result.get("condition_model_ready"):
-                print(
-                    f"[DONE] Modello condizioni — Accuracy: {result.get('condition_accuracy', 0):.3f} "
-                    f"(baseline {result.get('condition_baseline_accuracy', 0):.3f})"
+                if result.get("rain_model_ready"):
+                    print(
+                        f"[DONE] Modello pioggia — Accuracy: {result.get('rain_accuracy', 0):.3f} "
+                        f"(baseline {result.get('rain_baseline_accuracy', 0):.3f})"
+                    )
+                elif result.get("rain_message"):
+                    print(f"[INFO] Modello pioggia non promosso: {result['rain_message']}")
+                if result.get("condition_model_ready"):
+                    print(
+                        f"[DONE] Modello condizioni — Accuracy: {result.get('condition_accuracy', 0):.3f} "
+                        f"(baseline {result.get('condition_baseline_accuracy', 0):.3f})"
+                    )
+                elif result.get("condition_message"):
+                    print(f"[INFO] Modello condizioni non promosso: {result['condition_message']}")
+                await asyncio.to_thread(
+                    _db_update_training_state,
+                    last_successful_train_at=now,
+                    verified_count_at_last_train=total_verified,
+                    last_model_store_id=latest_model.get("id") if latest_model else None,
+                    last_model_trained_at=latest_model.get("trained_at") if latest_model else None,
                 )
-            elif result.get("condition_message"):
-                print(f"[INFO] Modello condizioni non promosso: {result['condition_message']}")
+            else:
+                cycle_message = f"train_failed:{result.get('message') or 'unknown'}"
+                print(f"[WARN] Training non promosso: {result.get('message')}")
         else:
-            print(f"[WARN] Training non promosso: {result.get('message')}")
-    else:
-        print(
-            f"[TRAIN] Skip retrain: total_verified={total_verified} "
-            f"new_verified_since_last={new_verified_since_last} "
-            f"min_new_required={settings.ml_min_new_verified_for_retrain}"
-        )
-
-    shadow_state = await asyncio.to_thread(ml_model.evaluate_shadow_window)
-    if shadow_state.get("checked"):
-        print(
-            "[SHADOW] checked pass=%s streak=%s rollout_allowed=%s force_v1=%s"
-            % (
-                shadow_state.get("pass"),
-                shadow_state.get("consecutive_positive_windows"),
-                shadow_state.get("rollout_allowed"),
-                shadow_state.get("runtime_force_v1"),
+            cycle_message = (
+                f"retrain_skipped:total_verified={total_verified};"
+                f"new_verified_since_last={new_verified_since_last};"
+                f"min_new_required={settings.ml_min_new_verified_for_retrain}"
             )
-        )
+            print(
+                f"[TRAIN] Skip retrain: total_verified={total_verified} "
+                f"new_verified_since_last={new_verified_since_last} "
+                f"min_new_required={settings.ml_min_new_verified_for_retrain}"
+            )
 
-    cleanup = await asyncio.to_thread(_db_cleanup, now)
-    if any(cleanup.values()):
-        print(
-            f"[CLEAN] obs={cleanup['deleted_observations']} "
-            f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
-        )
+        shadow_state = await asyncio.to_thread(ml_model.evaluate_shadow_window)
+        if shadow_state.get("checked"):
+            print(
+                "[SHADOW] checked pass=%s streak=%s rollout_allowed=%s force_v1=%s"
+                % (
+                    shadow_state.get("pass"),
+                    shadow_state.get("consecutive_positive_windows"),
+                    shadow_state.get("rollout_allowed"),
+                    shadow_state.get("runtime_force_v1"),
+                )
+            )
 
-    print("[OK] Ciclo completato — prossimo tra 1 ora\n")
+        cleanup = await asyncio.to_thread(_db_cleanup, now)
+        if any(cleanup.values()):
+            print(
+                f"[CLEAN] obs={cleanup['deleted_observations']} "
+                f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
+            )
+
+        await asyncio.to_thread(
+            _db_update_training_state,
+            last_cycle_completed_at=datetime.now(timezone.utc),
+            last_cycle_status="success",
+            last_cycle_message=cycle_message,
+            last_cycle_observations=n_obs,
+            last_cycle_predictions=n_pred,
+            last_cycle_verified=verified_count,
+            last_cycle_avg_error=avg_error,
+        )
+        print("[OK] Ciclo completato — prossimo tra 1 ora\n")
+    except Exception as exc:
+        await asyncio.to_thread(
+            _db_update_training_state,
+            last_cycle_completed_at=datetime.now(timezone.utc),
+            last_cycle_status="failed",
+            last_cycle_message=str(exc),
+            last_cycle_observations=n_obs,
+            last_cycle_predictions=n_pred,
+            last_cycle_verified=verified_count,
+            last_cycle_avg_error=avg_error,
+        )
+        raise
 
 
 def start_scheduler():

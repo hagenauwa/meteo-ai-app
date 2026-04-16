@@ -27,6 +27,7 @@ def test_alembic_upgrade_creates_expected_schema(tmp_path):
     assert "weather_observations" in inspector.get_table_names()
     assert "ml_predictions" in inspector.get_table_names()
     assert "ml_model_store" in inspector.get_table_names()
+    assert "ml_training_state" in inspector.get_table_names()
     assert "supporters" in inspector.get_table_names()
     assert "supporter_tokens" in inspector.get_table_names()
 
@@ -43,6 +44,11 @@ def test_alembic_upgrade_creates_expected_schema(tmp_path):
 
     observation_columns = {column["name"] for column in inspector.get_columns("weather_observations")}
     assert {"wind_direction"} <= observation_columns
+
+    training_columns = {column["name"] for column in inspector.get_columns("ml_training_state")}
+    assert {"last_cycle_status", "last_successful_train_at", "verified_count_at_last_train"} <= training_columns
+    training_indexes = {index["name"] for index in inspector.get_indexes("ml_training_state")}
+    assert "idx_ml_training_state_last_train" in training_indexes
 
     supporter_columns = {column["name"] for column in inspector.get_columns("supporters")}
     assert {"email_encrypted", "email_lookup_hash", "donation_count", "last_checkout_session_id"} <= supporter_columns

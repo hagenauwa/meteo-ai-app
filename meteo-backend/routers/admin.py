@@ -21,7 +21,7 @@ def get_status():
         n_verif = db.query(MlPrediction).filter(MlPrediction.verified.is_(True)).count()
 
         import ml_model
-        from scheduler import scheduler as sch
+        from scheduler import get_training_state_summary, scheduler as sch
 
         return {
             "database": {
@@ -31,6 +31,7 @@ def get_status():
                 "ml_verified": n_verif,
             },
             "ml": ml_model.get_stats(),
+            "ml_training": get_training_state_summary(),
             "scheduler": [
                 {
                     "id": job.id,

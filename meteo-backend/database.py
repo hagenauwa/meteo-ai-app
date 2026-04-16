@@ -116,6 +116,25 @@ class MlModelStore(Base):
     n_samples   = Column(Integer)
 
 
+class MlTrainingState(Base):
+    """Stato persistente dell'ultimo ciclo/training ML."""
+    __tablename__ = "ml_training_state"
+
+    id = Column(Integer, primary_key=True)
+    last_cycle_started_at = Column(DateTime(timezone=True))
+    last_cycle_completed_at = Column(DateTime(timezone=True))
+    last_cycle_status = Column(Text)
+    last_cycle_message = Column(Text)
+    last_cycle_observations = Column(Integer)
+    last_cycle_predictions = Column(Integer)
+    last_cycle_verified = Column(Integer)
+    last_cycle_avg_error = Column(Float)
+    last_successful_train_at = Column(DateTime(timezone=True))
+    verified_count_at_last_train = Column(Integer, nullable=False, default=0)
+    last_model_store_id = Column(Integer)
+    last_model_trained_at = Column(DateTime(timezone=True))
+
+
 class Supporter(Base):
     """Supporter che ha completato almeno una donazione."""
     __tablename__ = "supporters"
@@ -158,6 +177,7 @@ Index("idx_pred_verify_lookup", MlPrediction.city_id, MlPrediction.target_time, 
 Index("idx_pred_verified",  MlPrediction.verified)
 Index("idx_cities_name",    City.name_lower)
 Index("idx_cities_type",    City.locality_type)
+Index("idx_ml_training_state_last_train", MlTrainingState.last_successful_train_at)
 Index("idx_supporters_email_lookup_hash", Supporter.email_lookup_hash)
 Index("idx_supporter_tokens_supporter_id", SupporterToken.supporter_id)
 Index("idx_supporter_tokens_token_hash", SupporterToken.token_hash)
