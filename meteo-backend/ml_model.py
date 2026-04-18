@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import logging
 import pickle
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -19,6 +20,8 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import City, MlModelStore, MlPrediction, SessionLocal
+
+logger = logging.getLogger(__name__)
 
 CONDITION_LABELS = ("sereno", "parzialmente nuvoloso", "nuvoloso", "pioggia")
 CONDITION_TO_CODE = {label: index for index, label in enumerate(CONDITION_LABELS)}
@@ -1844,7 +1847,19 @@ def train(min_samples: int = 100) -> dict:
 
     db: Session = SessionLocal()
     try:
-        rows = _prepare_training_rows(db)
+        window_start = datetime.now(timezone.utc) - timedelta(days=settings.ml_training_window_days)
+        rows = _prepare_training_rows(
+            db,
+            window_start=window_start,
+            limit=settings.ml_training_max_rows,
+        )
+        logger.info(
+            "ML training loaded %s verified rows with window_start=%s window_days=%s max_rows=%s",
+            len(rows),
+            window_start.isoformat(),
+            settings.ml_training_window_days,
+            settings.ml_training_max_rows,
+        )
         if len(rows) < min_samples:
             return {
                 "success": False,

@@ -1,5 +1,6 @@
 """Unit test mirati per ML v2 (feature engineering, calibrazione, horizon blending)."""
 import importlib
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -283,3 +284,37 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
     assert provider_only["horizon_support"] == "provider_only"
     assert provider_only["model_variant"] == "provider"
     assert provider_only["rain_probability"] == 0.2
+
+
+def test_train_uses_bounded_training_rows(monkeypatch):
+    calls = []
+
+    class FakeSession:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(
+            ml_training_window_days=7,
+            ml_training_max_rows=1234,
+        ),
+    )
+
+    def fake_prepare_training_rows(db, *, window_start=None, limit=None):
+        calls.append((window_start, limit))
+        return []
+
+    monkeypatch.setattr(ml_model, "_prepare_training_rows", fake_prepare_training_rows)
+
+    result = ml_model.train(min_samples=10)
+
+    assert result["success"] is False
+    assert "Dati insufficienti" in result["message"]
+    assert len(calls) == 1
+    window_start, limit = calls[0]
+    assert limit == 1234
+    assert window_start is not None
+    assert window_start.tzinfo is not None

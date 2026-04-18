@@ -37,6 +37,8 @@ class Settings:
     ml_v2_shadow_only: bool = True
     ml_v2_rollout_percent: int = 0
     ml_kpi_window_days: int = 14
+    ml_training_window_days: int = 30
+    ml_training_max_rows: int = 60000
     ml_min_new_verified_for_retrain: int = 500
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
@@ -95,6 +97,8 @@ def load_settings() -> Settings:
         ml_v2_shadow_only=_as_bool(os.getenv("ML_V2_SHADOW_ONLY"), default=True),
         ml_v2_rollout_percent=max(0, min(100, int(os.getenv("ML_V2_ROLLOUT_PERCENT", "0")))),
         ml_kpi_window_days=max(3, int(os.getenv("ML_KPI_WINDOW_DAYS", "14"))),
+        ml_training_window_days=max(3, int(os.getenv("ML_TRAINING_WINDOW_DAYS", "30"))),
+        ml_training_max_rows=max(1000, int(os.getenv("ML_TRAINING_MAX_ROWS", "60000"))),
         ml_min_new_verified_for_retrain=max(50, int(os.getenv("ML_MIN_NEW_VERIFIED_FOR_RETRAIN", "500"))),
         stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", "").strip(),
         stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", "").strip(),
