@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import logging
 import pickle
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
+import sklearn
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error
 from sklearn.pipeline import Pipeline
@@ -52,6 +54,8 @@ BLEND_BUCKET_ML_WEIGHT_LIMITS = {
     "day4_7": (0.05, 0.35),
     "day8_plus": (0.0, 0.2),
 }
+MODEL_FORMAT_VERSION = 2
+MODEL_METADATA_PREFIX = b"MLMETA "
 
 # Pipeline globali caricate in memoria all'avvio
 _pipeline: Optional[Pipeline] = None
@@ -81,9 +85,36 @@ _latest_summary: dict = {
     "rain_brier_v2": None,
     "condition_macro_f1_v2": None,
     "temperature_model_variant": None,
+    "model_format_version": None,
+    "model_sklearn_version": None,
+    "model_load_warning": None,
     "model_samples": None,
     "model_trained_at": None,
 }
+
+
+def _empty_model_summary() -> dict:
+    return {
+        "model_ready": False,
+        "rain_model_ready": False,
+        "condition_model_ready": False,
+        "rain_model_v2_ready": False,
+        "condition_model_v2_ready": False,
+        "model_mae": None,
+        "baseline_mae": None,
+        "rain_accuracy": None,
+        "rain_baseline_accuracy": None,
+        "condition_accuracy": None,
+        "condition_baseline_accuracy": None,
+        "rain_brier_v2": None,
+        "condition_macro_f1_v2": None,
+        "temperature_model_variant": None,
+        "model_format_version": None,
+        "model_sklearn_version": None,
+        "model_load_warning": None,
+        "model_samples": None,
+        "model_trained_at": None,
+    }
 _stats_cache: dict[str, object] | None = None
 _shadow_state: dict[str, object] = {
     "consecutive_positive_windows": 0,
@@ -145,6 +176,45 @@ def _latest_model_record_summary() -> dict | None:
         return None
     finally:
         db.close()
+
+
+def _reset_loaded_model_state() -> None:
+    global _pipeline, _rain_pipeline, _condition_pipeline
+    global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v2, _condition_platt_v2
+    global _label_encoder, _known_regions, _temperature_feature_variant, _blend_profiles
+
+    _pipeline = None
+    _rain_pipeline = None
+    _condition_pipeline = None
+    _rain_pipeline_v2 = None
+    _condition_pipeline_v2 = None
+    _rain_platt_v2 = None
+    _condition_platt_v2 = None
+    _label_encoder = None
+    _known_regions = []
+    _temperature_feature_variant = "v1"
+    _blend_profiles = {"v1": {}, "v2": {}}
+
+
+def _encode_model_payload(payload: dict) -> bytes:
+    metadata = {
+        "model_format_version": int(payload.get("model_format_version", MODEL_FORMAT_VERSION)),
+        "sklearn_version": payload.get("sklearn_version"),
+    }
+    header = MODEL_METADATA_PREFIX + json.dumps(metadata, separators=(",", ":")).encode("ascii") + b"\n"
+    return header + pickle.dumps(payload)
+
+
+def _decode_model_payload(blob: bytes) -> tuple[dict | None, bytes | None]:
+    if not blob.startswith(MODEL_METADATA_PREFIX):
+        return None, None
+
+    header, separator, payload = blob.partition(b"\n")
+    if not separator:
+        raise ValueError("missing_model_metadata_separator")
+
+    metadata = json.loads(header[len(MODEL_METADATA_PREFIX):].decode("ascii"))
+    return metadata, payload
 
 
 def _ensure_latest_model_loaded(*, force: bool = False) -> None:
@@ -1962,7 +2032,9 @@ def train(min_samples: int = 100) -> dict:
             rain_platt_v2 = None
             condition_platt_v2 = None
 
-        model_data = pickle.dumps({
+        payload = {
+            "model_format_version": MODEL_FORMAT_VERSION,
+            "sklearn_version": sklearn.__version__,
             "pipeline": pipeline,
             "temperature_feature_variant": temperature_feature_variant,
             "rain_pipeline": rain_pipeline,
@@ -1986,7 +2058,8 @@ def train(min_samples: int = 100) -> dict:
             "condition_baseline_accuracy": condition_result.get("baseline_accuracy"),
             "rain_brier_v2": rain_v2_result.get("brier"),
             "condition_macro_f1_v2": condition_v2_result.get("macro_f1"),
-        })
+        }
+        model_data = _encode_model_payload(payload)
 
         record = MlModelStore(
             trained_at=datetime.now(timezone.utc),
@@ -2028,6 +2101,9 @@ def train(min_samples: int = 100) -> dict:
             "rain_brier_v2": rain_v2_result.get("brier"),
             "condition_macro_f1_v2": condition_v2_result.get("macro_f1"),
             "temperature_model_variant": temperature_feature_variant,
+            "model_format_version": MODEL_FORMAT_VERSION,
+            "model_sklearn_version": sklearn.__version__,
+            "model_load_warning": None,
             "model_samples": temp_result["n_samples"],
             "model_trained_at": record.trained_at.isoformat(),
         }
@@ -2050,6 +2126,8 @@ def train(min_samples: int = 100) -> dict:
             "condition_message": None if condition_pipeline is not None else condition_result.get("message"),
             "rain_model_v2_ready": rain_pipeline_v2 is not None,
             "condition_model_v2_ready": condition_pipeline_v2 is not None,
+            "model_format_version": MODEL_FORMAT_VERSION,
+            "model_sklearn_version": sklearn.__version__,
             "v2_backtest": backtest,
         }
     except Exception as e:
@@ -2072,35 +2150,52 @@ def load_latest_model() -> bool:
         record = db.query(MlModelStore).order_by(MlModelStore.trained_at.desc()).first()
         if not record or not record.model_bytes:
             print("[INFO]  Nessun modello ML salvato nel DB")
-            _pipeline = None
-            _rain_pipeline = None
-            _condition_pipeline = None
-            _rain_pipeline_v2 = None
-            _condition_pipeline_v2 = None
-            _rain_platt_v2 = None
-            _condition_platt_v2 = None
-            _temperature_feature_variant = "v1"
-            _blend_profiles = {"v1": {}, "v2": {}}
+            _reset_loaded_model_state()
             _loaded_model_store_id = None
             _loaded_model_trained_at = None
             _last_model_version_check_at = datetime.now(timezone.utc)
+            _latest_summary = _empty_model_summary()
+            return False
+
+        metadata, payload_bytes = _decode_model_payload(record.model_bytes)
+        stored_sklearn_version = None if metadata is None else metadata.get("sklearn_version")
+        stored_format_version = 1 if metadata is None else int(metadata.get("model_format_version", 1))
+        if stored_format_version != MODEL_FORMAT_VERSION or stored_sklearn_version != sklearn.__version__:
+            _reset_loaded_model_state()
+            _loaded_model_store_id = int(record.id)
+            _loaded_model_trained_at = record.trained_at
+            _last_model_version_check_at = datetime.now(timezone.utc)
+            warning = (
+                f"incompatible_model_pickle: stored_format={stored_format_version} "
+                f"runtime_format={MODEL_FORMAT_VERSION} stored_sklearn={stored_sklearn_version or 'unknown'} "
+                f"runtime_sklearn={sklearn.__version__}"
+            )
             _latest_summary = {
-                **_latest_summary,
+                **_empty_model_summary(),
                 "model_ready": False,
                 "rain_model_ready": False,
                 "condition_model_ready": False,
                 "rain_model_v2_ready": False,
                 "condition_model_v2_ready": False,
-                "temperature_model_variant": None,
-                "model_trained_at": None,
-                "model_mae": None,
+                "model_mae": record.mae,
+                "baseline_mae": None,
+                "rain_accuracy": None,
+                "rain_baseline_accuracy": None,
                 "condition_accuracy": None,
                 "condition_baseline_accuracy": None,
-                "model_samples": None,
+                "rain_brier_v2": None,
+                "condition_macro_f1_v2": None,
+                "temperature_model_variant": None,
+                "model_format_version": stored_format_version,
+                "model_sklearn_version": stored_sklearn_version,
+                "model_load_warning": warning,
+                "model_samples": record.n_samples,
+                "model_trained_at": record.trained_at.isoformat(),
             }
+            print(f"[WARN]  Modello ML incompatibile con runtime corrente: {warning}")
             return False
 
-        data = pickle.loads(record.model_bytes)
+        data = pickle.loads(payload_bytes)
         _pipeline = data["pipeline"]
         _rain_pipeline = data.get("rain_pipeline")
         _condition_pipeline = data.get("condition_pipeline")
@@ -2135,12 +2230,23 @@ def load_latest_model() -> bool:
             "rain_brier_v2": data.get("rain_brier_v2"),
             "condition_macro_f1_v2": data.get("condition_macro_f1_v2"),
             "temperature_model_variant": _infer_temperature_feature_variant_from_pipeline(_temperature_feature_variant),
+            "model_format_version": data.get("model_format_version", 1),
+            "model_sklearn_version": stored_sklearn_version,
+            "model_load_warning": None,
             "model_samples": record.n_samples,
             "model_trained_at": record.trained_at.isoformat(),
         }
         print(f"[OK] Modello ML caricato (addestrato: {record.trained_at}, MAE: {record.mae})")
         return True
     except Exception as e:
+        _reset_loaded_model_state()
+        _loaded_model_store_id = int(record.id) if 'record' in locals() and record else None
+        _loaded_model_trained_at = record.trained_at if 'record' in locals() and record else None
+        _last_model_version_check_at = datetime.now(timezone.utc)
+        _latest_summary = {
+            **_empty_model_summary(),
+            "model_load_warning": f"model_load_failed:{e}",
+        }
         print(f"[WARN]  Errore caricamento modello: {e}")
         return False
     finally:

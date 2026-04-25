@@ -56,6 +56,7 @@ def test_rain_prediction_endpoint_supports_legacy_models(monkeypatch):
     monkeypatch.setattr(ml_model, "_rain_pipeline", FakeRainPipeline())
     monkeypatch.setattr(ml_model, "_loaded_model_store_id", None)
     monkeypatch.setattr(ml_model, "_rain_pipeline_v2", None)
+    monkeypatch.setattr(ml_model, "_ensure_latest_model_loaded", lambda **kwargs: None)
 
     app.dependency_overrides[get_db] = override_get_db
     try:

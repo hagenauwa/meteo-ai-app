@@ -1,5 +1,6 @@
 """Unit test mirati per ML v2 (feature engineering, calibrazione, horizon blending)."""
 import importlib
+import pickle
 from types import SimpleNamespace
 
 import numpy as np
@@ -10,6 +11,35 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 ml_model = importlib.import_module("ml_model")
+
+
+class _FakeModelQuery:
+    def __init__(self, record):
+        self.record = record
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return self.record
+
+
+class _FakeModelSession:
+    def __init__(self, record):
+        self.record = record
+
+    def query(self, *args, **kwargs):
+        return _FakeModelQuery(self.record)
+
+    def close(self):
+        return None
+
+
+class _PickleablePipeline:
+    n_features_in_ = 6
+
+    def predict(self, features):
+        return np.array([0.5])
 
 
 def test_rain_feature_vector_v2_shape_and_missing_flags():
@@ -284,6 +314,207 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
     assert provider_only["horizon_support"] == "provider_only"
     assert provider_only["model_variant"] == "provider"
     assert provider_only["rain_probability"] == 0.2
+
+
+def test_load_latest_model_rejects_incompatible_sklearn_pickle(monkeypatch):
+    payload = {
+        "model_format_version": 2,
+        "sklearn_version": "1.5.2",
+        "pipeline": object(),
+        "rain_pipeline": object(),
+        "condition_pipeline": object(),
+        "le": object(),
+        "baseline_mae": 1.2,
+    }
+    record = SimpleNamespace(
+        id=7,
+        trained_at=SimpleNamespace(isoformat=lambda: "2026-04-16T10:00:00+00:00"),
+        mae=1.1,
+        n_samples=500,
+        model_bytes=ml_model._encode_model_payload(payload),
+    )
+
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: _FakeModelSession(record))
+    monkeypatch.setattr(ml_model.sklearn, "__version__", "1.6.1")
+
+    loaded = ml_model.load_latest_model()
+
+    assert loaded is False
+    assert ml_model._pipeline is None
+    summary = ml_model.get_public_summary()
+    assert summary["model_ready"] is False
+    assert summary["rain_model_ready"] is False
+    assert summary["condition_model_ready"] is False
+    assert summary["model_sklearn_version"] == "1.5.2"
+    assert "incompatible_model_pickle" in summary["model_load_warning"]
+
+    correction = ml_model.predict_correction(
+        temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+    )
+    rain = ml_model.predict_rain_probability(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+    )
+    condition = ml_model.predict_condition_outlook(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+    )
+
+    assert correction["model_variant"] == "provider"
+    assert correction["model_ready"] is False
+    assert rain["model_variant"] == "provider"
+    assert rain["model_ready"] is False
+    assert condition["model_variant"] == "provider"
+    assert condition["model_ready"] is False
+
+
+def test_load_latest_model_accepts_matching_sklearn_pickle(monkeypatch):
+    payload = {
+        "model_format_version": 2,
+        "sklearn_version": "1.6.1",
+        "pipeline": _PickleablePipeline(),
+        "rain_pipeline": None,
+        "condition_pipeline": None,
+        "rain_pipeline_v2": None,
+        "condition_pipeline_v2": None,
+        "rain_platt_v2": None,
+        "condition_platt_v2": None,
+        "temperature_feature_variant": "v1",
+        "blend_profiles": {"v1": {}, "v2": {}},
+        "le": object(),
+        "regions": ["Lazio"],
+    }
+    record = SimpleNamespace(
+        id=8,
+        trained_at=SimpleNamespace(isoformat=lambda: "2026-04-16T11:00:00+00:00"),
+        mae=0.9,
+        n_samples=800,
+        model_bytes=ml_model._encode_model_payload(payload),
+    )
+
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: _FakeModelSession(record))
+    monkeypatch.setattr(ml_model.sklearn, "__version__", "1.6.1")
+
+    loaded = ml_model.load_latest_model()
+
+    assert loaded is True
+    summary = ml_model.get_public_summary()
+    assert summary["model_sklearn_version"] == "1.6.1"
+    assert summary["model_format_version"] == 2
+    assert summary["model_load_warning"] is None
+    assert summary["model_mae"] == 0.9
+
+
+def test_load_latest_model_rejects_legacy_payload_without_metadata(monkeypatch):
+    payload = {
+        "pipeline": object(),
+        "rain_pipeline": object(),
+        "condition_pipeline": object(),
+        "le": object(),
+    }
+    record = SimpleNamespace(
+        id=9,
+        trained_at=SimpleNamespace(isoformat=lambda: "2026-04-16T12:00:00+00:00"),
+        mae=1.3,
+        n_samples=300,
+        model_bytes=pickle.dumps(payload),
+    )
+
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: _FakeModelSession(record))
+    monkeypatch.setattr(ml_model.sklearn, "__version__", "1.6.1")
+
+    loaded = ml_model.load_latest_model()
+
+    assert loaded is False
+    summary = ml_model.get_public_summary()
+    assert summary["model_format_version"] == 1
+    assert summary["model_sklearn_version"] is None
+    assert "stored_sklearn=unknown" in summary["model_load_warning"]
+
+
+def test_load_latest_model_clears_state_on_malformed_payload(monkeypatch):
+    monkeypatch.setattr(ml_model, "_pipeline", object())
+    monkeypatch.setattr(ml_model, "_rain_pipeline", object())
+    monkeypatch.setattr(
+        ml_model,
+        "_latest_summary",
+        {
+            **ml_model._empty_model_summary(),
+            "model_ready": True,
+            "model_mae": 0.7,
+            "baseline_mae": 1.1,
+            "rain_accuracy": 0.8,
+            "model_samples": 999,
+            "model_trained_at": "2026-04-15T00:00:00+00:00",
+        },
+    )
+    record = SimpleNamespace(
+        id=10,
+        trained_at=SimpleNamespace(isoformat=lambda: "2026-04-16T13:00:00+00:00"),
+        mae=1.4,
+        n_samples=250,
+        model_bytes=b"MLMETA {bad json}\nnot-a-pickle",
+    )
+
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: _FakeModelSession(record))
+
+    loaded = ml_model.load_latest_model()
+
+    assert loaded is False
+    assert ml_model._pipeline is None
+    assert ml_model._rain_pipeline is None
+    summary = ml_model.get_public_summary()
+    assert summary["model_ready"] is False
+    assert summary["model_mae"] is None
+    assert summary["baseline_mae"] is None
+    assert summary["rain_accuracy"] is None
+    assert summary["model_samples"] is None
+    assert summary["model_trained_at"] is None
+    assert summary["model_load_warning"].startswith("model_load_failed:")
+
+
+def test_load_latest_model_rejects_unsupported_format_version(monkeypatch):
+    payload = {
+        "model_format_version": 999,
+        "sklearn_version": "1.6.1",
+        "pipeline": _PickleablePipeline(),
+        "rain_pipeline": None,
+        "condition_pipeline": None,
+        "le": object(),
+    }
+    record = SimpleNamespace(
+        id=11,
+        trained_at=SimpleNamespace(isoformat=lambda: "2026-04-16T14:00:00+00:00"),
+        mae=0.8,
+        n_samples=700,
+        model_bytes=ml_model._encode_model_payload(payload),
+    )
+
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: _FakeModelSession(record))
+    monkeypatch.setattr(ml_model.sklearn, "__version__", "1.6.1")
+
+    loaded = ml_model.load_latest_model()
+
+    assert loaded is False
+    summary = ml_model.get_public_summary()
+    assert summary["model_format_version"] == 999
+    assert "stored_format=999" in summary["model_load_warning"]
 
 
 def test_train_uses_bounded_training_rows(monkeypatch):
