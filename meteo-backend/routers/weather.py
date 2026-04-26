@@ -10,7 +10,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import City, get_db
-import ml_model
 from weather_service import fetch_single_city, format_weather_for_frontend
 
 router = APIRouter()
@@ -89,6 +88,8 @@ async def get_weather(
     city_row = resolved["city_row"]
 
     if include_ml and formatted:
+        import ml_model
+
         now = datetime.now()
         region = city_row.region if city_row else "Sconosciuta"
         current = formatted["current"]

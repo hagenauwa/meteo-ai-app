@@ -12,8 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from config import settings
 from database import init_db, SessionLocal, City, db_healthcheck
-from scheduler import start_scheduler, stop_scheduler
-import ml_model
+
+_bootstrap_state = {"ready": False, "error": None}
 
 
 def _load_cities_if_empty():
@@ -49,27 +49,46 @@ def _load_cities_if_empty():
         traceback.print_exc()
 
 
+def _bootstrap_runtime():
+    try:
+        init_db()
+        if settings.auto_load_cities:
+            threading.Thread(target=_load_cities_if_empty, daemon=True).start()
+        else:
+            print("[CITIES] Bootstrap automatico disattivato in questo ambiente", flush=True)
+
+        import ml_model
+
+        ml_model.load_latest_model()
+        if settings.enable_scheduler:
+            from scheduler import start_scheduler
+
+            start_scheduler()
+        else:
+            print("[SCHED] Scheduler disattivato in questo ambiente", flush=True)
+        _bootstrap_state["ready"] = True
+        print("[OK] Backend pronto\n", flush=True)
+    except Exception as exc:
+        _bootstrap_state["error"] = str(exc)
+        print(f"[ERROR] Bootstrap backend fallito: {exc}", flush=True)
+        import traceback
+
+        traceback.print_exc()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / Shutdown dell'applicazione."""
     # --- STARTUP ---
-    print("\n[METEO]  Meteo AI Backend — avvio in corso...")
-    init_db()
-    if settings.auto_load_cities:
-        threading.Thread(target=_load_cities_if_empty, daemon=True).start()
-    else:
-        print("[CITIES] Bootstrap automatico disattivato in questo ambiente")
-    ml_model.load_latest_model()
-    if settings.enable_scheduler:
-        start_scheduler()
-    else:
-        print("[SCHED] Scheduler disattivato in questo ambiente")
-    print("[OK] Backend pronto\n")
+    print("\n[METEO]  Meteo AI Backend — avvio in corso...", flush=True)
+    threading.Thread(target=_bootstrap_runtime, daemon=True).start()
 
     yield
 
     # --- SHUTDOWN ---
     if settings.enable_scheduler:
+        from scheduler import stop_scheduler
+
         stop_scheduler()
     print("[BYE] Backend fermato")
 
@@ -118,22 +137,32 @@ def health():
 
 @app.get("/ready")
 def ready():
-    from scheduler import get_training_state_summary, scheduler as current_scheduler
-
     db_ok = db_healthcheck()
-    model_summary = ml_model.get_public_summary()
     scheduler_enabled = settings.enable_scheduler
-    scheduler_running = bool(current_scheduler.running) if scheduler_enabled else False
+
+    model_summary = {"model_ready": False}
+    training_summary = {}
+    scheduler_running = False
+    scheduler_jobs = 0
+    if _bootstrap_state["ready"]:
+        import ml_model
+        from scheduler import get_training_state_summary, scheduler as current_scheduler
+
+        model_summary = ml_model.get_public_summary()
+        training_summary = get_training_state_summary()
+        scheduler_running = bool(current_scheduler.running) if scheduler_enabled else False
+        scheduler_jobs = len(current_scheduler.get_jobs())
 
     return {
-        "status": "ready" if db_ok and (scheduler_running or not scheduler_enabled) else "degraded",
+        "status": "ready" if db_ok and not _bootstrap_state["error"] else "degraded",
         "database": {"ok": db_ok},
+        "bootstrap": _bootstrap_state,
         "scheduler": {
             "enabled": scheduler_enabled,
             "running": scheduler_running,
-            "jobs": len(current_scheduler.get_jobs()),
+            "jobs": scheduler_jobs,
         },
         "ml": model_summary,
-        "ml_training": get_training_state_summary(),
+        "ml_training": training_summary,
         "env": settings.app_env,
     }
