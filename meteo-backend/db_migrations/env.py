@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from database import Base
+from database import Base, DATABASE_URL
 
 config = context.config
+configured_url = config.get_main_option("sqlalchemy.url")
+if os.getenv("DATABASE_URL") and configured_url in {None, "", "sqlite:///meteo_ai.db"}:
+    config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
