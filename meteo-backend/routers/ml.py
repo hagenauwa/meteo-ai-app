@@ -15,6 +15,17 @@ from database import City, get_db
 router = APIRouter()
 
 
+class _LazyMlModel:
+    def __getattr__(self, name: str):
+        import importlib
+
+        module = importlib.import_module("ml_model")
+        return getattr(module, name)
+
+
+ml_model = _LazyMlModel()
+
+
 class EnrichCityPayload(BaseModel):
     name: str
     lat: float
@@ -106,8 +117,6 @@ async def get_correction(
     forecast_weather_code: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    import ml_model
-
     now = datetime.now()
     if hour is None:
         hour = now.hour
@@ -132,8 +141,6 @@ async def get_correction(
 
 @router.get("/stats")
 def get_stats():
-    import ml_model
-
     return ml_model.get_stats()
 
 
@@ -142,8 +149,6 @@ async def enrich_forecast(
     payload: EnrichRequest,
     db: Session = Depends(get_db),
 ):
-    import ml_model
-
     now = datetime.now()
     region = _resolve_region_for_enrich(payload.city, db)
 
@@ -208,8 +213,6 @@ async def get_rain_prediction(
     lead_hours: int = Query(0, ge=0, le=240),
     db: Session = Depends(get_db),
 ):
-    import ml_model
-
     now = datetime.now()
     if hour is None:
         hour = now.hour
@@ -234,8 +237,6 @@ async def force_train(
     min_samples: int = Query(100),
     _: None = Depends(require_admin_access),
 ):
-    import ml_model
-
     result = await __import__("asyncio").to_thread(ml_model.train, min_samples)
     if result["success"]:
         ml_model.load_latest_model()

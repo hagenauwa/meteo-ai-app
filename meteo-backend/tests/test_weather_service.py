@@ -49,7 +49,8 @@ def test_build_batch_results_creates_future_predictions():
     result = _build_batch_results(cities, payload)
 
     assert len(result["observations"]) == 1
-    assert len(result["predictions"]) == 6
+    assert len(result["predictions"]) == 3
+    assert [prediction["lead_hours"] for prediction in result["predictions"]] == [1, 3, 6]
     first_prediction = result["predictions"][0]
     assert first_prediction["lead_hours"] == 1
     assert first_prediction["target_time"] == datetime(2026, 4, 4, 11, 0, tzinfo=timezone.utc)

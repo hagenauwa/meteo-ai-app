@@ -22,6 +22,23 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _as_int_csv(value: str | None, default: tuple[int, ...]) -> tuple[int, ...]:
+    if not value:
+        return default
+
+    parsed: list[int] = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            parsed.append(int(item))
+        except ValueError:
+            continue
+
+    return tuple(parsed) or default
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = "development"
@@ -40,6 +57,12 @@ class Settings:
     ml_training_window_days: int = 30
     ml_training_max_rows: int = 60000
     ml_min_new_verified_for_retrain: int = 500
+    ml_city_sample_size: int = 800
+    ml_city_core_size: int = 100
+    ml_forecast_leads: tuple[int, ...] = (1, 3, 6, 14, 38, 86, 158)
+    ml_cycle_every_hours: int = 6
+    ml_observation_retention_days: int = 21
+    ml_prediction_retention_days: int = 21
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     supporter_email_encryption_key: str = ""
@@ -100,6 +123,17 @@ def load_settings() -> Settings:
         ml_training_window_days=max(3, int(os.getenv("ML_TRAINING_WINDOW_DAYS", "30"))),
         ml_training_max_rows=max(1000, int(os.getenv("ML_TRAINING_MAX_ROWS", "60000"))),
         ml_min_new_verified_for_retrain=max(50, int(os.getenv("ML_MIN_NEW_VERIFIED_FOR_RETRAIN", "500"))),
+        ml_city_sample_size=max(1, int(os.getenv("ML_CITY_SAMPLE_SIZE", "800"))),
+        ml_city_core_size=max(0, int(os.getenv("ML_CITY_CORE_SIZE", "100"))),
+        ml_forecast_leads=tuple(
+            sorted({
+                max(1, min(240, lead))
+                for lead in _as_int_csv(os.getenv("ML_FORECAST_LEADS"), (1, 3, 6, 14, 38, 86, 158))
+            })
+        ),
+        ml_cycle_every_hours=max(1, int(os.getenv("ML_CYCLE_EVERY_HOURS", "6"))),
+        ml_observation_retention_days=max(1, int(os.getenv("ML_OBSERVATION_RETENTION_DAYS", "21"))),
+        ml_prediction_retention_days=max(1, int(os.getenv("ML_PREDICTION_RETENTION_DAYS", "21"))),
         stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", "").strip(),
         stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", "").strip(),
         supporter_email_encryption_key=os.getenv("SUPPORTER_EMAIL_ENCRYPTION_KEY", "").strip(),

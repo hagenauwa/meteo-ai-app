@@ -4,6 +4,7 @@ scheduler.py — ciclo orario di raccolta osservazioni, verifica forecast e trai
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.base import SchedulerAlreadyRunningError, SchedulerNotRunningError
@@ -18,8 +19,8 @@ import ml_model
 
 MIN_VERIFIED_FOR_TRAINING = 500
 RETRAIN_EVERY_HOURS = 6
-OBSERVATION_RETENTION_DAYS = 30
-PREDICTION_RETENTION_DAYS = 45
+OBSERVATION_RETENTION_DAYS = settings.ml_observation_retention_days
+PREDICTION_RETENTION_DAYS = settings.ml_prediction_retention_days
 TRAINING_STATE_ID = 1
 
 scheduler = AsyncIOScheduler(timezone="Europe/Rome")
@@ -27,10 +28,114 @@ scheduler = AsyncIOScheduler(timezone="Europe/Rome")
 
 def _db_get_cities() -> list[dict]:
     with SessionLocal() as db:
-        rows = db.query(City.id, City.name, City.lat, City.lon).filter(
-            City.locality_type == "comune"
-        ).all()
-        return [{"id": row.id, "name": row.name, "lat": row.lat, "lon": row.lon} for row in rows]
+        rows = db.query(
+            City.id,
+            City.name,
+            City.lat,
+            City.lon,
+            City.region,
+            City.province,
+            City.population,
+        ).filter(City.locality_type == "comune").all()
+        cities = [
+            {
+                "id": row.id,
+                "name": row.name,
+                "lat": row.lat,
+                "lon": row.lon,
+                "region": row.region,
+                "province": row.province,
+                "population": row.population,
+            }
+            for row in rows
+        ]
+        return _select_training_cities(cities, datetime.now(timezone.utc))
+
+
+def _stable_int(value: str) -> int:
+    return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:16], 16)
+
+
+def _city_group_key(city: dict) -> tuple[str, str]:
+    return (
+        str(city.get("region") or "Sconosciuta").strip().lower(),
+        str(city.get("province") or "Sconosciuta").strip().lower(),
+    )
+
+
+def _cycle_seed(now: datetime) -> int:
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    window_seconds = max(1, settings.ml_cycle_every_hours) * 3600
+    return int(now.timestamp() // window_seconds)
+
+
+def _select_training_cities(cities: list[dict], now: datetime | None = None) -> list[dict]:
+    """Seleziona un campione stabile, bilanciato e rotante per contenere il carico DB."""
+    sample_size = min(len(cities), settings.ml_city_sample_size)
+    if sample_size <= 0 or len(cities) <= sample_size:
+        return sorted(cities, key=lambda city: int(city["id"]))
+
+    core_size = min(sample_size, settings.ml_city_core_size)
+    seed = _cycle_seed(now or datetime.now(timezone.utc))
+
+    core = sorted(
+        cities,
+        key=lambda city: (
+            -(int(city.get("population") or 0)),
+            str(city.get("name") or "").lower(),
+            int(city["id"]),
+        ),
+    )[:core_size]
+    selected_by_id = {int(city["id"]): city for city in core}
+    remaining = [city for city in cities if int(city["id"]) not in selected_by_id]
+    target_remaining = sample_size - len(selected_by_id)
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for city in remaining:
+        groups.setdefault(_city_group_key(city), []).append(city)
+
+    ordered_groups = sorted(
+        groups.items(),
+        key=lambda item: _stable_int(f"{seed}:group:{item[0][0]}:{item[0][1]}"),
+    )
+    for _, group_cities in ordered_groups:
+        group_cities.sort(key=lambda city: _stable_int(f"{seed}:city:{city['id']}"))
+
+    while len(selected_by_id) < sample_size and ordered_groups:
+        progressed = False
+        for _, group_cities in ordered_groups:
+            if len(selected_by_id) >= sample_size:
+                break
+            while group_cities:
+                candidate = group_cities.pop(0)
+                candidate_id = int(candidate["id"])
+                if candidate_id not in selected_by_id:
+                    selected_by_id[candidate_id] = candidate
+                    progressed = True
+                    break
+        if not progressed:
+            break
+
+    selected = list(selected_by_id.values())
+    if len(selected) < sample_size:
+        fallback = sorted(
+            remaining,
+            key=lambda city: _stable_int(f"{seed}:fallback:{city['id']}"),
+        )
+        for city in fallback:
+            if len(selected_by_id) >= sample_size:
+                break
+            selected_by_id.setdefault(int(city["id"]), city)
+        selected = list(selected_by_id.values())
+
+    selected.sort(key=lambda city: int(city["id"]))
+    print(
+        f"[ML] Campione città: {len(selected)}/{len(cities)} "
+        f"(core={len(core)}, rotating={max(0, len(selected) - len(core))}, "
+        f"target_rotating={target_remaining})"
+    )
+    return selected
 
 
 def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
@@ -227,8 +332,8 @@ def get_training_state_summary() -> dict:
 
 
 def _db_cleanup(now: datetime) -> dict:
-    obs_cutoff = now - timedelta(days=OBSERVATION_RETENTION_DAYS)
-    pred_cutoff = now - timedelta(days=PREDICTION_RETENTION_DAYS)
+    obs_cutoff = now - timedelta(days=settings.ml_observation_retention_days)
+    pred_cutoff = now - timedelta(days=settings.ml_prediction_retention_days)
 
     with SessionLocal() as db:
         deleted_obs = db.query(WeatherObservation).filter(
@@ -430,7 +535,7 @@ async def hourly_cycle():
 def start_scheduler():
     scheduler.add_job(
         hourly_cycle,
-        trigger=IntervalTrigger(hours=1),
+        trigger=IntervalTrigger(hours=settings.ml_cycle_every_hours),
         id="hourly_cycle",
         name="Raccolta meteo + verifica forecast + training ML",
         replace_existing=True,
@@ -446,7 +551,7 @@ def start_scheduler():
     except SchedulerAlreadyRunningError:
         pass
 
-    print("[SCHED] Scheduler avviato — ciclo ogni ora attivo")
+    print(f"[SCHED] Scheduler avviato — ciclo ogni {settings.ml_cycle_every_hours} ore attivo")
 
 
 def stop_scheduler():

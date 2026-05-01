@@ -1,0 +1,61 @@
+╔══════════════════════════════════════════════════════════════╗
+║          METEO AI APP - ISTRUZIONI SUPER FACILI              ║
+╚══════════════════════════════════════════════════════════════╝
+
+QUESTO DEVI FARLO PER FORZA TU (non posso farlo io):
+═══════════════════════════════════════════════════════════════
+
+PASSO 1: Installa Node.js (2 minuti)
+─────────────────────────────────────
+1. Vai su:  https://nodejs.org/
+2. Clicca il pulsante VERDE "LTS" (a sinistra)
+3. Scarica e installa (clicca Avanti-Avanti-Avanti-Fine)
+4. IMPORTANTE: Chiudi e riapri il terminale dopo l'installazione
+
+PASSO 2: Ottieni API Key Meteo (3 minuti)
+──────────────────────────────────────────
+1. Vai su:  https://home.openweathermap.org/users/sign_up
+2. Inserisci email, username, password
+3. Clicca link di conferma nella tua email
+4. Accedi e vai su "My API Keys"
+5. Copia la chiave (es. "a1b2c3d4e5f6...")
+
+
+DA QUI IN POI FA TUTTO LO SCRIPT AUTOMATICO:
+═══════════════════════════════════════════════════════════════
+
+APRI IL TERMINALE IN QUESTA CARTELLA (meteo-ai-app):
+- Tasto destro nella cartella → "Apri in Terminale" oppure
+- Shift + Tasto destro → "Apri finestra PowerShell qui"
+
+Poi scrivi:
+───────────
+  setup-v2.bat
+
+
+LO SCRIPT FARÀ AUTOMATICAMENTE:
+────────────────────────────────
+✓ Installa Netlify CLI (il tool per pubblicare il sito)
+✓ Ti collega a Netlify (apre il browser, tu clicchi "Authorize")
+✓ Chiede la tua API Key e la salva
+✓ Collega il progetto a Netlify
+
+ALLA FINE SCRIVI:
+─────────────────
+  netlify deploy --prod
+
+E il sito è online! 🎉
+
+
+SE QUALCOSA NON FUNZIONA:
+═══════════════════════════════════════════════════════════════
+Problema: "node non riconosciuto"
+→ Soluzione: Non hai installato Node.js, torna al PASSO 1
+
+Problema: "npm non riconosciuto"  
+→ Soluzione: Chiudi e riapri il terminale, poi riprova
+
+Problema: "netlify non riconosciuto"
+→ Soluzione: Scrivi questo comando:
+   npm install -g netlify-cli
+   (aspetta che finisca, poi riprova)

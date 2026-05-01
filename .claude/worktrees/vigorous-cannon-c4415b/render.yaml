@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: meteo-ai-backend
+    runtime: python
+    rootDir: meteo-backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: if [ -f alembic.ini ]; then python -m alembic -c alembic.ini upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT; else cd meteo-backend && python -m alembic -c alembic.ini upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT; fi
+    healthCheckPath: /ready
+    envVars:
+      - key: DATABASE_URL
+        sync: false        # imposta manualmente su Render dashboard
+      - key: ADMIN_API_TOKEN
+        sync: false        # richiesto per /api/admin/* e /api/ml/train
+      - key: FRONTEND_ORIGIN
+        value: "https://leprevisioni.netlify.app"
+      - key: APP_ENV
+        value: "production"
+      - key: ENABLE_SCHEDULER
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.4"
+
+  - type: cron
+    name: meteo-ai-ml-cycle
+    runtime: python
+    rootDir: meteo-backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_ml_cycle.py
+    schedule: "5 * * * *"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_ENV
+        value: "production"
+      - key: ENABLE_SCHEDULER
+        value: "false"
+      - key: AUTO_LOAD_CITIES
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.11.4"

@@ -16,13 +16,15 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from config import settings
+
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 METNO_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
 BATCH_SIZE = 100
 MAX_CONCURRENCY = 1
 TIMEOUT = 30
 # Lead corti per nowcasting + target di meta giornata per i primi giorni pubblici.
-ML_FORECAST_LEADS = (1, 2, 3, 4, 5, 6, 14, 38, 62, 86, 110, 134, 158)
+ML_FORECAST_LEADS = settings.ml_forecast_leads
 BATCH_DELAY_SECONDS = 0.75
 BATCH_RETRY_DELAYS = (5, 15)
 PUBLIC_CACHE_TTL_SECONDS = 300
