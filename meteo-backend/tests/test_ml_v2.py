@@ -14,22 +14,31 @@ ml_model = importlib.import_module("ml_model")
 
 
 class _FakeModelQuery:
-    def __init__(self, record):
-        self.record = record
+    def __init__(self, records):
+        if isinstance(records, list):
+            self.records = records
+        else:
+            self.records = [records] if records else []
 
     def order_by(self, *args, **kwargs):
         return self
 
+    def limit(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self.records
+
     def first(self):
-        return self.record
+        return self.records[0] if self.records else None
 
 
 class _FakeModelSession:
-    def __init__(self, record):
-        self.record = record
+    def __init__(self, records):
+        self.records = records
 
     def query(self, *args, **kwargs):
-        return _FakeModelQuery(self.record)
+        return _FakeModelQuery(self.records)
 
     def close(self):
         return None
@@ -316,6 +325,97 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
     assert provider_only["rain_probability"] == 0.2
 
 
+def test_daily_insight_low_pop_clear_code_does_not_claim_rain(monkeypatch):
+    monkeypatch.setattr(
+        ml_model,
+        "predict_correction",
+        lambda **kwargs: {"model_ready": False, "correction": 0.0, "corrected_temp": kwargs["temp"]},
+    )
+    monkeypatch.setattr(
+        ml_model,
+        "predict_rain_probability",
+        lambda **kwargs: {"model_ready": False, "model_variant": "provider"},
+    )
+
+    def provider_condition(**kwargs):
+        label = ml_model._condition_from_inputs(
+            weather_code=kwargs["forecast_weather_code"],
+            cloud_cover=kwargs["cloud_cover"],
+            precipitation=kwargs["forecast_precipitation"],
+        )
+        return {
+            "model_ready": False,
+            "expected_condition": label,
+            "display_condition": ml_model._condition_display(label),
+            "confidence": "media",
+            "source": "provider",
+            "model_variant": "provider",
+        }
+
+    monkeypatch.setattr(ml_model, "predict_condition_outlook", provider_condition)
+
+    day = {
+        "dt": "2026-04-11",
+        "temp": {"min": 10.0, "max": 20.0, "day": 15.0},
+        "humidity": 70,
+        "cloud_cover": 10,
+        "wind_speed": 8,
+        "wind_deg": 180,
+        "pop": 0.15,
+        "precipitation_sum": 0.0,
+        "weather_code": 1,
+    }
+
+    insight = ml_model.build_daily_insight(day=day, lat=41.9, lon=12.5, region="Lazio", lead_hours=14, city_name="Roma")
+
+    assert insight["expected_condition"] == "sereno"
+    assert insight["display_condition"] == "Cielo sereno"
+    assert "Pioggia probabile" not in insight["summary"]
+
+
+def test_daily_insight_rain_code_or_real_precipitation_claims_rain(monkeypatch):
+    monkeypatch.setattr(
+        ml_model,
+        "predict_correction",
+        lambda **kwargs: {"model_ready": False, "correction": 0.0, "corrected_temp": kwargs["temp"]},
+    )
+    monkeypatch.setattr(
+        ml_model,
+        "predict_rain_probability",
+        lambda **kwargs: {"model_ready": False, "model_variant": "provider"},
+    )
+    monkeypatch.setattr(
+        ml_model,
+        "predict_condition_outlook",
+        lambda **kwargs: {
+            "model_ready": False,
+            "expected_condition": "sereno",
+            "display_condition": "Cielo sereno",
+            "confidence": "media",
+            "source": "provider",
+            "model_variant": "provider",
+        },
+    )
+
+    day = {
+        "dt": "2026-04-11",
+        "temp": {"min": 10.0, "max": 20.0, "day": 15.0},
+        "humidity": 70,
+        "cloud_cover": 10,
+        "wind_speed": 8,
+        "wind_deg": 180,
+        "pop": 0.2,
+        "precipitation_sum": 1.2,
+        "weather_code": 1,
+    }
+
+    insight = ml_model.build_daily_insight(day=day, lat=41.9, lon=12.5, region="Lazio", lead_hours=14, city_name="Roma")
+
+    assert insight["expected_condition"] == "pioggia"
+    assert insight["display_condition"] == "Pioggia probabile"
+    assert "Scenario asciutto" not in insight["summary"]
+
+
 def test_load_latest_model_rejects_incompatible_sklearn_pickle(monkeypatch):
     payload = {
         "model_format_version": 2,
@@ -382,6 +482,58 @@ def test_load_latest_model_rejects_incompatible_sklearn_pickle(monkeypatch):
     assert rain["model_ready"] is False
     assert condition["model_variant"] == "provider"
     assert condition["model_ready"] is False
+
+
+def test_load_latest_model_skips_incompatible_and_loads_older_compatible(monkeypatch):
+    incompatible_payload = {
+        "model_format_version": 2,
+        "sklearn_version": "1.5.2",
+        "pipeline": _PickleablePipeline(),
+        "rain_pipeline": None,
+        "condition_pipeline": None,
+        "le": object(),
+    }
+    compatible_payload = {
+        "model_format_version": 2,
+        "sklearn_version": "1.6.1",
+        "pipeline": _PickleablePipeline(),
+        "rain_pipeline": None,
+        "condition_pipeline": None,
+        "temperature_feature_variant": "v1",
+        "blend_profiles": {"v1": {}, "v2": {}},
+        "le": object(),
+        "regions": ["Lazio"],
+        "baseline_mae": 1.2,
+    }
+    records = [
+        SimpleNamespace(
+            id=12,
+            trained_at=SimpleNamespace(isoformat=lambda: "2026-04-17T12:00:00+00:00"),
+            mae=0.7,
+            n_samples=900,
+            model_bytes=ml_model._encode_model_payload(incompatible_payload),
+        ),
+        SimpleNamespace(
+            id=11,
+            trained_at=SimpleNamespace(isoformat=lambda: "2026-04-16T12:00:00+00:00"),
+            mae=0.8,
+            n_samples=800,
+            model_bytes=ml_model._encode_model_payload(compatible_payload),
+        ),
+    ]
+
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: _FakeModelSession(records))
+    monkeypatch.setattr(ml_model.sklearn, "__version__", "1.6.1")
+
+    loaded = ml_model.load_latest_model()
+
+    assert loaded is True
+    summary = ml_model.get_public_summary()
+    assert summary["model_ready"] is True
+    assert summary["model_mae"] == 0.8
+    assert summary["model_load_warning"].startswith("loaded_older_compatible_model")
+    assert summary["model_load_attempts"][0]["loaded"] is False
+    assert summary["model_load_attempts"][1]["loaded"] is True
 
 
 def test_load_latest_model_accepts_matching_sklearn_pickle(monkeypatch):
@@ -549,3 +701,59 @@ def test_train_uses_bounded_training_rows(monkeypatch):
     assert limit == 1234
     assert window_start is not None
     assert window_start.tzinfo is not None
+
+
+def test_train_failure_reports_temperature_v1_and_v2_diagnostics(monkeypatch):
+    class FakeSession:
+        def close(self):
+            return None
+
+    rows = [
+        {
+            "target_time": object(),
+            "verified_at": object(),
+            "region": "Lazio",
+        }
+        for _ in range(20)
+    ]
+    monkeypatch.setattr(ml_model, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(
+            ml_training_window_days=7,
+            ml_training_max_rows=100,
+        ),
+    )
+    monkeypatch.setattr(ml_model, "_prepare_training_rows", lambda *args, **kwargs: rows)
+    monkeypatch.setattr(ml_model, "_encode_regions", lambda rows: object())
+    monkeypatch.setattr(
+        ml_model,
+        "_train_temperature_pipeline",
+        lambda rows: {
+            "success": False,
+            "message": "v1 baseline non battuto",
+            "mae": 0.6,
+            "baseline_mae": 0.4,
+            "feature_variant": "v1",
+        },
+    )
+    monkeypatch.setattr(
+        ml_model,
+        "_train_temperature_pipeline_v2",
+        lambda rows, encoder: {
+            "success": False,
+            "message": "v2 baseline non battuto",
+            "mae": 0.5,
+            "baseline_mae": 0.3,
+            "feature_variant": "v2",
+        },
+    )
+
+    result = ml_model.train(min_samples=10)
+
+    assert result["success"] is False
+    assert "temperature_v1" in result["message"]
+    assert "temperature_v2" in result["message"]
+    assert result["training_diagnostics"]["temperature_v1"]["mae"] == 0.6
+    assert result["training_diagnostics"]["temperature_v2"]["baseline_mae"] == 0.3

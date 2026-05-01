@@ -14,7 +14,7 @@ const OPEN_METEO_CURRENT_FIELDS = (
 );
 const OPEN_METEO_DAILY_FIELDS = (
     "temperature_2m_max,temperature_2m_min,weather_code," +
-    "precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant"
+    "precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant"
 );
 const OPEN_METEO_HOURLY_FIELDS = (
     "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m," +
@@ -309,6 +309,7 @@ function formatWeatherForFrontend(rawData, cityName) {
             wind_speed: Math.round((((daily.wind_speed_10m_max || [])[i] || 0) * 10)) / 10,
             wind_deg: (daily.wind_direction_10m_dominant || [])[i] || 0,
             pop: (((daily.precipitation_probability_max || [])[i] || 0) / 100),
+            precipitation_sum: Math.round((((daily.precipitation_sum || [])[i] || 0) * 10)) / 10,
             weather: [{ description: dayDesc, icon: dayIcon }],
             weather_code: wmoCode,
         });
@@ -371,6 +372,10 @@ export async function fetchMlEnrichment(city, weatherPayload) {
                 temp: weatherPayload.current?.temp,
                 humidity: weatherPayload.current?.humidity,
                 clouds: weatherPayload.current?.clouds,
+                wind_speed: weatherPayload.current?.wind_speed,
+                wind_deg: weatherPayload.current?.wind_deg,
+                precipitation: weatherPayload.current?.precipitation,
+                weather_code: weatherPayload.current?.weather_code,
             },
             daily: weatherPayload.daily.map(day => ({
                 dt: day.dt,
@@ -380,6 +385,7 @@ export async function fetchMlEnrichment(city, weatherPayload) {
                 wind_speed: day.wind_speed,
                 wind_deg: day.wind_deg,
                 pop: day.pop,
+                precipitation_sum: day.precipitation_sum,
                 weather_code: day.weather_code,
             })),
         }),

@@ -88,8 +88,10 @@ _latest_summary: dict = {
     "model_format_version": None,
     "model_sklearn_version": None,
     "model_load_warning": None,
+    "model_load_attempts": [],
     "model_samples": None,
     "model_trained_at": None,
+    "training_diagnostics": None,
 }
 
 
@@ -112,8 +114,10 @@ def _empty_model_summary() -> dict:
         "model_format_version": None,
         "model_sklearn_version": None,
         "model_load_warning": None,
+        "model_load_attempts": [],
         "model_samples": None,
         "model_trained_at": None,
+        "training_diagnostics": None,
     }
 _stats_cache: dict[str, object] | None = None
 _shadow_state: dict[str, object] = {
@@ -217,6 +221,76 @@ def _decode_model_payload(blob: bytes) -> tuple[dict | None, bytes | None]:
     return metadata, payload
 
 
+def _model_record_iso(record) -> str | None:
+    trained_at = getattr(record, "trained_at", None)
+    return trained_at.isoformat() if trained_at is not None else None
+
+
+def _model_incompatibility_warning(stored_format_version: int, stored_sklearn_version: str | None) -> str:
+    return (
+        f"incompatible_model_pickle: stored_format={stored_format_version} "
+        f"runtime_format={MODEL_FORMAT_VERSION} stored_sklearn={stored_sklearn_version or 'unknown'} "
+        f"runtime_sklearn={sklearn.__version__}"
+    )
+
+
+def _model_load_attempt(
+    record,
+    *,
+    warning: str,
+    loaded: bool = False,
+    model_format_version: int | None = None,
+    model_sklearn_version: str | None = None,
+) -> dict:
+    attempt = {
+        "id": int(record.id),
+        "trained_at": _model_record_iso(record),
+        "loaded": loaded,
+        "warning": warning,
+    }
+    if model_format_version is not None:
+        attempt["model_format_version"] = model_format_version
+    if model_sklearn_version is not None:
+        attempt["model_sklearn_version"] = model_sklearn_version
+    return attempt
+
+
+def _summarize_model_result(result: dict) -> dict:
+    return {
+        "success": bool(result.get("success")),
+        "message": result.get("message"),
+        "mae": result.get("mae"),
+        "baseline_mae": result.get("baseline_mae"),
+        "accuracy": result.get("accuracy"),
+        "baseline_accuracy": result.get("baseline_accuracy"),
+        "brier": result.get("brier"),
+        "baseline_brier": result.get("baseline_brier"),
+        "f1": result.get("f1"),
+        "baseline_f1": result.get("baseline_f1"),
+        "macro_f1": result.get("macro_f1"),
+        "baseline_macro_f1": result.get("baseline_macro_f1"),
+        "n_samples": result.get("n_samples"),
+        "feature_variant": result.get("feature_variant"),
+    }
+
+
+def _training_diagnostics(**results: dict) -> dict:
+    return {name: _summarize_model_result(result) for name, result in results.items()}
+
+
+def _temperature_failure_message(diagnostics: dict) -> str:
+    parts = []
+    for name in ("temperature_v2", "temperature_v1"):
+        item = diagnostics.get(name) or {}
+        detail = item.get("message") or "non promosso"
+        mae = item.get("mae")
+        baseline = item.get("baseline_mae")
+        if mae is not None and baseline is not None:
+            detail = f"{detail} (MAE {float(mae):.3f} vs baseline {float(baseline):.3f})"
+        parts.append(f"{name}: {detail}")
+    return "Nessun modello temperatura promosso; " + "; ".join(parts)
+
+
 def _ensure_latest_model_loaded(*, force: bool = False) -> None:
     global _last_model_version_check_at
 
@@ -298,8 +372,13 @@ def _condition_from_inputs(
     weather_code: int | None,
     cloud_cover: float | None,
     precipitation: float | None,
+    rain_probability: float | None = None,
 ) -> str:
-    if (precipitation or 0.0) > 0.15 or weather_code in RAIN_WEATHER_CODES:
+    if (
+        (precipitation or 0.0) > 0.15
+        or weather_code in RAIN_WEATHER_CODES
+        or (rain_probability is not None and rain_probability >= 0.55)
+    ):
         return "pioggia"
 
     if cloud_cover is not None:
@@ -383,7 +462,7 @@ def _empirical_confidence(label: str, lead_hours: int) -> str:
 
 
 def _daily_badge(condition_label: str, rain_probability: float, wind_speed: float) -> str:
-    if rain_probability >= 0.55:
+    if condition_label == "pioggia":
         return "Possibili piogge"
     if wind_speed >= 30:
         return "Vento in rinforzo"
@@ -398,6 +477,10 @@ def _daily_summary(condition_label: str, rain_probability: float, wind_speed: fl
     condition_text = _condition_display(condition_label)
     rain_pct = round(rain_probability * 100)
 
+    if condition_label == "pioggia":
+        if rain_probability >= 0.55:
+            return f"{condition_text}. Possibilita di pioggia intorno al {rain_pct}% con confidenza {confidence}."
+        return f"{condition_text}. Segnale di precipitazione nel codice meteo, ma probabilita contenuta intorno al {rain_pct}%."
     if rain_probability >= 0.55:
         return f"{condition_text}. Possibilita di pioggia intorno al {rain_pct}% con confidenza {confidence}."
     if wind_speed >= 30:
@@ -1934,19 +2017,29 @@ def train(min_samples: int = 100) -> dict:
             return {
                 "success": False,
                 "message": f"Dati insufficienti: {len(rows)} campioni (minimo {min_samples})",
+                "training_diagnostics": {
+                    "training_rows": len(rows),
+                    "min_samples": min_samples,
+                },
             }
 
         encoder = _encode_regions(rows)
         temp_result_v1 = _train_temperature_pipeline(rows)
         temp_result_v2 = _train_temperature_pipeline_v2(rows, encoder)
+        temp_diagnostics = _training_diagnostics(
+            temperature_v1=temp_result_v1,
+            temperature_v2=temp_result_v2,
+        )
         temp_candidates = [result for result in (temp_result_v2, temp_result_v1) if result.get("success")]
         if not temp_candidates:
             best_temp_result = temp_result_v2 if temp_result_v2.get("mae") is not None else temp_result_v1
+            message = _temperature_failure_message(temp_diagnostics)
             return {
                 "success": False,
-                "message": best_temp_result["message"],
+                "message": message,
                 "baseline_mae": best_temp_result.get("baseline_mae"),
                 "mae": best_temp_result.get("mae"),
+                "training_diagnostics": temp_diagnostics,
             }
 
         temp_result = min(temp_candidates, key=lambda result: float(result["mae"]))
@@ -1957,6 +2050,14 @@ def train(min_samples: int = 100) -> dict:
         condition_result = _train_condition_pipeline(rows, encoder)
         rain_v2_result = _train_rain_pipeline_v2(rows, encoder)
         condition_v2_result = _train_condition_pipeline_v2(rows, encoder)
+        diagnostics = _training_diagnostics(
+            temperature_v1=temp_result_v1,
+            temperature_v2=temp_result_v2,
+            rain_v1=rain_result,
+            rain_v2=rain_v2_result,
+            condition_v1=condition_result,
+            condition_v2=condition_v2_result,
+        )
 
         rain_pipeline = rain_result["pipeline"] if rain_result.get("success") else None
         condition_pipeline = condition_result["pipeline"] if condition_result.get("success") else None
@@ -2058,6 +2159,7 @@ def train(min_samples: int = 100) -> dict:
             "condition_baseline_accuracy": condition_result.get("baseline_accuracy"),
             "rain_brier_v2": rain_v2_result.get("brier"),
             "condition_macro_f1_v2": condition_v2_result.get("macro_f1"),
+            "training_diagnostics": diagnostics,
         }
         model_data = _encode_model_payload(payload)
 
@@ -2106,6 +2208,7 @@ def train(min_samples: int = 100) -> dict:
             "model_load_warning": None,
             "model_samples": temp_result["n_samples"],
             "model_trained_at": record.trained_at.isoformat(),
+            "training_diagnostics": diagnostics,
         }
         _invalidate_stats_cache()
 
@@ -2129,6 +2232,7 @@ def train(min_samples: int = 100) -> dict:
             "model_format_version": MODEL_FORMAT_VERSION,
             "model_sklearn_version": sklearn.__version__,
             "v2_backtest": backtest,
+            "training_diagnostics": diagnostics,
         }
     except Exception as e:
         print(f"[ERROR] Errore training ML: {e}")
@@ -2147,8 +2251,14 @@ def load_latest_model() -> bool:
     db: Session = SessionLocal()
     _invalidate_stats_cache()
     try:
-        record = db.query(MlModelStore).order_by(MlModelStore.trained_at.desc()).first()
-        if not record or not record.model_bytes:
+        query = db.query(MlModelStore).order_by(MlModelStore.trained_at.desc())
+        try:
+            records = query.limit(max(1, settings.max_model_store_records)).all()
+        except AttributeError:
+            first_record = query.first()
+            records = [first_record] if first_record else []
+
+        if not records:
             print("[INFO]  Nessun modello ML salvato nel DB")
             _reset_loaded_model_state()
             _loaded_model_store_id = None
@@ -2157,97 +2267,106 @@ def load_latest_model() -> bool:
             _latest_summary = _empty_model_summary()
             return False
 
-        metadata, payload_bytes = _decode_model_payload(record.model_bytes)
-        stored_sklearn_version = None if metadata is None else metadata.get("sklearn_version")
-        stored_format_version = 1 if metadata is None else int(metadata.get("model_format_version", 1))
-        if stored_format_version != MODEL_FORMAT_VERSION or stored_sklearn_version != sklearn.__version__:
-            _reset_loaded_model_state()
-            _loaded_model_store_id = int(record.id)
-            _loaded_model_trained_at = record.trained_at
-            _last_model_version_check_at = datetime.now(timezone.utc)
-            warning = (
-                f"incompatible_model_pickle: stored_format={stored_format_version} "
-                f"runtime_format={MODEL_FORMAT_VERSION} stored_sklearn={stored_sklearn_version or 'unknown'} "
-                f"runtime_sklearn={sklearn.__version__}"
-            )
-            _latest_summary = {
-                **_empty_model_summary(),
-                "model_ready": False,
-                "rain_model_ready": False,
-                "condition_model_ready": False,
-                "rain_model_v2_ready": False,
-                "condition_model_v2_ready": False,
-                "model_mae": record.mae,
-                "baseline_mae": None,
-                "rain_accuracy": None,
-                "rain_baseline_accuracy": None,
-                "condition_accuracy": None,
-                "condition_baseline_accuracy": None,
-                "rain_brier_v2": None,
-                "condition_macro_f1_v2": None,
-                "temperature_model_variant": None,
-                "model_format_version": stored_format_version,
-                "model_sklearn_version": stored_sklearn_version,
-                "model_load_warning": warning,
-                "model_samples": record.n_samples,
-                "model_trained_at": record.trained_at.isoformat(),
-            }
-            print(f"[WARN]  Modello ML incompatibile con runtime corrente: {warning}")
-            return False
+        attempts: list[dict] = []
+        for record in records:
+            if not record or not record.model_bytes:
+                warning = "missing_model_bytes"
+                attempts.append(_model_load_attempt(record, warning=warning) if record else {"warning": warning, "loaded": False})
+                continue
 
-        data = pickle.loads(payload_bytes)
-        _pipeline = data["pipeline"]
-        _rain_pipeline = data.get("rain_pipeline")
-        _condition_pipeline = data.get("condition_pipeline")
-        _rain_pipeline_v2 = data.get("rain_pipeline_v2")
-        _condition_pipeline_v2 = data.get("condition_pipeline_v2")
-        _rain_platt_v2 = data.get("rain_platt_v2")
-        _condition_platt_v2 = data.get("condition_platt_v2")
-        _temperature_feature_variant = _infer_temperature_feature_variant_from_pipeline(
-            data.get("temperature_feature_variant", "v1")
-        )
-        _blend_profiles = data.get("blend_profiles") or {"v1": {}, "v2": {}}
-        _label_encoder = data["le"]
-        _known_regions = data.get("regions", [])
-        _loaded_model_store_id = int(record.id)
-        _loaded_model_trained_at = record.trained_at
-        _last_model_version_check_at = datetime.now(timezone.utc)
-        rain_feature_variant = data.get("rain_feature_variant") or _infer_rain_feature_variant_from_pipeline()
-        condition_feature_variant = data.get("condition_feature_variant") or _infer_condition_feature_variant_from_pipeline()
+            try:
+                metadata, payload_bytes = _decode_model_payload(record.model_bytes)
+                stored_sklearn_version = None if metadata is None else metadata.get("sklearn_version")
+                stored_format_version = 1 if metadata is None else int(metadata.get("model_format_version", 1))
+                if stored_format_version != MODEL_FORMAT_VERSION or stored_sklearn_version != sklearn.__version__:
+                    warning = _model_incompatibility_warning(stored_format_version, stored_sklearn_version)
+                    attempts.append(
+                        _model_load_attempt(
+                            record,
+                            warning=warning,
+                            model_format_version=stored_format_version,
+                            model_sklearn_version=stored_sklearn_version,
+                        )
+                    )
+                    print(f"[WARN]  Modello ML incompatibile con runtime corrente: {warning}")
+                    continue
 
-        _latest_summary = {
-            "model_ready": _pipeline is not None and _temperature_feature_variant in {"v1", "v2"},
-            "rain_model_ready": _rain_pipeline is not None and rain_feature_variant in {"legacy", "v1"},
-            "condition_model_ready": _condition_pipeline is not None and condition_feature_variant in {"legacy", "v1"},
-            "rain_model_v2_ready": _rain_pipeline_v2 is not None,
-            "condition_model_v2_ready": _condition_pipeline_v2 is not None,
-            "model_mae": record.mae,
-            "baseline_mae": data.get("baseline_mae"),
-            "rain_accuracy": data.get("rain_accuracy"),
-            "rain_baseline_accuracy": data.get("rain_baseline_accuracy"),
-            "condition_accuracy": data.get("condition_accuracy"),
-            "condition_baseline_accuracy": data.get("condition_baseline_accuracy"),
-            "rain_brier_v2": data.get("rain_brier_v2"),
-            "condition_macro_f1_v2": data.get("condition_macro_f1_v2"),
-            "temperature_model_variant": _infer_temperature_feature_variant_from_pipeline(_temperature_feature_variant),
-            "model_format_version": data.get("model_format_version", 1),
-            "model_sklearn_version": stored_sklearn_version,
-            "model_load_warning": None,
-            "model_samples": record.n_samples,
-            "model_trained_at": record.trained_at.isoformat(),
-        }
-        print(f"[OK] Modello ML caricato (addestrato: {record.trained_at}, MAE: {record.mae})")
-        return True
-    except Exception as e:
+                data = pickle.loads(payload_bytes)
+                _pipeline = data["pipeline"]
+                _rain_pipeline = data.get("rain_pipeline")
+                _condition_pipeline = data.get("condition_pipeline")
+                _rain_pipeline_v2 = data.get("rain_pipeline_v2")
+                _condition_pipeline_v2 = data.get("condition_pipeline_v2")
+                _rain_platt_v2 = data.get("rain_platt_v2")
+                _condition_platt_v2 = data.get("condition_platt_v2")
+                _temperature_feature_variant = _infer_temperature_feature_variant_from_pipeline(
+                    data.get("temperature_feature_variant", "v1")
+                )
+                _blend_profiles = data.get("blend_profiles") or {"v1": {}, "v2": {}}
+                _label_encoder = data["le"]
+                _known_regions = data.get("regions", [])
+                _loaded_model_store_id = int(record.id)
+                _loaded_model_trained_at = record.trained_at
+                _last_model_version_check_at = datetime.now(timezone.utc)
+                rain_feature_variant = data.get("rain_feature_variant") or _infer_rain_feature_variant_from_pipeline()
+                condition_feature_variant = data.get("condition_feature_variant") or _infer_condition_feature_variant_from_pipeline()
+                load_warning = None
+                if attempts:
+                    load_warning = (
+                        "loaded_older_compatible_model_after_skipping="
+                        f"{len(attempts)}; latest_warning={attempts[0].get('warning')}"
+                    )
+                attempts.append(_model_load_attempt(record, warning="loaded", loaded=True))
+
+                _latest_summary = {
+                    "model_ready": _pipeline is not None and _temperature_feature_variant in {"legacy", "v1", "v2"},
+                    "rain_model_ready": _rain_pipeline is not None and rain_feature_variant in {"legacy", "v1"},
+                    "condition_model_ready": _condition_pipeline is not None and condition_feature_variant in {"legacy", "v1"},
+                    "rain_model_v2_ready": _rain_pipeline_v2 is not None,
+                    "condition_model_v2_ready": _condition_pipeline_v2 is not None,
+                    "model_mae": record.mae,
+                    "baseline_mae": data.get("baseline_mae"),
+                    "rain_accuracy": data.get("rain_accuracy"),
+                    "rain_baseline_accuracy": data.get("rain_baseline_accuracy"),
+                    "condition_accuracy": data.get("condition_accuracy"),
+                    "condition_baseline_accuracy": data.get("condition_baseline_accuracy"),
+                    "rain_brier_v2": data.get("rain_brier_v2"),
+                    "condition_macro_f1_v2": data.get("condition_macro_f1_v2"),
+                    "temperature_model_variant": _infer_temperature_feature_variant_from_pipeline(_temperature_feature_variant),
+                    "model_format_version": data.get("model_format_version", MODEL_FORMAT_VERSION),
+                    "model_sklearn_version": stored_sklearn_version,
+                    "model_load_warning": load_warning,
+                    "model_load_attempts": attempts,
+                    "model_samples": record.n_samples,
+                    "model_trained_at": record.trained_at.isoformat(),
+                    "training_diagnostics": data.get("training_diagnostics"),
+                }
+                print(f"[OK] Modello ML caricato (addestrato: {record.trained_at}, MAE: {record.mae})")
+                return True
+            except Exception as exc:
+                warning = f"model_load_failed:{exc}"
+                attempts.append(_model_load_attempt(record, warning=warning))
+                print(f"[WARN]  Errore caricamento modello {getattr(record, 'id', '?')}: {exc}")
+
+        latest_record = records[0]
         _reset_loaded_model_state()
-        _loaded_model_store_id = int(record.id) if 'record' in locals() and record else None
-        _loaded_model_trained_at = record.trained_at if 'record' in locals() and record else None
+        _loaded_model_store_id = int(latest_record.id) if latest_record else None
+        _loaded_model_trained_at = latest_record.trained_at if latest_record else None
         _last_model_version_check_at = datetime.now(timezone.utc)
+        latest_attempt = attempts[0] if attempts else {}
+        latest_warning = latest_attempt.get("warning") or "no_compatible_model_found"
+        preserve_record_summary = not str(latest_warning).startswith("model_load_failed:")
         _latest_summary = {
             **_empty_model_summary(),
-            "model_load_warning": f"model_load_failed:{e}",
+            "model_mae": latest_record.mae if latest_record and preserve_record_summary else None,
+            "model_format_version": latest_attempt.get("model_format_version"),
+            "model_sklearn_version": latest_attempt.get("model_sklearn_version"),
+            "model_samples": latest_record.n_samples if latest_record and preserve_record_summary else None,
+            "model_trained_at": _model_record_iso(latest_record) if latest_record and preserve_record_summary else None,
+            "model_load_warning": latest_warning,
+            "model_load_attempts": attempts,
         }
-        print(f"[WARN]  Errore caricamento modello: {e}")
+        print(f"[WARN]  Nessun modello ML compatibile caricato: {latest_warning}")
         return False
     finally:
         db.close()
@@ -2562,7 +2681,7 @@ def build_daily_insight(
     hour = 14
     forecast_temp = day.get("temp", {}).get("day", 0.0)
     forecast_pop = _safe_float(day.get("pop"), 0.0)
-    forecast_precipitation = round(forecast_pop * 2.0, 2)
+    forecast_precipitation = _safe_float(day.get("precipitation_sum"), 0.0)
     cloud_cover = _safe_float(day.get("cloud_cover"), 55.0)
     wind_speed = _safe_float(day.get("wind_speed"), 0.0)
     wind_direction = _safe_float(day.get("wind_deg"), 0.0)
@@ -2592,6 +2711,7 @@ def build_daily_insight(
             weather_code=weather_code,
             cloud_cover=cloud_cover,
             precipitation=forecast_precipitation,
+            rain_probability=forecast_pop,
         )
         blended_rain = round(forecast_pop, 3)
         model_variant = "provider"
@@ -2641,6 +2761,19 @@ def build_daily_insight(
             city_name=city_name,
             force_variant=requested_variant,
         )
+        if not condition.get("model_ready"):
+            provider_condition = _condition_from_inputs(
+                weather_code=weather_code,
+                cloud_cover=cloud_cover,
+                precipitation=forecast_precipitation,
+                rain_probability=forecast_pop,
+            )
+            condition.update({
+                "expected_condition": provider_condition,
+                "display_condition": _condition_display(provider_condition),
+                "confidence": "media",
+                "source": "provider",
+            })
 
         blended_rain = forecast_pop
         blend_weight = 0.0

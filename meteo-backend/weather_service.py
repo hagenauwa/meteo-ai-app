@@ -40,7 +40,7 @@ SINGLE_CITY_CURRENT_FIELDS = (
 )
 SINGLE_CITY_DAILY_FIELDS = (
     "temperature_2m_max,temperature_2m_min,weather_code,"
-    "precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant"
+    "precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant"
 )
 SINGLE_CITY_HOURLY_RICH_FIELDS = (
     "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,"
@@ -505,6 +505,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         "temperature_2m_max": [],
         "weather_code": [],
         "precipitation_probability_max": [],
+        "precipitation_sum": [],
         "wind_speed_10m_max": [],
         "wind_direction_10m_dominant": [],
     }
@@ -514,12 +515,14 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         temps = [entry["temp"] for entry in items]
         winds = [entry["wind_speed"] for entry in items]
         pops = [entry["precipitation_probability"] for entry in items]
+        precipitations = [entry["precipitation"] for entry in items]
         preferred = next((entry for entry in items if entry["local_hour"].endswith("12:00")), items[len(items) // 2])
         common_code = Counter(entry["weather_code"] for entry in items).most_common(1)[0][0]
         daily["temperature_2m_min"].append(min(temps))
         daily["temperature_2m_max"].append(max(temps))
         daily["weather_code"].append(preferred["weather_code"] or common_code)
         daily["precipitation_probability_max"].append(max(pops))
+        daily["precipitation_sum"].append(round(sum(precipitations), 2))
         daily["wind_speed_10m_max"].append(max(winds))
         daily["wind_direction_10m_dominant"].append(preferred["wind_direction"])
 
@@ -728,6 +731,7 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
             "wind_speed": round(daily["wind_speed_10m_max"][i], 1) if i < len(daily.get("wind_speed_10m_max", [])) else 0,
             "wind_deg": daily["wind_direction_10m_dominant"][i] if i < len(daily.get("wind_direction_10m_dominant", [])) else 0,
             "pop": (daily["precipitation_probability_max"][i] or 0) / 100 if i < len(daily.get("precipitation_probability_max", [])) else 0,
+            "precipitation_sum": round(daily["precipitation_sum"][i], 1) if i < len(daily.get("precipitation_sum", [])) else 0.0,
             "weather": [{"description": desc_d, "icon": icon_d}],
             "weather_code": wmo_d[i] if i < len(wmo_d) else 0,
         })

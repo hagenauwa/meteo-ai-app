@@ -38,9 +38,18 @@ __pycache__/
 *.pyd
 
 # Database SQLite locale (non committare — su server si usa PostgreSQL)
+*.db
+*.db-shm
+*.db-wal
 meteo-backend/*.db
 meteo-backend/*.db-shm
 meteo-backend/*.db-wal
+
+# Artefatti operativi/locali
+.claude/
+render-*.json
+create-service.html
+update-env-vars.html
 
 # Documentazione locale per Codex/ops
 AGENTS.md

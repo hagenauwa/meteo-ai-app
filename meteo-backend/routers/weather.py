@@ -16,6 +16,17 @@ from weather_service import fetch_single_city, format_weather_for_frontend
 
 router = APIRouter()
 
+
+class _LazyMlModel:
+    def __getattr__(self, name: str):
+        import importlib
+
+        module = importlib.import_module("ml_model")
+        return getattr(module, name)
+
+
+ml_model = _LazyMlModel()
+
 CITY_COORDINATE_FALLBACKS = {
     "roma": {"name": "Roma", "lat": 41.9028, "lon": 12.4964},
     "milano": {"name": "Milano", "lat": 45.4642, "lon": 9.19},
@@ -160,8 +171,6 @@ async def get_weather(
         region = city_row.region if city_row else "Sconosciuta"
         current = formatted["current"]
         try:
-            import ml_model
-
             stats = ml_model.get_cached_stats(allow_stale=True)
             if stats is None:
                 stats = {

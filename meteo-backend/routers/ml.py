@@ -58,6 +58,7 @@ class EnrichDayPayload(BaseModel):
     wind_speed: float | None = 0.0
     wind_deg: float | None = 0.0
     pop: float | None = 0.0
+    precipitation_sum: float | None = 0.0
     weather_code: int | None = None
 
 

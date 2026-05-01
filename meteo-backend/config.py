@@ -60,7 +60,7 @@ class Settings:
     ml_city_sample_size: int = 800
     ml_city_core_size: int = 100
     ml_forecast_leads: tuple[int, ...] = (1, 3, 6, 14, 38, 86, 158)
-    ml_cycle_every_hours: int = 6
+    ml_cycle_every_hours: int = 1
     ml_observation_retention_days: int = 21
     ml_prediction_retention_days: int = 21
     stripe_secret_key: str = ""
@@ -131,7 +131,7 @@ def load_settings() -> Settings:
                 for lead in _as_int_csv(os.getenv("ML_FORECAST_LEADS"), (1, 3, 6, 14, 38, 86, 158))
             })
         ),
-        ml_cycle_every_hours=max(1, int(os.getenv("ML_CYCLE_EVERY_HOURS", "6"))),
+        ml_cycle_every_hours=max(1, int(os.getenv("ML_CYCLE_EVERY_HOURS", "1"))),
         ml_observation_retention_days=max(1, int(os.getenv("ML_OBSERVATION_RETENTION_DAYS", "21"))),
         ml_prediction_retention_days=max(1, int(os.getenv("ML_PREDICTION_RETENTION_DAYS", "21"))),
         stripe_secret_key=os.getenv("STRIPE_SECRET_KEY", "").strip(),
