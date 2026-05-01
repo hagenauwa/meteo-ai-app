@@ -21,8 +21,11 @@ function resolveWeatherVisual({ iconCode, rainProbability = 0, preferRainIcon = 
     if (resolvedIconCode === "01n") {
         return { iconClass, tone: "night" };
     }
-    if (resolvedIconCode === "02d" || resolvedIconCode === "02n") {
+    if (resolvedIconCode === "02d") {
         return { iconClass, tone: "partly-cloudy" };
+    }
+    if (resolvedIconCode === "02n") {
+        return { iconClass, tone: "partly-cloudy-night" };
     }
     if (resolvedIconCode === "03d" || resolvedIconCode === "03n" || resolvedIconCode === "04d" || resolvedIconCode === "04n") {
         return { iconClass, tone: "cloud" };
