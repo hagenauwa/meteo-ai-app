@@ -1,4 +1,4 @@
-const CACHE_NAME = "le-previsioni-static-v13";
+const CACHE_NAME = "le-previsioni-static-v12";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
@@ -8,7 +8,6 @@ const STATIC_ASSETS = [
     "/js/api.js",
     "/js/config.js",
     "/js/render.js",
-    "/js/weatherIcons.js",
     "/js/autocomplete.js",
     "/js/storage.js",
     "/js/supporter.js",
