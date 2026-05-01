@@ -627,7 +627,8 @@ body {
     background: linear-gradient(180deg, rgba(245, 158, 11, 0.12), rgba(255, 255, 255, 0.72));
 }
 
-.selected-day-visual i {
+.selected-day-visual i,
+.selected-day-visual .weather-icon {
     font-size: 3.8rem;
 }
 
@@ -716,7 +717,8 @@ body {
     text-align: center;
 }
 
-.snapshot-icon-wrap i {
+.snapshot-icon-wrap i,
+.snapshot-icon-wrap .weather-icon {
     font-size: 3rem;
 }
 
@@ -759,7 +761,8 @@ body {
     font-size: 0.9rem;
 }
 
-.hour-card i {
+.hour-card i,
+.hour-card .weather-icon {
     margin: 12px 0;
     font-size: 1.6rem;
 }
@@ -794,6 +797,13 @@ body {
 
 .weather-icon--fog {
     color: var(--weather-fog);
+}
+
+.weather-icon-svg {
+    width: 1em;
+    height: 1em;
+    display: inline-block;
+    vertical-align: -0.125em;
 }
 
 .hour-card .temp {

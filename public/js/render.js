@@ -1,4 +1,5 @@
 import { WEATHER_ICONS } from "./config.js";
+import { SVG_ICONS } from "./weatherIcons.js";
 
 const CLOUDY_ICON_CODES = new Set(["02d", "02n", "03d", "03n", "04d", "04n"]);
 
@@ -6,41 +7,32 @@ function isNightIcon(iconCode) {
     return String(iconCode || "").endsWith("n");
 }
 
+function toneFor(code) {
+    if (code === "01d") return "sun";
+    if (code === "01n") return "night";
+    if (code === "02d" || code === "02n") return "partly-cloudy";
+    if (code === "03d" || code === "03n" || code === "04d" || code === "04n") return "cloud";
+    if (code === "09d" || code === "09n" || code === "10d" || code === "10n") return "rain";
+    if (code === "11d" || code === "11n") return "storm";
+    if (code === "13d" || code === "13n") return "snow";
+    if (code === "50d" || code === "50n") return "fog";
+    return "cloud";
+}
+
 function resolveWeatherVisual({ iconCode, rainProbability = 0, preferRainIcon = false } = {}) {
-    let resolvedIconCode = iconCode || "03d";
+    let resolved = iconCode || "03d";
 
-    if (preferRainIcon && rainProbability >= 0.6 && CLOUDY_ICON_CODES.has(resolvedIconCode)) {
-        resolvedIconCode = isNightIcon(resolvedIconCode) ? "10n" : "10d";
-    }
-
-    const iconClass = WEATHER_ICONS[resolvedIconCode] || "fa-cloud";
-
-    if (resolvedIconCode === "01d") {
-        return { iconClass, tone: "sun" };
-    }
-    if (resolvedIconCode === "01n") {
-        return { iconClass, tone: "night" };
-    }
-    if (resolvedIconCode === "02d" || resolvedIconCode === "02n") {
-        return { iconClass, tone: "partly-cloudy" };
-    }
-    if (resolvedIconCode === "03d" || resolvedIconCode === "03n" || resolvedIconCode === "04d" || resolvedIconCode === "04n") {
-        return { iconClass, tone: "cloud" };
-    }
-    if (resolvedIconCode === "09d" || resolvedIconCode === "09n" || resolvedIconCode === "10d" || resolvedIconCode === "10n") {
-        return { iconClass, tone: "rain" };
-    }
-    if (resolvedIconCode === "11d" || resolvedIconCode === "11n") {
-        return { iconClass, tone: "storm" };
-    }
-    if (resolvedIconCode === "13d" || resolvedIconCode === "13n") {
-        return { iconClass, tone: "snow" };
-    }
-    if (resolvedIconCode === "50d" || resolvedIconCode === "50n") {
-        return { iconClass, tone: "fog" };
+    if (preferRainIcon && rainProbability >= 0.6 && CLOUDY_ICON_CODES.has(resolved)) {
+        resolved = isNightIcon(resolved) ? "10n" : "10d";
     }
 
-    return { iconClass, tone: "cloud" };
+    const tone = toneFor(resolved);
+    const svg = SVG_ICONS[resolved];
+    const html = svg
+        ? svg
+        : `<i class="fas ${WEATHER_ICONS[resolved] || "fa-cloud"}" aria-hidden="true"></i>`;
+
+    return { html, tone };
 }
 
 function formatDate(date, options = {}) {
@@ -74,8 +66,9 @@ function formatShortDate(date) {
 
 function applyWeatherVisual(node, options) {
     if (!node) return;
-    const { iconClass, tone } = resolveWeatherVisual(options);
-    node.className = `fas weather-icon weather-icon--${tone} ${iconClass}`;
+    const { html, tone } = resolveWeatherVisual(options);
+    node.className = `weather-icon weather-icon--${tone}`;
+    node.innerHTML = html;
 }
 
 function getRelativeDayLabel(index, date) {
@@ -219,14 +212,14 @@ function renderHourlyDetail(selectedDay, hourly) {
     hoursForDay.forEach(hour => {
         const card = document.createElement("article");
         card.className = "hour-card";
-        const { iconClass, tone } = resolveWeatherVisual({
+        const { html, tone } = resolveWeatherVisual({
             iconCode: hour.weather?.[0]?.icon,
             rainProbability: hour.pop || 0,
             preferRainIcon: true,
         });
         card.innerHTML = `
             <span class="time">${formatTime(hour.dt)}</span>
-            <i class="fas weather-icon weather-icon--${tone} ${iconClass}"></i>
+            <span class="weather-icon weather-icon--${tone}">${html}</span>
             <strong class="temp">${Math.round(hour.temp)}°</strong>
             <span class="rain">Pioggia ${Math.round((hour.pop || 0) * 100)}%</span>
         `;
