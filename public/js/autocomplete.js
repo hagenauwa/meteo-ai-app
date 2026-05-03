@@ -22,10 +22,12 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
 
         const item = document.createElement("div");
         item.className = `autocomplete-status${loading ? " is-loading" : ""}`;
-        item.innerHTML = `
-            <i class="fas ${loading ? "fa-spinner fa-spin" : "fa-circle-info"}"></i>
-            <span>${message}</span>
-        `;
+        const icon = document.createElement("i");
+        icon.className = `fas ${loading ? "fa-spinner fa-spin" : "fa-circle-info"}`;
+        const span = document.createElement("span");
+        span.textContent = message;
+        item.appendChild(icon);
+        item.appendChild(span);
         list.appendChild(item);
     }
 
@@ -41,11 +43,23 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
             item.className = "autocomplete-item";
             item.dataset.index = index;
             item.dataset.selectable = "true";
-            item.innerHTML = `
-                <i class="fas fa-map-marker-alt"></i>
-                <span class="city-name">${city.name}</span>
-                ${city.region ? `<span class="region">${city.region}</span>` : ""}
-            `;
+
+            const icon = document.createElement("i");
+            icon.className = "fas fa-map-marker-alt";
+            const nameSpan = document.createElement("span");
+            nameSpan.className = "city-name";
+            nameSpan.textContent = city.name;
+
+            item.appendChild(icon);
+            item.appendChild(nameSpan);
+
+            if (city.region) {
+                const regionSpan = document.createElement("span");
+                regionSpan.className = "region";
+                regionSpan.textContent = city.region;
+                item.appendChild(regionSpan);
+            }
+
             item.addEventListener("click", () => {
                 input.value = city.name;
                 closeAllLists();

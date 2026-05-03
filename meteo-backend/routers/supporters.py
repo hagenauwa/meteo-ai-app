@@ -128,7 +128,12 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         session = (event.get("data") or {}).get("object") or {}
         if session.get("payment_status") == "paid":
-            register_paid_supporter(db, session)
-            db.commit()
+            try:
+                register_paid_supporter(db, session)
+                db.commit()
+            except Exception:
+                import logging
+                logging.exception("Stripe webhook: errore interno durante register_paid_supporter")
+                db.rollback()
 
     return {"received": True}

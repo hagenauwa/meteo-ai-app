@@ -144,11 +144,22 @@ function renderDaySelector(daily, selectedIndex, onDaySelect) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = `day-pill${index === selectedIndex ? " active" : ""}`;
-        button.innerHTML = `
-            <span class="day-pill-top">${index === 0 ? "Oggi" : formatShortDay(day.dt)}</span>
-            <span class="day-pill-date">${formatShortDate(day.dt)}</span>
-            <span class="day-pill-temp">${Math.round(adjusted.max)}° / ${Math.round(adjusted.min)}°</span>
-        `;
+
+        const topSpan = document.createElement("span");
+        topSpan.className = "day-pill-top";
+        topSpan.textContent = index === 0 ? "Oggi" : formatShortDay(day.dt);
+
+        const dateSpan = document.createElement("span");
+        dateSpan.className = "day-pill-date";
+        dateSpan.textContent = formatShortDate(day.dt);
+
+        const tempSpan = document.createElement("span");
+        tempSpan.className = "day-pill-temp";
+        tempSpan.textContent = `${Math.round(adjusted.max)}° / ${Math.round(adjusted.min)}°`;
+
+        button.appendChild(topSpan);
+        button.appendChild(dateSpan);
+        button.appendChild(tempSpan);
         button.addEventListener("click", () => onDaySelect(index));
         container.appendChild(button);
     });
@@ -224,12 +235,25 @@ function renderHourlyDetail(selectedDay, hourly) {
             rainProbability: hour.pop || 0,
             preferRainIcon: true,
         });
-        card.innerHTML = `
-            <span class="time">${formatTime(hour.dt)}</span>
-            <i class="fas weather-icon weather-icon--${tone} ${iconClass}"></i>
-            <strong class="temp">${Math.round(hour.temp)}°</strong>
-            <span class="rain">Pioggia ${Math.round((hour.pop || 0) * 100)}%</span>
-        `;
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "time";
+        timeSpan.textContent = formatTime(hour.dt);
+
+        const weatherIcon = document.createElement("i");
+        weatherIcon.className = `fas weather-icon weather-icon--${tone} ${iconClass}`;
+
+        const tempStrong = document.createElement("strong");
+        tempStrong.className = "temp";
+        tempStrong.textContent = `${Math.round(hour.temp)}°`;
+
+        const rainSpan = document.createElement("span");
+        rainSpan.className = "rain";
+        rainSpan.textContent = `Pioggia ${Math.round((hour.pop || 0) * 100)}%`;
+
+        card.appendChild(timeSpan);
+        card.appendChild(weatherIcon);
+        card.appendChild(tempStrong);
+        card.appendChild(rainSpan);
         container.appendChild(card);
     });
 }

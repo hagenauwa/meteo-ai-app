@@ -4,6 +4,7 @@ ml_model.py — modelli ML per correzione temperatura, probabilità pioggia e co
 from __future__ import annotations
 
 import copy
+import hmac
 import hashlib
 import json
 import logging
@@ -200,13 +201,24 @@ def _reset_loaded_model_state() -> None:
     _blend_profiles = {"v1": {}, "v2": {}}
 
 
+def _signing_key() -> bytes | None:
+    token = getattr(settings, "admin_api_token", None)
+    if token:
+        return token.encode("utf-8")
+    return None
+
+
 def _encode_model_payload(payload: dict) -> bytes:
     metadata = {
         "model_format_version": int(payload.get("model_format_version", MODEL_FORMAT_VERSION)),
         "sklearn_version": payload.get("sklearn_version"),
     }
+    blob = pickle.dumps(payload)
+    key = _signing_key()
+    if key:
+        metadata["signature"] = hmac.new(key, blob, hashlib.sha256).hexdigest()
     header = MODEL_METADATA_PREFIX + json.dumps(metadata, separators=(",", ":")).encode("ascii") + b"\n"
-    return header + pickle.dumps(payload)
+    return header + blob
 
 
 def _decode_model_payload(blob: bytes) -> tuple[dict | None, bytes | None]:
@@ -218,6 +230,12 @@ def _decode_model_payload(blob: bytes) -> tuple[dict | None, bytes | None]:
         raise ValueError("missing_model_metadata_separator")
 
     metadata = json.loads(header[len(MODEL_METADATA_PREFIX):].decode("ascii"))
+    sig = metadata.get("signature")
+    key = _signing_key()
+    if key and sig:
+        expected = hmac.new(key, payload, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            raise ValueError("invalid_model_signature")
     return metadata, payload
 
 
@@ -1644,9 +1662,13 @@ def _condition_target_from_row(row: dict) -> int | None:
     return CONDITION_TO_CODE[label]
 
 
-def _rain_probability_for_row(row: dict, variant: str) -> float | None:
+def _rain_probability_for_row(row: dict, variant: str, pipelines: dict | None = None) -> float | None:
+    rain_v2 = (pipelines or {}).get("rain_pipeline_v2", _rain_pipeline_v2)
+    rain_v1 = (pipelines or {}).get("rain_pipeline", _rain_pipeline)
+    rain_platt_v2_local = (pipelines or {}).get("rain_platt_v2", _rain_platt_v2)
+
     if variant == "v2":
-        if _rain_pipeline_v2 is None:
+        if rain_v2 is None:
             return None
         features = _build_rain_features_v2(
             forecast_temp=row["forecast_temp"],
@@ -1663,10 +1685,10 @@ def _rain_probability_for_row(row: dict, variant: str) -> float | None:
             forecast_wind_direction=row.get("forecast_wind_direction"),
             forecast_weather_code=row.get("forecast_weather_code"),
         )
-        raw = float(_rain_pipeline_v2.predict_proba(features)[0][1])
-        return float(_apply_platt(raw, _rain_platt_v2))
+        raw = float(rain_v2.predict_proba(features)[0][1])
+        return float(_apply_platt(raw, rain_platt_v2_local))
 
-    if _rain_pipeline is None:
+    if rain_v1 is None:
         return None
 
     features, _ = _build_rain_features_for_inference(
@@ -1684,12 +1706,16 @@ def _rain_probability_for_row(row: dict, variant: str) -> float | None:
         forecast_wind_direction=row.get("forecast_wind_direction"),
         forecast_weather_code=row.get("forecast_weather_code"),
     )
-    return float(_rain_pipeline.predict_proba(features)[0][1])
+    return float(rain_v1.predict_proba(features)[0][1])
 
 
-def _condition_probabilities_for_row(row: dict, variant: str) -> np.ndarray | None:
+def _condition_probabilities_for_row(row: dict, variant: str, pipelines: dict | None = None) -> np.ndarray | None:
+    cond_v2 = (pipelines or {}).get("condition_pipeline_v2", _condition_pipeline_v2)
+    cond_v1 = (pipelines or {}).get("condition_pipeline", _condition_pipeline)
+    cond_platt_v2_local = (pipelines or {}).get("condition_platt_v2", _condition_platt_v2)
+
     if variant == "v2":
-        if _condition_pipeline_v2 is None:
+        if cond_v2 is None:
             return None
         features = _build_condition_features_v2(
             forecast_temp=row["forecast_temp"],
@@ -1706,10 +1732,10 @@ def _condition_probabilities_for_row(row: dict, variant: str) -> np.ndarray | No
             forecast_wind_direction=row.get("forecast_wind_direction"),
             forecast_weather_code=row.get("forecast_weather_code"),
         )
-        raw = _condition_pipeline_v2.predict_proba(features)[0]
-        return _apply_multiclass_platt(raw, _condition_platt_v2)
+        raw = cond_v2.predict_proba(features)[0]
+        return _apply_multiclass_platt(raw, cond_platt_v2_local)
 
-    if _condition_pipeline is None:
+    if cond_v1 is None:
         return None
 
     features, _ = _build_condition_features_for_inference(
@@ -1727,10 +1753,10 @@ def _condition_probabilities_for_row(row: dict, variant: str) -> np.ndarray | No
         forecast_wind_direction=row.get("forecast_wind_direction"),
         forecast_weather_code=row.get("forecast_weather_code"),
     )
-    return _condition_pipeline.predict_proba(features)[0]
+    return cond_v1.predict_proba(features)[0]
 
 
-def _compute_variant_kpis(rows: list[dict], variant: str) -> dict:
+def _compute_variant_kpis(rows: list[dict], variant: str, pipelines: dict | None = None) -> dict:
     rain_probs: list[float] = []
     rain_truth: list[int] = []
     condition_preds: list[int] = []
@@ -1738,7 +1764,7 @@ def _compute_variant_kpis(rows: list[dict], variant: str) -> dict:
 
     for row in rows:
         if row.get("actual_precipitation") is not None:
-            prob = _rain_probability_for_row(row, variant)
+            prob = _rain_probability_for_row(row, variant, pipelines)
             if prob is not None:
                 rain_probs.append(prob)
                 rain_truth.append(1 if (row.get("actual_precipitation") or 0.0) > 0.1 else 0)
@@ -1747,7 +1773,7 @@ def _compute_variant_kpis(rows: list[dict], variant: str) -> dict:
         if target_condition is None:
             continue
 
-        probs = _condition_probabilities_for_row(row, variant)
+        probs = _condition_probabilities_for_row(row, variant, pipelines)
         if probs is None:
             continue
 
@@ -1796,14 +1822,14 @@ def _provider_rain_probability_proxy(row: dict) -> float:
     return 0.08
 
 
-def _compute_rain_kpis_by_bucket(rows: list[dict], variant: str) -> dict[str, dict[str, float | int | None]]:
+def _compute_rain_kpis_by_bucket(rows: list[dict], variant: str, pipelines: dict | None = None) -> dict[str, dict[str, float | int | None]]:
     grouped: dict[str, dict[str, list[float] | list[int]]] = {}
 
     for row in rows:
         if row.get("actual_precipitation") is None:
             continue
 
-        prob = _rain_probability_for_row(row, variant)
+        prob = _rain_probability_for_row(row, variant, pipelines)
         if prob is None:
             continue
 
@@ -1832,8 +1858,8 @@ def _compute_rain_kpis_by_bucket(rows: list[dict], variant: str) -> dict[str, di
     return bucket_metrics
 
 
-def _compute_blend_profile(rows: list[dict], variant: str) -> dict[str, dict[str, float | int]]:
-    bucket_kpis = _compute_rain_kpis_by_bucket(rows, variant)
+def _compute_blend_profile(rows: list[dict], variant: str, pipelines: dict | None = None) -> dict[str, dict[str, float | int]]:
+    bucket_kpis = _compute_rain_kpis_by_bucket(rows, variant, pipelines)
     profile: dict[str, dict[str, float | int]] = {}
 
     for bucket in LEAD_BUCKETS:
@@ -2076,56 +2102,42 @@ def train(min_samples: int = 100) -> dict:
         blend_profile_v2 = {bucket: {"ml_weight": limits[0], "samples": 0} for bucket, limits in BLEND_BUCKET_ML_WEIGHT_LIMITS.items()}
 
         if rain_pipeline is not None and condition_pipeline is not None:
-            old_state = {
-                "rain_pipeline": _rain_pipeline,
-                "condition_pipeline": _condition_pipeline,
-                "rain_pipeline_v2": _rain_pipeline_v2,
-                "condition_pipeline_v2": _condition_pipeline_v2,
-                "rain_platt_v2": _rain_platt_v2,
-                "condition_platt_v2": _condition_platt_v2,
+            backtest_pipelines = {
+                "rain_pipeline": rain_pipeline,
+                "condition_pipeline": condition_pipeline,
+                "rain_pipeline_v2": rain_pipeline_v2,
+                "condition_pipeline_v2": condition_pipeline_v2,
+                "rain_platt_v2": rain_platt_v2,
+                "condition_platt_v2": condition_platt_v2,
             }
-            try:
-                _rain_pipeline = rain_pipeline
-                _condition_pipeline = condition_pipeline
-                _rain_pipeline_v2 = rain_pipeline_v2
-                _condition_pipeline_v2 = condition_pipeline_v2
-                _rain_platt_v2 = rain_platt_v2
-                _condition_platt_v2 = condition_platt_v2
 
-                window_start = datetime.now(timezone.utc) - timedelta(days=settings.ml_kpi_window_days)
-                backtest_rows = [row for row in rows if row["target_time"] >= window_start][-MAX_KPI_EVAL_ROWS:]
-                if len(backtest_rows) >= 200:
-                    blend_profile_v1 = _compute_blend_profile(backtest_rows, "v1")
-                    if rain_pipeline_v2 is not None and condition_pipeline_v2 is not None:
-                        v1 = _compute_variant_kpis(backtest_rows, "v1")
-                        v2 = _compute_variant_kpis(backtest_rows, "v2")
-                        blend_profile_v2 = _compute_blend_profile(backtest_rows, "v2")
-                        backtest = {
-                            "rows": len(backtest_rows),
-                            "v1": v1,
-                            "v2": v2,
-                            "gate": _kpi_gate(v1, v2),
-                        }
-                        backtest["pass"] = bool(backtest["gate"].get("pass"))
-                    else:
-                        backtest = {
-                            "pass": False,
-                            "reason": "v2_not_ready",
-                            "rows": len(backtest_rows),
-                        }
+            window_start = datetime.now(timezone.utc) - timedelta(days=settings.ml_kpi_window_days)
+            backtest_rows = [row for row in rows if row["target_time"] >= window_start][-MAX_KPI_EVAL_ROWS:]
+            if len(backtest_rows) >= 200:
+                blend_profile_v1 = _compute_blend_profile(backtest_rows, "v1", backtest_pipelines)
+                if rain_pipeline_v2 is not None and condition_pipeline_v2 is not None:
+                    v1 = _compute_variant_kpis(backtest_rows, "v1", backtest_pipelines)
+                    v2 = _compute_variant_kpis(backtest_rows, "v2", backtest_pipelines)
+                    blend_profile_v2 = _compute_blend_profile(backtest_rows, "v2", backtest_pipelines)
+                    backtest = {
+                        "rows": len(backtest_rows),
+                        "v1": v1,
+                        "v2": v2,
+                        "gate": _kpi_gate(v1, v2),
+                    }
+                    backtest["pass"] = bool(backtest["gate"].get("pass"))
                 else:
                     backtest = {
                         "pass": False,
-                        "reason": "not_enough_rows",
+                        "reason": "v2_not_ready",
                         "rows": len(backtest_rows),
                     }
-            finally:
-                _rain_pipeline = old_state["rain_pipeline"]
-                _condition_pipeline = old_state["condition_pipeline"]
-                _rain_pipeline_v2 = old_state["rain_pipeline_v2"]
-                _condition_pipeline_v2 = old_state["condition_pipeline_v2"]
-                _rain_platt_v2 = old_state["rain_platt_v2"]
-                _condition_platt_v2 = old_state["condition_platt_v2"]
+            else:
+                backtest = {
+                    "pass": False,
+                    "reason": "not_enough_rows",
+                    "rows": len(backtest_rows),
+                }
 
         if not backtest.get("pass"):
             rain_pipeline_v2 = None

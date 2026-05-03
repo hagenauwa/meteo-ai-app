@@ -240,5 +240,5 @@ async def force_train(
 ):
     result = await __import__("asyncio").to_thread(ml_model.train, min_samples)
     if result["success"]:
-        ml_model.load_latest_model()
+        await __import__("asyncio").to_thread(ml_model.load_latest_model)
     return result

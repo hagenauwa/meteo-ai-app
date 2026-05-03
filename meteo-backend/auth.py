@@ -11,9 +11,6 @@ def require_admin_access(x_admin_token: str | None = Header(default=None)) -> No
     In produzione richiede un token esplicito.
     In sviluppo locale permette l'accesso se il token non è configurato.
     """
-    if not settings.is_production and not settings.admin_api_token:
-        return
-
     if not settings.admin_api_token:
         raise HTTPException(
             status_code=503,
