@@ -53,6 +53,29 @@
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <link rel="stylesheet" href="style.css">
+    <style>
+        .icon-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 42px;
+            height: 42px;
+            border: 1px solid rgba(226, 232, 240, 0.96);
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.88);
+            color: #0f172a;
+            cursor: pointer;
+            transition: transform 0.2s ease, background 0.2s ease;
+            font-size: 16px;
+        }
+        .icon-btn:hover {
+            transform: translateY(-2px);
+            background: #ffffff;
+        }
+        .icon-btn:active {
+            transform: translateY(0);
+        }
+    </style>
 </head>
 <body>
     <header class="header">
@@ -134,6 +157,12 @@
 
                     <div class="planner-actions">
                         <span id="forecastBadge" class="forecast-badge hidden">Previsione affinata automaticamente</span>
+                        <button type="button" id="mapBtn" class="icon-btn" title="Mostra sulla mappa" aria-label="Mostra sulla mappa">
+                            <i class="fas fa-map-marked-alt"></i>
+                        </button>
+                        <button type="button" id="pushToggle" class="icon-btn" title="Notifiche meteo" aria-label="Attiva notifiche meteo">
+                            <i class="fas fa-bell-slash" id="pushIcon"></i>
+                        </button>
                         <button id="favoriteBtn" class="btn-secondary">
                             <i class="fas fa-star"></i>
                             <span>Salva tra preferite</span>
@@ -218,6 +247,14 @@
                             <div class="detail-item">
                                 <span class="label">Pressione</span>
                                 <strong id="pressure" class="value">-- hPa</strong>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Indice UV</span>
+                                <strong id="uvIndex" class="value">--</strong>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Qualità Aria</span>
+                                <strong id="airQuality" class="value">--</strong>
                             </div>
                         </div>
                     </aside>

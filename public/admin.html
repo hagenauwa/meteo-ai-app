@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0f4c81">
+    <title>Dashboard Admin — Le Previsioni</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+
+    <script>
+        (() => {
+            const backendOverrideKey = "meteo_backend_override";
+            const params = new URLSearchParams(window.location.search);
+            const hostname = window.location.hostname;
+            const isLoopbackHost = ["localhost", "127.0.0.1"].includes(hostname);
+            const isPrivateIpv4 = /^(10\.(\d{1,3}\.){2}\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})$/.test(hostname);
+            const isLocalNetworkHost = isLoopbackHost || isPrivateIpv4 || hostname.endsWith(".local");
+            const queryOverride = params.get("backend");
+
+            if (queryOverride === "clear") {
+                window.localStorage.removeItem(backendOverrideKey);
+            } else if (queryOverride) {
+                try {
+                    const parsed = new URL(queryOverride);
+                    if (["http:", "https:"].includes(parsed.protocol)) {
+                        window.localStorage.setItem(backendOverrideKey, parsed.origin);
+                    }
+                } catch (_) {}
+            }
+
+            const storedOverride = window.localStorage.getItem(backendOverrideKey);
+            let backendUrl = isLocalNetworkHost
+                ? `http://${hostname}:8000`
+                : "https://meteo-ai-backend.onrender.com";
+
+            if (storedOverride) {
+                backendUrl = storedOverride;
+            }
+
+            window.APP_ENV = isLocalNetworkHost ? "development" : "production";
+            window.BACKEND_URL = backendUrl;
+        })();
+    </script>
+
+    <style>
+        :root {
+            --ink: #1e293b;
+            --ink-soft: #64748b;
+            --sky: #f1f5f9;
+            --card: rgba(255, 255, 255, 0.88);
+            --card-strong: #ffffff;
+            --line: rgba(226, 232, 240, 0.96);
+            --accent: #3b82f6;
+            --accent-strong: #2563eb;
+            --sun: #f59e0b;
+            --storm: #0f4c81;
+            --shadow: 0 20px 60px rgba(15, 23, 42, 0.14);
+            --radius-lg: 28px;
+            --radius-md: 18px;
+            --radius-sm: 14px;
+            --transition: 180ms ease;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            min-height: 100vh;
+            font-family: "Manrope", system-ui, sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(59, 130, 246, 0.3), transparent 26%),
+                radial-gradient(circle at top right, rgba(139, 92, 246, 0.24), transparent 22%),
+                linear-gradient(135deg, #dbeafe 0%, #e0e7ff 42%, #f8fafc 100%);
+        }
+
+        .container {
+            width: min(1180px, calc(100% - 32px));
+            margin: 0 auto;
+        }
+
+        /* Header */
+        .header {
+            padding: 28px 0 0;
+        }
+
+        .brand-row {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 24px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo i {
+            display: grid;
+            place-items: center;
+            width: 60px;
+            height: 60px;
+            border-radius: 18px;
+            color: #fff;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            box-shadow: var(--shadow);
+            font-size: 1.7rem;
+        }
+
+        .logo h1 {
+            font-family: "Fraunces", Georgia, serif;
+            font-weight: 700;
+            font-size: clamp(1.6rem, 3vw, 2.4rem);
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.02;
+        }
+
+        .brand-kicker {
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            font-size: 0.75rem;
+            font-weight: 800;
+            color: var(--ink-soft);
+        }
+
+        .subtitle {
+            max-width: 440px;
+            color: var(--ink-soft);
+            text-align: right;
+            font-size: 1rem;
+        }
+
+        /* Main */
+        .admin-main {
+            padding: 28px 0 56px;
+        }
+
+        .admin-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+
+        .admin-header h2 {
+            font-family: "Fraunces", Georgia, serif;
+            font-weight: 700;
+            font-size: clamp(1.4rem, 2.5vw, 2rem);
+            line-height: 1.1;
+        }
+
+        .admin-header p {
+            color: var(--ink-soft);
+            font-size: 0.95rem;
+            margin-top: 4px;
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            min-height: 48px;
+            padding: 0 22px;
+            border: 0;
+            border-radius: 18px;
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+            transition: transform var(--transition), box-shadow var(--transition), background var(--transition);
+            color: #fff;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            box-shadow: 0 18px 34px rgba(59, 130, 246, 0.28);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary.is-loading {
+            opacity: 0.72;
+            cursor: wait;
+            transform: none;
+        }
+
+        /* Cards Grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        @media (max-width: 900px) {
+            .cards-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .admin-card {
+            padding: 24px;
+            border-radius: var(--radius-lg);
+            background: var(--card);
+            border: 1px solid var(--line);
+            box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .admin-card--wide {
+            grid-column: 1 / -1;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .card-title-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .card-icon {
+            display: grid;
+            place-items: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            color: #fff;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .card-icon--system {
+            background: linear-gradient(135deg, #10b981, #059669);
+        }
+
+        .card-icon--db {
+            background: linear-gradient(135deg, #3b82f6, #6366f1);
+        }
+
+        .card-icon--ml {
+            background: linear-gradient(135deg, #f59e0b, #f97316);
+        }
+
+        .card-icon--train {
+            background: linear-gradient(135deg, #8b5cf6, #a855f7);
+        }
+
+        .card-title {
+            font-family: "Fraunces", Georgia, serif;
+            font-weight: 700;
+            font-size: 1.2rem;
+        }
+
+        .card-kicker {
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+            font-size: 0.7rem;
+            font-weight: 800;
+            color: var(--ink-soft);
+        }
+
+        .card-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 800;
+        }
+
+        .status-ok {
+            color: #065f46;
+            background: rgba(16, 185, 129, 0.12);
+        }
+
+        .status-warn {
+            color: #92400e;
+            background: rgba(245, 158, 11, 0.12);
+        }
+
+        .status-err {
+            color: #991b1b;
+            background: rgba(239, 68, 68, 0.12);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-ok .status-dot {
+            background: #10b981;
+        }
+
+        .status-warn .status-dot {
+            background: #f59e0b;
+        }
+
+        .status-err .status-dot {
+            background: #ef4444;
+        }
+
+        /* Metrics */
+        .metrics-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        @media (max-width: 520px) {
+            .metrics-list {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .metric-item {
+            padding: 14px 16px;
+            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid var(--line);
+        }
+
+        .metric-label {
+            display: block;
+            font-size: 0.78rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink-soft);
+        }
+
+        .metric-value {
+            display: block;
+            margin-top: 8px;
+            font-size: 1.25rem;
+            font-weight: 700;
+            word-break: break-word;
+        }
+
+        .metric-value--bool {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .metric-value--bool i {
+            font-size: 0.9em;
+        }
+
+        .bool-yes {
+            color: #059669;
+        }
+
+        .bool-no {
+            color: #dc2626;
+        }
+
+        /* Token Input */
+        .token-section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .token-row {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .token-input {
+            flex: 1;
+            min-height: 44px;
+            border: 1px solid var(--line);
+            border-radius: var(--radius-sm);
+            padding: 0 14px;
+            background: rgba(255, 255, 255, 0.92);
+            color: var(--ink);
+            font: inherit;
+            font-size: 0.95rem;
+            font-weight: 500;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+
+        .token-input:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, 0.55);
+            box-shadow: 0 14px 34px rgba(37, 99, 235, 0.16);
+        }
+
+        .token-input::placeholder {
+            color: var(--ink-soft);
+        }
+
+        .btn-small {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-height: 44px;
+            padding: 0 18px;
+            border: 0;
+            border-radius: var(--radius-sm);
+            font: inherit;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: transform var(--transition), box-shadow var(--transition);
+            color: #fff;
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            box-shadow: 0 12px 26px rgba(59, 130, 246, 0.24);
+            white-space: nowrap;
+        }
+
+        .btn-small:hover {
+            transform: translateY(-2px);
+        }
+
+        .token-hint {
+            font-size: 0.82rem;
+            color: var(--ink-soft);
+            line-height: 1.5;
+        }
+
+        /* Error / Empty */
+        .empty-state {
+            padding: 18px;
+            border-radius: var(--radius-md);
+            color: var(--ink-soft);
+            background: rgba(255, 255, 255, 0.72);
+            border: 1px dashed rgba(148, 163, 184, 0.45);
+            text-align: center;
+            font-size: 0.95rem;
+        }
+
+        .error-state {
+            padding: 14px 16px;
+            border-radius: var(--radius-md);
+            color: #991b1b;
+            background: rgba(239, 68, 68, 0.1);
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Spinner mini */
+        .spinner-mini {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 3px solid rgba(59, 130, 246, 0.16);
+            border-top-color: var(--accent);
+            animation: spin 0.85s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Footer */
+        .footer {
+            padding: 0 0 28px;
+            color: var(--ink-soft);
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .footer a {
+            color: var(--accent-strong);
+        }
+
+        /* Training table */
+        .training-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.92rem;
+        }
+
+        .training-table th,
+        .training-table td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .training-table th {
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink-soft);
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        .training-table tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .training-table td {
+            color: var(--ink);
+        }
+
+        .training-table .bool-cell {
+            font-weight: 700;
+        }
+
+        @media (max-width: 840px) {
+            .brand-row {
+                flex-direction: column;
+                align-items: start;
+            }
+            .subtitle {
+                text-align: left;
+            }
+            .admin-header {
+                flex-direction: column;
+                align-items: start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="brand-row">
+                <div class="logo">
+                    <i class="fas fa-cloud-sun-rain"></i>
+                    <div>
+                        <h1>Dashboard Admin</h1>
+                        <p class="brand-kicker">Le Previsioni</p>
+                    </div>
+                </div>
+                <p class="subtitle">Monitora lo stato del backend, del database e dei modelli ML in tempo reale.</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="admin-main">
+        <div class="container">
+            <div class="admin-header">
+                <div>
+                    <h2>Panoramica Sistema</h2>
+                    <p>Ultimo aggiornamento: <span id="lastUpdated">--</span></p>
+                </div>
+                <button id="refreshBtn" class="btn-primary">
+                    <i class="fas fa-rotate"></i>
+                    <span>Aggiorna</span>
+                </button>
+            </div>
+
+            <div class="cards-grid">
+                <!-- Stato Sistema -->
+                <article class="admin-card">
+                    <div class="card-header">
+                        <div class="card-title-wrap">
+                            <div class="card-icon card-icon--system">
+                                <i class="fas fa-server"></i>
+                            </div>
+                            <div>
+                                <p class="card-kicker">Healthcheck</p>
+                                <h3 class="card-title">Stato Sistema</h3>
+                            </div>
+                        </div>
+                        <span id="systemStatusBadge" class="card-status status-err">
+                            <span class="status-dot"></span>
+                            In attesa
+                        </span>
+                    </div>
+                    <div id="systemMetrics" class="metrics-list">
+                        <div class="metric-item">
+                            <span class="metric-label">Status</span>
+                            <span class="metric-value" id="sysStatus">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Database</span>
+                            <span class="metric-value" id="sysDb">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Scheduler Jobs</span>
+                            <span class="metric-value" id="sysJobs">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">ML Model Ready</span>
+                            <span class="metric-value" id="sysMl">--</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Metriche Database -->
+                <article class="admin-card">
+                    <div class="card-header">
+                        <div class="card-title-wrap">
+                            <div class="card-icon card-icon--db">
+                                <i class="fas fa-database"></i>
+                            </div>
+                            <div>
+                                <p class="card-kicker">Storage</p>
+                                <h3 class="card-title">Metriche Database</h3>
+                            </div>
+                        </div>
+                        <span id="dbStatusBadge" class="card-status status-warn">
+                            <span class="status-dot"></span>
+                            Token richiesto
+                        </span>
+                    </div>
+                    <div class="token-section">
+                        <div class="token-row">
+                            <input
+                                type="password"
+                                id="adminToken"
+                                class="token-input"
+                                placeholder="Inserisci x-admin-token..."
+                                autocomplete="off"
+                            >
+                            <button id="saveTokenBtn" class="btn-small">
+                                <i class="fas fa-key"></i>
+                                <span>Salva</span>
+                            </button>
+                        </div>
+                        <p class="token-hint">Il token viene mantenuto in sessione (non salvato permanentemente). Clicca "Aggiorna" dopo aver inserito il token.</p>
+                    </div>
+                    <div id="dbMetrics" class="metrics-list">
+                        <div class="metric-item">
+                            <span class="metric-label">Città</span>
+                            <span class="metric-value" id="dbCities">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Osservazioni</span>
+                            <span class="metric-value" id="dbObs">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Predizioni</span>
+                            <span class="metric-value" id="dbPred">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Verificate</span>
+                            <span class="metric-value" id="dbVer">--</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Metriche ML -->
+                <article class="admin-card">
+                    <div class="card-header">
+                        <div class="card-title-wrap">
+                            <div class="card-icon card-icon--ml">
+                                <i class="fas fa-brain"></i>
+                            </div>
+                            <div>
+                                <p class="card-kicker">Machine Learning</p>
+                                <h3 class="card-title">Metriche ML</h3>
+                            </div>
+                        </div>
+                        <span id="mlStatusBadge" class="card-status status-err">
+                            <span class="status-dot"></span>
+                            In attesa
+                        </span>
+                    </div>
+                    <div id="mlMetrics" class="metrics-list">
+                        <div class="metric-item">
+                            <span class="metric-label">Model Ready</span>
+                            <span class="metric-value" id="mlReady">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Model MAE</span>
+                            <span class="metric-value" id="mlMae">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Rain Model Ready</span>
+                            <span class="metric-value" id="mlRain">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Condition Model Ready</span>
+                            <span class="metric-value" id="mlCond">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Model Samples</span>
+                            <span class="metric-value" id="mlSamples">--</span>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Training -->
+                <article class="admin-card admin-card--wide">
+                    <div class="card-header">
+                        <div class="card-title-wrap">
+                            <div class="card-icon card-icon--train">
+                                <i class="fas fa-graduation-cap"></i>
+                            </div>
+                            <div>
+                                <p class="card-kicker">Addestramento</p>
+                                <h3 class="card-title">Training ML</h3>
+                            </div>
+                        </div>
+                        <span id="trainStatusBadge" class="card-status status-err">
+                            <span class="status-dot"></span>
+                            In attesa
+                        </span>
+                    </div>
+                    <div id="trainingContent">
+                        <div class="empty-state">
+                            <i class="fas fa-circle-info" style="margin-right:6px;"></i>
+                            Dati training non ancora caricati. Clicca "Aggiorna".
+                        </div>
+                    </div>
+                </article>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>Dati forniti dal backend <span id="backendUrlDisplay">--</span>. <a href="/">← Torna al sito</a></p>
+        </div>
+    </footer>
+
+    <script>
+        (() => {
+            const $ = (sel) => document.querySelector(sel);
+            const $$ = (sel) => document.querySelectorAll(sel);
+
+            const els = {
+                refreshBtn: $('#refreshBtn'),
+                lastUpdated: $('#lastUpdated'),
+                backendUrlDisplay: $('#backendUrlDisplay'),
+                adminToken: $('#adminToken'),
+                saveTokenBtn: $('#saveTokenBtn'),
+
+                // System
+                systemStatusBadge: $('#systemStatusBadge'),
+                sysStatus: $('#sysStatus'),
+                sysDb: $('#sysDb'),
+                sysJobs: $('#sysJobs'),
+                sysMl: $('#sysMl'),
+
+                // DB
+                dbStatusBadge: $('#dbStatusBadge'),
+                dbCities: $('#dbCities'),
+                dbObs: $('#dbObs'),
+                dbPred: $('#dbPred'),
+                dbVer: $('#dbVer'),
+
+                // ML
+                mlStatusBadge: $('#mlStatusBadge'),
+                mlReady: $('#mlReady'),
+                mlMae: $('#mlMae'),
+                mlRain: $('#mlRain'),
+                mlCond: $('#mlCond'),
+                mlSamples: $('#mlSamples'),
+
+                // Training
+                trainStatusBadge: $('#trainStatusBadge'),
+                trainingContent: $('#trainingContent'),
+            };
+
+            let adminTokenValue = '';
+
+            function fmtBool(val) {
+                const yes = val === true || val === 'true' || val === 1 || val === '1';
+                return `<span class="metric-value--bool ${yes ? 'bool-yes' : 'bool-no'}">
+                    <i class="fas fa-${yes ? 'check-circle' : 'times-circle'}"></i>
+                    ${yes ? 'Sì' : 'No'}
+                </span>`;
+            }
+
+            function fmtNumber(val) {
+                if (val === null || val === undefined || val === '') return '--';
+                const n = Number(val);
+                if (isNaN(n)) return String(val);
+                return n.toLocaleString('it-IT');
+            }
+
+            function setBadge(el, type, text) {
+                el.className = `card-status status-${type}`;
+                el.innerHTML = `<span class="status-dot"></span>${text}`;
+            }
+
+            function showError(container, msg) {
+                container.innerHTML = `<div class="error-state"><i class="fas fa-circle-exclamation"></i>${msg}</div>`;
+            }
+
+            function setLoading(btn) {
+                btn.classList.add('is-loading');
+                btn.disabled = true;
+                const original = btn.innerHTML;
+                btn.innerHTML = `<div class="spinner-mini"></div><span>Caricamento...</span>`;
+                return () => {
+                    btn.classList.remove('is-loading');
+                    btn.disabled = false;
+                    btn.innerHTML = original;
+                };
+            }
+
+            async function fetchJson(url, opts = {}) {
+                const res = await fetch(url, opts);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            }
+
+            async function loadSystem() {
+                try {
+                    const data = await fetchJson(`${window.BACKEND_URL}/ready`);
+                    els.sysStatus.textContent = data.status ?? 'Non disponibile';
+                    els.sysDb.innerHTML = fmtBool(data.database_ok);
+                    els.sysJobs.textContent = fmtNumber(data.scheduler_jobs);
+                    els.sysMl.innerHTML = fmtBool(data.ml_model_ready);
+
+                    const ok = data.status === 'ok' || data.status === 'ready' || data.status === 'healthy';
+                    setBadge(els.systemStatusBadge, ok ? 'ok' : 'warn', ok ? 'Operativo' : 'Attenzione');
+                    return data;
+                } catch (e) {
+                    els.sysStatus.textContent = 'Non disponibile';
+                    els.sysDb.innerHTML = '--';
+                    els.sysJobs.textContent = '--';
+                    els.sysMl.innerHTML = '--';
+                    setBadge(els.systemStatusBadge, 'err', 'Errore');
+                    return null;
+                }
+            }
+
+            async function loadDb() {
+                if (!adminTokenValue) {
+                    setBadge(els.dbStatusBadge, 'warn', 'Token richiesto');
+                    els.dbCities.textContent = '--';
+                    els.dbObs.textContent = '--';
+                    els.dbPred.textContent = '--';
+                    els.dbVer.textContent = '--';
+                    return null;
+                }
+                try {
+                    const data = await fetchJson(`${window.BACKEND_URL}/api/admin/status`, {
+                        headers: { 'x-admin-token': adminTokenValue }
+                    });
+                    els.dbCities.textContent = fmtNumber(data.num_cities);
+                    els.dbObs.textContent = fmtNumber(data.num_observations);
+                    els.dbPred.textContent = fmtNumber(data.num_predictions);
+                    els.dbVer.textContent = fmtNumber(data.num_verified);
+                    setBadge(els.dbStatusBadge, 'ok', 'OK');
+                    return data;
+                } catch (e) {
+                    els.dbCities.textContent = 'Non disponibile';
+                    els.dbObs.textContent = 'Non disponibile';
+                    els.dbPred.textContent = 'Non disponibile';
+                    els.dbVer.textContent = 'Non disponibile';
+                    setBadge(els.dbStatusBadge, 'err', 'Errore');
+                    return null;
+                }
+            }
+
+            async function loadMl() {
+                try {
+                    const data = await fetchJson(`${window.BACKEND_URL}/api/ml/stats`);
+                    els.mlReady.innerHTML = fmtBool(data.model_ready);
+                    els.mlMae.textContent = data.model_mae !== undefined && data.model_mae !== null ? Number(data.model_mae).toFixed(3) : '--';
+                    els.mlRain.innerHTML = fmtBool(data.rain_model_ready);
+                    els.mlCond.innerHTML = fmtBool(data.condition_model_ready);
+                    els.mlSamples.textContent = fmtNumber(data.model_samples);
+
+                    const ready = data.model_ready === true || data.model_ready === 'true';
+                    setBadge(els.mlStatusBadge, ready ? 'ok' : 'warn', ready ? 'Pronto' : 'Non pronto');
+                    return data;
+                } catch (e) {
+                    els.mlReady.innerHTML = '--';
+                    els.mlMae.textContent = '--';
+                    els.mlRain.innerHTML = '--';
+                    els.mlCond.innerHTML = '--';
+                    els.mlSamples.textContent = '--';
+                    setBadge(els.mlStatusBadge, 'err', 'Errore');
+                    return null;
+                }
+            }
+
+            function renderTraining(mlTraining) {
+                if (!mlTraining || typeof mlTraining !== 'object') {
+                    els.trainingContent.innerHTML = `<div class="empty-state"><i class="fas fa-circle-info" style="margin-right:6px;"></i>Nessun dato di training disponibile.</div>`;
+                    setBadge(els.trainStatusBadge, 'warn', 'Nessun dato');
+                    return;
+                }
+
+                const rows = Object.entries(mlTraining).map(([key, val]) => {
+                    let displayVal;
+                    if (typeof val === 'boolean') {
+                        displayVal = `<span class="bool-cell ${val ? 'bool-yes' : 'bool-no'}"><i class="fas fa-${val ? 'check' : 'times'}"></i> ${val ? 'Sì' : 'No'}</span>`;
+                    } else if (typeof val === 'number') {
+                        displayVal = Number.isInteger(val) ? val.toLocaleString('it-IT') : val.toFixed(4);
+                    } else if (val === null || val === undefined) {
+                        displayVal = '<span style="color:var(--ink-soft)">--</span>';
+                    } else {
+                        displayVal = String(val);
+                    }
+                    const label = key.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+                    return `<tr><td>${label}</td><td>${displayVal}</td></tr>`;
+                }).join('');
+
+                els.trainingContent.innerHTML = `
+                    <table class="training-table">
+                        <thead>
+                            <tr><th>Parametro</th><th>Valore</th></tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
+
+                const hasData = Object.keys(mlTraining).length > 0;
+                setBadge(els.trainStatusBadge, hasData ? 'ok' : 'warn', hasData ? 'Dati presenti' : 'Vuoto');
+            }
+
+            async function refreshAll() {
+                const done = setLoading(els.refreshBtn);
+                els.lastUpdated.textContent = 'in corso...';
+
+                const readyData = await loadSystem();
+                await loadDb();
+                await loadMl();
+
+                if (readyData && readyData.ml_training) {
+                    renderTraining(readyData.ml_training);
+                } else {
+                    renderTraining(null);
+                }
+
+                const now = new Date();
+                els.lastUpdated.textContent = now.toLocaleString('it-IT', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                });
+
+                done();
+            }
+
+            els.refreshBtn.addEventListener('click', refreshAll);
+
+            els.saveTokenBtn.addEventListener('click', () => {
+                adminTokenValue = els.adminToken.value.trim();
+                if (adminTokenValue) {
+                    setBadge(els.dbStatusBadge, 'warn', 'Token salvato — aggiorna');
+                }
+            });
+
+            els.adminToken.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    els.saveTokenBtn.click();
+                }
+            });
+
+            // Init
+            els.backendUrlDisplay.textContent = window.BACKEND_URL || ' sconosciuto';
+            refreshAll();
+        })();
+    </script>
+</body>
+</html>

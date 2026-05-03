@@ -4,8 +4,8 @@ database.py — SQLAlchemy models, connessione DB e bootstrap Alembic.
 import os
 from pathlib import Path
 from sqlalchemy import (
-    create_engine, Column, Integer, BigInteger, Text, Float,
-    Boolean, DateTime, LargeBinary, ForeignKey, Index, text
+    create_engine, Column, Integer, BigInteger, Text, String, Float,
+    Boolean, DateTime, LargeBinary, ForeignKey, Index, text, func
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 from dotenv import load_dotenv
@@ -169,6 +169,18 @@ class SupporterToken(Base):
     supporter = relationship("Supporter", back_populates="tokens")
 
 
+class PushSubscription(Base):
+    """Sottoscrizione push Web (Web Push API) per notifiche meteo."""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(String(255), nullable=False)
+    auth = Column(String(255), nullable=False)
+    city = Column(String(100), nullable=True)  # città preferita per alert
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 # Indici per performance (compatibili sia SQLite che PostgreSQL)
 Index("idx_obs_city_time",  WeatherObservation.city_id, WeatherObservation.observed_at)
 Index("idx_pred_city_time", MlPrediction.city_id, MlPrediction.predicted_at)
@@ -181,6 +193,7 @@ Index("idx_ml_training_state_last_train", MlTrainingState.last_successful_train_
 Index("idx_supporters_email_lookup_hash", Supporter.email_lookup_hash)
 Index("idx_supporter_tokens_supporter_id", SupporterToken.supporter_id)
 Index("idx_supporter_tokens_token_hash", SupporterToken.token_hash)
+Index("idx_push_subscriptions_endpoint", PushSubscription.endpoint)
 
 
 def get_db():

@@ -1,266 +1,202 @@
 # 🌤️ Meteo AI App
 
-Applicazione web di previsioni meteo con Machine Learning, progettata per essere semplice da usare e mantenere anche per principianti.
+Applicazione web di previsioni meteo con Machine Learning server-side. Il frontend è una PWA leggera in Vanilla JS; il backend in Python gestisce dati, modelli ML e integrazioni meteo.
 
 ## 🎯 Caratteristiche
 
 - ✅ **Previsioni meteo accurate** per tutta l'Italia
-- 🤖 **Machine Learning integrato** che impara dagli errori di previsione
-- 📱 **Design responsive** (funziona su mobile, tablet e desktop)
+- 🤖 **Machine Learning server-side** (scikit-learn) che impara dagli errori di previsione
+- 📱 **Design responsive** con glassmorphism (mobile, tablet e desktop)
+- ⚙️ **PWA installabile** con service worker per esperienza offline
 - ⚡ **Gratuito e open source**
-- 🚀 **Deploy facile** su Netlify
+- 🗺️ **Geocoding** automatico tramite Open-Meteo Geocoding API
+- 💳 **Supporto sviluppo** tramite Stripe Checkout ("Buy me a Coffee")
+- 🔒 **Pannello admin protetto** con token HMAC
 
 ## 🛠️ Stack Tecnologico
 
-| Componente | Tecnologia | Motivo della scelta |
-|------------|-----------|---------------------|
-| Frontend | Vanilla JS + CSS3 | Nessun framework da imparare, codice immediatamente comprensibile |
-| ML | TensorFlow.js | Libreria standard, esegue ML direttamente nel browser |
-| API | OpenWeatherMap | API meteo affidabile con piano gratuito |
-| Hosting | Netlify | Deploy automatico, hosting gratuito, serverless functions |
+| Componente | Tecnologia | Note |
+|------------|-----------|------|
+| Frontend | Vanilla JS + CSS3 (glassmorphism) | Nessun framework da imparare; PWA con service worker |
+| Backend | Python 3.11, FastAPI, Uvicorn | API REST async; deploy su Render |
+| Database | PostgreSQL (prod) / SQLite (dev) | SQLAlchemy 2.0 + Alembic per le migrazioni |
+| ML | scikit-learn | Ridge, LogisticRegression, Pipeline; addestramento server-side ogni ora |
+| API Meteo | Open-Meteo (primaria), met.no (fallback) | Entrambe gratuite, nessuna API key richiesta per l'uso base |
+| Geocoding | Open-Meteo Geocoding API | Ricerca città e comuni italiani |
+| Pagamenti | Stripe Checkout | Flusso "Buy me a Coffee" |
+| Auth Admin | Token HMAC | Header `x-admin-token` |
+| Scheduler | APScheduler | Cron job su Render per auto-training ML |
 
 ## 📁 Struttura del Progetto
 
 ```
 meteo-ai-app/
-├── public/                      # File statici (frontend)
-│   ├── index.html              # Pagina principale
-│   ├── style.css               # Stili CSS
-│   ├── app.js                  # Logica applicazione
-│   └── ml-model.js             # Sistema Machine Learning
+├── public/                    # Frontend statico (deploy su Netlify)
+│   ├── index.html
+│   ├── style.css
+│   ├── js/
+│   │   ├── main.js
+│   │   ├── api.js
+│   │   ├── render.js
+│   │   ├── storage.js
+│   │   ├── config.js
+│   │   ├── autocomplete.js
+│   │   └── supporter.js
+│   ├── manifest.webmanifest
+│   └── service-worker.js
 ├── netlify/
-│   └── functions/              # Serverless functions
-│       ├── weather.js          # Proxy API OpenWeatherMap
-│       └── save-prediction.js  # Persistenza previsioni (opzionale)
-├── netlify.toml                # Configurazione Netlify
-├── package.json                # Dipendenze Node.js
-└── README.md                   # Questo file
+│   └── functions/             # Serverless functions (legacy/optional)
+├── netlify.toml               # Configurazione Netlify
+├── render.yaml                # Configurazione Render (web + cron)
+├── package.json               # Dipendenze Node (netlify-cli, cross-env)
+├── meteo-backend/             # Backend Python (deploy su Render)
+│   ├── main.py                # FastAPI app
+│   ├── config.py              # Settings env-based
+│   ├── database.py            # SQLAlchemy + Alembic
+│   ├── ml_model.py            # Modelli ML scikit-learn
+│   ├── scheduler.py           # Ciclo orario ML
+│   ├── weather_service.py     # Integrazione Open-Meteo
+│   ├── cities_loader.py       # Caricamento comuni ISTAT
+│   ├── auth.py                # Auth admin
+│   ├── supporters_service.py  # Stripe + cifratura email supporter
+│   ├── routers/               # weather, cities, ml, admin, supporters
+│   ├── db_migrations/         # Versioni Alembic
+│   ├── tests/                 # Suite Pytest
+│   └── requirements.txt       # Dipendenze Python
+└── docs/
+    └── deploy-checklist-2026-04.md
 ```
 
-## 🚀 Guida all'Installazione
+## 🔐 Variabili d'Ambiente
 
-### Step 1: Prerequisiti
+Le seguenti variabili sono richieste o consigliate per l'esecuzione in produzione:
 
-1. **Node.js** installato sul tuo computer
-   - Scarica da: https://nodejs.org/ (scarica la versione LTS)
-   - Verifica installazione: apri terminale e digita `node --version`
+| Variabile | Scopo | Richiesta? |
+|-----------|-------|------------|
+| `DATABASE_URL` | Connessione PostgreSQL (prod) o SQLite (dev) | Sì |
+| `FRONTEND_ORIGIN` | Origine frontend per CORS (es. `https://leprevisioni.netlify.app`) | Sì (prod) |
+| `ADMIN_API_TOKEN` | Token segreto per accesso pannello admin | Sì (admin) |
+| `STRIPE_SECRET_KEY` | Chiave segreta Stripe per pagamenti | Sì (donazioni) |
+| `STRIPE_WEBHOOK_SECRET` | Segreto webhook Stripe per conferma pagamenti | Sì (donazioni) |
+| `SUPPORTER_EMAIL_ENCRYPTION_KEY` | Chiave per cifratura email supporter | Sì (donazioni) |
+| `SUPPORTER_EMAIL_HASH_KEY` | Chiave per hashing email supporter | Sì (donazioni) |
+| `OPENWEATHER_API_KEY` | Legacy, non più utilizzata | No |
 
-2. **Account Netlify** (gratuito)
-   - Registrati su: https://www.netlify.com/
-   - Puoi usare GitHub, GitLab, Bitbucket o email
+## 🚀 Installazione Locale
 
-3. **Account OpenWeatherMap** (gratuito)
-   - Registrati su: https://home.openweathermap.org/users/sign_up
-   - Vai su "My API Keys" e copia la tua chiave
+### Prerequisiti
 
-### Step 2: Clona/Copia il Progetto
+- Python 3.11+
+- Node.js (per Netlify CLI, opzionale)
+- Account Stripe (opzionale, solo per testare i pagamenti)
+
+### 1. Clona il repository
 
 ```bash
-# Se hai git installato
 git clone <repository-url>
 cd meteo-ai-app
-
-# Oppure, se non hai git, copia manualmente i file
-# in una cartella chiamata "meteo-ai-app"
 ```
 
-### Step 3: Installa le Dipendenze
+### 2. Backend
 
 ```bash
-# Entra nella cartella del progetto
-cd meteo-ai-app
-
-# Installa il Netlify CLI (Command Line Interface)
-npm install -g netlify-cli
-
-# Oppure se preferisci installarlo localmente:
-npm install
+cd meteo-backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-### Step 4: Configura le Variabili d'Ambiente
-
-Crea un file `.env` nella cartella principale:
-
-```env
-OPENWEATHER_API_KEY=la_tua_chiave_api_qui
-```
-
-**Attenzione:** Non caricare mai questo file su Git! È già incluso nel `.gitignore`.
-
-### Step 5: Testa in Locale
+Avvia le migrazioni del database:
 
 ```bash
-# Avvia il server di sviluppo Netlify
-netlify dev
-
-# L'app sarà disponibile su http://localhost:8888
+alembic upgrade head
 ```
 
-Se vedi la pagina di Meteo AI, tutto funziona!
-
-## 🌐 Deploy su Netlify
-
-### Metodo A: Deploy con Netlify CLI (Consigliato)
+Avvia il server di sviluppo:
 
 ```bash
-# 1. Effettua il login a Netlify
-netlify login
-
-# 2. Collega la cartella al tuo sito Netlify
-netlify link
-
-# 3. Deploy del sito
-netlify deploy --prod
+uvicorn main:app --reload --port 8000
 ```
 
-Al termine, vedrai l'URL del tuo sito (es. `https://meteo-ai-abc123.netlify.app`)
+L'API sarà disponibile su `http://localhost:8000`. La documentazione interattiva (Swagger UI) è su `/docs`.
 
-### Metodo B: Deploy tramite Git (Continuous Deployment)
+### 3. Frontend
 
-1. Crea un repository su GitHub/GitLab/Bitbucket
-2. Carica i file del progetto:
-   ```bash
-   git init
-   git add .
-   git commit -m "Primo commit"
-   git remote add origin <url-tuo-repository>
-   git push -u origin main
-   ```
-3. Vai su Netlify Dashboard → "Add new site" → "Import an existing project"
-4. Seleziona il tuo repository
-5. Configura:
-   - **Build command:** (lascia vuoto, è un sito statico)
-   - **Publish directory:** `public`
-6. Aggiungi la variabile ambiente `OPENWEATHER_API_KEY` in:
-   Site settings → Environment variables → Add variable
-7. Clicca "Deploy"
+Dalla cartella `public/` puoi servire i file statici con qualsiasi server locale, oppure usare Netlify CLI:
 
-Ogni volta che farai `git push`, Netlify aggiornerà automaticamente il sito!
-
-## 🔧 Configurazione Post-Deploy
-
-### Aggiungere la Chiave API su Netlify
-
-1. Vai su https://app.netlify.com
-2. Seleziona il tuo sito
-3. Vai su "Site settings" → "Environment variables"
-4. Clicca "Add variable"
-   - Key: `OPENWEATHER_API_KEY`
-   - Value: (la tua chiave di OpenWeatherMap)
-5. Salva e fai il redeploy del sito
-
-## 🎓 Come Usare l'App
-
-### Ricerca Meteo
-
-1. Inserisci il nome di una città italiana
-2. Clicca "Cerca" o premi Enter
-3. Visualizza il meteo attuale e le previsioni
-
-### Sistema Machine Learning
-
-L'app impara automaticamente a correggere le previsioni:
-
-1. **Salvataggio:** Ogni ricerca salva la previsione API
-2. **Verifica:** Quando ricontrolli una città dopo qualche ora, l'app confronta la previsione con la realtà
-3. **Apprendimento:** Clicca "Allena modello ora" per far imparare l'AI dagli errori passati
-4. **Correzione:** Le prossime previsioni mostreranno la correzione AI (es. "+1.2°C basandosi sui dati storici")
-
-### Controlli ML
-
-- **🎓 Allena modello ora:** Addestra la rete neurale con i dati raccolti
-- **🗑️ Reset dati ML:** Cancella tutto lo storico (utile se l'AI impara male)
-- **✅ Verifica previsioni passate:** Controlla manualmente le previsioni vecchie
-
-## 🐛 Troubleshooting
-
-### "OPENWEATHER_API_KEY non configurata"
-
-**Problema:** La chiave API non è stata impostata su Netlify
-
-**Soluzione:**
-1. Vai su Netlify Dashboard → Site settings → Environment variables
-2. Aggiungi `OPENWEATHER_API_KEY` con la tua chiave
-3. Redeploy il sito (Deploys → Trigger deploy)
-
-### "Città non trovata"
-
-**Problema:** La città non è riconosciuta
-
-**Soluzioni:**
-- Prova con il nome italiano (es. "Roma" invece di "Rome")
-- Verifica l'ortografia
-- Prova con una città più grande nelle vicinanze
-
-### Il modello ML non si addestra
-
-**Problema:** Bottone "Allena modello ora" non funziona
-
-**Causa:** Servono almeno 5 previsioni verificate
-
-**Soluzione:**
-1. Cerca la stessa città più volte durante il giorno
-2. Aspetta almeno 1-6 ore tra una ricerca e l'altra
-3. Clicca "Verifica previsioni passate"
-4. Poi "Allena modello ora"
-
-### Errori CORS
-
-Se vedi errori CORS nella console del browser, verifica che:
-1. Le Netlify Functions siano deployate correttamente
-2. L'URL della funzione sia corretto in `app.js`
-
-## 📝 Modifiche Personalizzate
-
-### Cambiare il colore del tema
-
-Modifica le variabili CSS in `public/style.css`:
-
-```css
-:root {
-    --primary-color: #3b82f6;    /* Blu di default */
-    /* Cambia con: #ef4444 (rosso), #10b981 (verde), #8b5cf6 (viola), ecc. */
-}
+```bash
+cd public
+npx serve .
 ```
 
-### Aggiungere nuove città italiane
+Se hai installato il backend in locale, assicurati che il frontend punti a `http://localhost:8000` (configurabile in `js/config.js`).
 
-Aggiungi in `public/app.js` nella sezione `ITALIAN_CITIES`:
+## 🌐 Deploy
 
-```javascript
-'perugia': { lat: 43.1107, lon: 12.3908 },
-'reggio calabria': { lat: 38.1105, lon: 15.6613 }
+### Frontend — Netlify
+
+Il frontend è un sito statico. Configura su Netlify:
+
+- **Build command:** (lascia vuoto)
+- **Publish directory:** `public`
+- Aggiungi la variabile `FRONTEND_ORIGIN` nelle impostazioni del sito
+
+### Backend — Render
+
+Il backend è configurato tramite `render.yaml`:
+
+- **Web Service:** avvia `meteo-backend/main.py` con Uvicorn
+- **Cron Job:** esegue `scheduler.py` per l'addestramento orario del modello ML
+
+Assicurati di impostare tutte le variabili d'ambiente elencate sopra nel dashboard di Render.
+
+### Database
+
+In produzione usa PostgreSQL. In sviluppo SQLite è sufficiente: imposta `DATABASE_URL` di conseguenza (es. `sqlite:///./meteo.db`).
+
+## 🤖 Architettura Machine Learning
+
+Il sistema ML è interamente server-side:
+
+1. **Raccolta dati:** Ogni ricerca meteo salva la previsione API nel database.
+2. **Verifica:** Dopo alcune ore, il sistema confronta la previsione con le osservazioni reali.
+3. **Addestramento:** Il cron job su Render esegue l'auto-training ogni ora usando scikit-learn (Pipeline con Ridge per regressione e LogisticRegression per classificazione).
+4. **Correzione:** Le previsioni successive includono una correzione ML calcolata dal backend (es. "+1.2°C basandosi sui dati storici").
+
+L'addestramento richiede un minimo di dati verificati; finché non ce ne sono abbastanza, il modello restituisce la previsione grezza API.
+
+## 🎓 Admin
+
+L'accesso al pannello admin avviene inviando nell'header delle richieste:
+
+```
+x-admin-token: <ADMIN_API_TOKEN>
 ```
 
-### Modificare il numero di previsioni salvate
-
-In `public/ml-model.js`, cerca `saveHistory()`:
-
-```javascript
-// Limita a ultime 100 previsioni
-const toSave = this.predictionsHistory.slice(-100);
-// Cambia 100 con il numero desiderato
-```
+Gli endpoint admin permettono di monitorare metriche ML, gestire supporter e forzare l'addestramento del modello.
 
 ## 🆘 Supporto
 
 Se incontri problemi:
 
-1. Controlla la console del browser (F12 → Console) per errori
-2. Verifica che tutti i file siano stati caricati correttamente
-3. Assicurati che la chiave API sia valida su OpenWeatherMap
-4. Controlla i log delle Netlify Functions su Netlify Dashboard → Functions
+1. Controlla la console del browser (F12 → Console) per errori frontend.
+2. Verifica i log del backend Render/FastAPI.
+3. Assicurati che tutte le variabili d'ambiente siano configurate correttamente.
+4. Controlla che le migrazioni Alembic siano state eseguite (`alembic current`).
 
 ## 📚 Documentazione Utile
 
-- [OpenWeatherMap API Docs](https://openweathermap.org/api)
-- [TensorFlow.js Guide](https://www.tensorflow.org/js/guide)
-- [Netlify Functions Docs](https://docs.netlify.com/functions/overview/)
-- [CSS Grid Guide](https://css-tricks.com/snippets/css/complete-guide-grid/)
+- [Open-Meteo API Docs](https://open-meteo.com/en/docs)
+- [FastAPI Docs](https://fastapi.tiangolo.com/)
+- [SQLAlchemy 2.0 Docs](https://docs.sqlalchemy.org/en/20/)
+- [Alembic Docs](https://alembic.sqlalchemy.org/en/latest/)
+- [Stripe Docs](https://stripe.com/docs)
+- [Netlify Docs](https://docs.netlify.com/)
+- [Render Docs](https://render.com/docs)
 
 ## 📄 Licenza
 
-MIT License - Libero di usare, modificare e distribuire!
+MIT License — Libero di usare, modificare e distribuire!
 
 ---
 

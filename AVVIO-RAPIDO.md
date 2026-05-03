@@ -1,38 +1,50 @@
-# 🚀 Avvio Rapido - Solo 3 Passaggi
+# 🚀 Avvio Rapido Meteo AI App
 
-## Passaggio 1: Installa Node.js (una tantum)
-⬇️ Vai su https://nodejs.org/ e clicca il pulsante verde "LTS" per scaricare
+> Stack dual: frontend JS + backend Python. Prepara due terminali!
 
-## Passaggio 2: Ottieni API Key Meteo (una tantum)
-1. 🌐 Vai su https://home.openweathermap.org/users/sign_up
-2. 📧 Crea account con email e conferma
-3. 🔑 Vai su "My API Keys" e copia la chiave (è gratuita)
+## Prerequisiti
+- [Node.js LTS](https://nodejs.org/)
+- Python 3.11+ + `pip`
 
-## Passaggio 3: Esegui lo Script Automatico
-Apri il terminale in questa cartella (`C:\Users\Andrea\meteo-ai-app`) ed esegui:
+## 1. Clona il repo
 
 ```bash
-setup.bat
+git clone <repo-url>
+cd meteo-ai-app
 ```
 
-Lo script farà automaticamente:
-- ✅ Verifica Node.js
-- ✅ Installa Netlify CLI
-- ✅ Login a Netlify (si apre il browser)
-- ✅ Collega il progetto
-- ✅ Crea il file .env con la tua API key
-
-## Deploy finale
-Dopo lo script, esegui:
+## 2. Avvia il backend 🐍
 
 ```bash
-netlify deploy --prod
+cd meteo-backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+# Modifica .env: DATABASE_URL=sqlite:///./meteo_ai.db
+uvicorn main:app --reload
 ```
 
-Il tuo sito sarà online in pochi secondi! 🎉
+👉 Il backend gira su [http://localhost:8000](http://localhost:8000)
 
----
+## 3. Avvia il frontend ⚡ (altro terminale)
 
-**Troubleshooting:**
-- Se vedi "Node.js NON trovato!" → installa Node.js dal passaggio 1 e riprova
-- Se richiede login Netlify → usa GitHub o email, più facile
+```bash
+npm install
+npm run dev   # usa Netlify Dev -> http://localhost:8888
+```
+
+Oppure apri direttamente `public/index.html` — il frontend rileva `localhost` e punta a `:8000` automaticamente.
+
+## 🚀 Deploy
+
+| Parte | Piattaforma | Config |
+|-------|-------------|--------|
+| Frontend | Netlify | `netlify.toml` incluso |
+| Backend | Render | `render.yaml` incluso |
+
+## 🩹 Troubleshooting
+
+- `uvicorn` non trovato → attiva il virtualenv (`source venv/bin/activate`)
+- Frontend non trova il backend → controlla che il backend sia su `:8000`
+- Porta occupata → modifica la porta in `uvicorn main:app --reload --port <porta>`

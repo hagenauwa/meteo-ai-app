@@ -1,11 +1,13 @@
 import {
     fetchWeatherByCity,
     fetchMlEnrichment,
+    fetchWeatherAdvanced,
     searchCities,
     warmCitiesSearch,
 } from "./api.js";
 import { createAutocomplete } from "./autocomplete.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
+import { initializePush } from "./push.js";
 import { initializeSupporterWidget } from "./supporter.js";
 import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggleFavorite } from "./storage.js";
 
@@ -99,6 +101,17 @@ async function executeSearch(city) {
             .catch(() => {
                 // Meteo già mostrato: il blocco ML è un arricchimento opzionale.
             });
+
+        fetchWeatherAdvanced(currentCity)
+            .then(advancedPayload => {
+                if (!advancedPayload) return;
+                if (searchToken !== latestSearchToken) return;
+                currentPayload = { ...currentPayload, advanced: advancedPayload.advanced };
+                renderCurrentView();
+            })
+            .catch(() => {
+                // Dati avanzati opzionali
+            });
     } catch (error) {
         if (searchToken !== latestSearchToken) return;
         showError(error.message || "Errore durante la ricerca meteo");
@@ -158,6 +171,21 @@ function registerFavoriteButton() {
         if (added) {
             hideError();
         }
+    });
+}
+
+function registerMapButton() {
+    const mapBtn = document.getElementById("mapBtn");
+    if (!mapBtn) return;
+
+    mapBtn.addEventListener("click", () => {
+        if (!currentCity || !currentCity.lat || !currentCity.lon) return;
+        const params = new URLSearchParams({
+            name: currentCity.name,
+            lat: String(currentCity.lat),
+            lon: String(currentCity.lon),
+        });
+        window.open(`map.html?${params.toString()}`, "_blank");
     });
 }
 
@@ -271,8 +299,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     renderSavedCities();
     registerFavoriteButton();
+    registerMapButton();
     registerPwa();
     initializeSupporterWidget();
+    initializePush();
     registerCityInputSelection(input);
     registerCityInputWakeUp(input);
 
