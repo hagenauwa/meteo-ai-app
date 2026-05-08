@@ -93,6 +93,14 @@ async def lifespan(app: FastAPI):
     print("[BYE] Backend fermato")
 
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+
 app = FastAPI(
     title="Meteo AI Backend",
     description="Backend Python per l'app meteo con auto-learning ML autonomo",
@@ -110,14 +118,19 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+from rate_limiter import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
+
 # Importa e registra i router
-from routers import weather, cities, ml, admin, supporters
+from routers import weather, cities, ml, admin, supporters, advanced, notifications
 
 app.include_router(weather, prefix="/api")
 app.include_router(cities,  prefix="/api")
 app.include_router(ml,      prefix="/api/ml")
 app.include_router(admin,   prefix="/api/admin")
 app.include_router(supporters, prefix="/api/supporters")
+app.include_router(advanced, prefix="/api")
+app.include_router(notifications, prefix="/api")
 
 
 @app.get("/")

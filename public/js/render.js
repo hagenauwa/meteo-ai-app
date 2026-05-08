@@ -270,6 +270,49 @@ function renderModelNote(payload) {
         : "Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.";
 }
 
+function getUvColor(uv) {
+    if (uv == null) return "";
+    if (uv <= 2) return "uv-low";
+    if (uv <= 5) return "uv-moderate";
+    if (uv <= 7) return "uv-high";
+    if (uv <= 10) return "uv-very-high";
+    return "uv-extreme";
+}
+
+function getAqiLabel(eaqi) {
+    if (eaqi == null) return "--";
+    const labels = ["Eccellente", "Buona", "Moderata", "Scadente", "Pessima"];
+    return labels[Math.min(Math.max(0, eaqi - 1), 4)] || "--";
+}
+
+function getAqiColor(eaqi) {
+    if (eaqi == null) return "";
+    if (eaqi <= 1) return "aqi-good";
+    if (eaqi <= 2) return "aqi-moderate";
+    if (eaqi <= 3) return "aqi-poor";
+    if (eaqi <= 4) return "aqi-bad";
+    return "aqi-very-bad";
+}
+
+export function renderAdvanced(payload) {
+    const advanced = payload?.advanced;
+    const uvNode = document.getElementById("uvIndex");
+    const aqiNode = document.getElementById("airQuality");
+    if (!uvNode || !aqiNode) return;
+
+    if (advanced) {
+        const uv = advanced.uv_index;
+        const eaqi = advanced.european_aqi;
+        uvNode.textContent = uv != null ? `${uv} ${getUvColor(uv).replace("uv-", "")}` : "--";
+        uvNode.className = `value ${getUvColor(uv)}`;
+        aqiNode.textContent = getAqiLabel(eaqi);
+        aqiNode.className = `value ${getAqiColor(eaqi)}`;
+    } else {
+        uvNode.textContent = "--";
+        aqiNode.textContent = "--";
+    }
+}
+
 export function showLoading(show) {
     const loadingEl = document.getElementById("loadingState");
     const resultsEl = document.getElementById("weatherResults");
@@ -313,6 +356,7 @@ export function renderWeather(payload, { selectedDayIndex = 0, onDaySelect = () 
     renderCurrent(payload);
     renderHourlyDetail(selectedDay, payload.hourly || []);
     renderModelNote(payload);
+    renderAdvanced(payload);
 
     document.getElementById("weatherResults").classList.remove("hidden");
     showLoading(false);

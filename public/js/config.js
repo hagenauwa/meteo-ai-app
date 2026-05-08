@@ -8,6 +8,8 @@ export const API_ENDPOINTS = {
     supporterCheckout: `${BACKEND_URL}/api/supporters/checkout-session`,
     supporterConfirm: `${BACKEND_URL}/api/supporters/confirm-session`,
     supporterStatus: `${BACKEND_URL}/api/supporters/status`,
+    citySearch: `${BACKEND_URL}/api/cities/search`,
+    weatherAdvanced: `${BACKEND_URL}/api/weather/advanced`,
 };
 
 export const WEATHER_ICONS = {

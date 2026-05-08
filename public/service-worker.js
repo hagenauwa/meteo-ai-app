@@ -47,6 +47,23 @@ self.addEventListener("install", event => {
     );
 });
 
+self.addEventListener("push", (event) => {
+    const data = event.data?.json() || {};
+    const title = data.title || "Le Previsioni";
+    const body = data.body || "Aggiornamento meteo disponibile";
+    const icon = "./assets/icons/icon-192x192.png";
+    const badge = "./assets/icons/icon-72x72.png";
+    event.waitUntil(
+        self.registration.showNotification(title, {
+            body,
+            icon,
+            badge,
+            tag: data.tag || "meteo-update",
+            requireInteraction: false,
+        })
+    );
+});
+
 self.addEventListener("activate", event => {
     event.waitUntil(
         caches

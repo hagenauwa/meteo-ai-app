@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["."]
+omit = ["db_migrations/*", "tests/*"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true

@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Mappa interattiva con previsioni meteo per la città selezionata.">
+    <meta name="theme-color" content="#0f4c81">
+    <title>Mappa — Le Previsioni</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        (() => {
+            const backendOverrideKey = "meteo_backend_override";
+            const params = new URLSearchParams(window.location.search);
+            const hostname = window.location.hostname;
+            const isLoopbackHost = ["localhost", "127.0.0.1"].includes(hostname);
+            const isPrivateIpv4 = /^(10\.(\d{1,3}\.){2}\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})$/.test(hostname);
+            const isLocalNetworkHost = isLoopbackHost || isPrivateIpv4 || hostname.endsWith(".local");
+            const queryOverride = params.get("backend");
+
+            if (queryOverride === "clear") {
+                window.localStorage.removeItem(backendOverrideKey);
+            } else if (queryOverride) {
+                try {
+                    const parsed = new URL(queryOverride);
+                    if (["http:", "https:"].includes(parsed.protocol)) {
+                        window.localStorage.setItem(backendOverrideKey, parsed.origin);
+                    }
+                } catch (_) {}
+            }
+
+            const storedOverride = window.localStorage.getItem(backendOverrideKey);
+            let backendUrl = isLocalNetworkHost
+                ? `http://${hostname}:8000`
+                : "https://meteo-ai-backend.onrender.com";
+
+            if (storedOverride) {
+                backendUrl = storedOverride;
+            }
+
+            window.APP_ENV = isLocalNetworkHost ? "development" : "production";
+            window.BACKEND_URL = backendUrl;
+        })();
+    </script>
+
+    <style>
+        /* ==============================
+           Reset & Base
+           ============================== */
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        body {
+            font-family: 'Manrope', sans-serif;
+            background: linear-gradient(135deg, #4c72b0 0%, #7b5ba8 100%);
+            min-height: 100vh;
+            color: #0f172a;
+            line-height: 1.5;
+            padding: 0 16px 40px;
+        }
+
+        /* ==============================
+           Container
+           ============================== */
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 8px;
+        }
+
+        /* ==============================
+           Header
+           ============================== */
+        .map-header {
+            padding: 24px 0 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .map-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .map-logo i {
+            font-size: 28px;
+            color: #ffffff;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        }
+
+        .map-logo h1 {
+            font-family: 'Fraunces', serif;
+            font-weight: 700;
+            font-size: 22px;
+            color: #ffffff;
+            letter-spacing: -0.2px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        }
+
+        .btn-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border: none;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffffff;
+            font-family: 'Manrope', sans-serif;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.15s ease;
+            text-decoration: none;
+        }
+
+        .btn-back:hover {
+            background: rgba(255, 255, 255, 0.38);
+            transform: translateY(-1px);
+        }
+
+        .btn-back:active {
+            transform: translateY(0);
+        }
+
+        /* ==============================
+           Cards (Glassmorphism)
+           ============================== */
+        .card {
+            background: rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 28px;
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+        }
+
+        .card-title {
+            font-family: 'Fraunces', serif;
+            font-weight: 700;
+            font-size: 18px;
+            color: #0f172a;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-title i {
+            font-size: 16px;
+            color: #4c72b0;
+        }
+
+        /* ==============================
+           City Card
+           ============================== */
+        .city-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .city-name {
+            font-family: 'Fraunces', serif;
+            font-weight: 700;
+            font-size: 24px;
+            color: #0f172a;
+        }
+
+        .city-coords {
+            font-size: 13px;
+            color: #334155;
+            font-weight: 500;
+        }
+
+        /* ==============================
+           Map Card
+           ============================== */
+        .map-card {
+            padding: 0;
+            overflow: hidden;
+            border-radius: 28px;
+        }
+
+        #map {
+            width: 100%;
+            height: 60vh;
+            min-height: 320px;
+            border-radius: 28px;
+        }
+
+        /* Leaflet popup glassmorphism override */
+        .leaflet-popup-content-wrapper {
+            background: rgba(255, 255, 255, 0.92) !important;
+            backdrop-filter: blur(10px) !important;
+            -webkit-backdrop-filter: blur(10px) !important;
+            border-radius: 16px !important;
+            border: 1px solid rgba(255, 255, 255, 0.5) !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+        }
+
+        .leaflet-popup-content {
+            font-family: 'Manrope', sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #0f172a;
+            margin: 12px 16px;
+        }
+
+        .leaflet-popup-tip {
+            background: rgba(255, 255, 255, 0.92) !important;
+        }
+
+        /* ==============================
+           Weather Card
+           ============================== */
+        .weather-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 16px;
+            margin-top: 8px;
+        }
+
+        .weather-tile {
+            background: rgba(255, 255, 255, 0.35);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-radius: 18px;
+            padding: 16px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            transition: transform 0.15s ease;
+        }
+
+        .weather-tile:hover {
+            transform: translateY(-2px);
+        }
+
+        .weather-tile i {
+            font-size: 22px;
+            color: #4c72b0;
+            margin-bottom: 6px;
+            display: block;
+        }
+
+        .weather-tile .label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 4px;
+        }
+
+        .weather-tile .value {
+            font-family: 'Fraunces', serif;
+            font-weight: 700;
+            font-size: 20px;
+            color: #0f172a;
+        }
+
+        .weather-condition {
+            font-size: 15px;
+            font-weight: 600;
+            color: #334155;
+            margin-top: 8px;
+            text-align: center;
+        }
+
+        /* ==============================
+           Loading / Error states
+           ============================== */
+        .map-loader {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 40px;
+            color: #ffffff;
+            font-weight: 500;
+        }
+
+        .map-loader .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: #ffffff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .map-error {
+            background: rgba(239, 68, 68, 0.2);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            border-radius: 18px;
+            padding: 16px 20px;
+            color: #ffffff;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* ==============================
+           Responsive
+           ============================== */
+        @media (max-width: 640px) {
+            body {
+                padding: 0 10px 30px;
+            }
+
+            .map-header {
+                padding: 18px 0 12px;
+            }
+
+            .map-logo h1 {
+                font-size: 18px;
+            }
+
+            .btn-back {
+                font-size: 13px;
+                padding: 8px 14px;
+            }
+
+            .card {
+                padding: 18px;
+                border-radius: 22px;
+            }
+
+            #map {
+                height: 55vh;
+                min-height: 280px;
+                border-radius: 22px;
+            }
+
+            .map-card {
+                border-radius: 22px;
+            }
+
+            .city-name {
+                font-size: 20px;
+            }
+
+            .weather-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 12px;
+            }
+
+            .weather-tile .value {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="map-header">
+            <div class="map-logo">
+                <i class="fas fa-cloud-sun-rain"></i>
+                <h1>Mappa — Le Previsioni</h1>
+            </div>
+            <button type="button" class="btn-back" onclick="window.location.href='index.html'">
+                <i class="fas fa-arrow-left"></i>
+                <span>Torna al meteo</span>
+            </button>
+        </header>
+
+        <!-- Error message container -->
+        <div id="errorBox" class="map-error hidden">
+            <i class="fas fa-circle-exclamation"></i>
+            <span id="errorText"></span>
+        </div>
+
+        <!-- City Card -->
+        <section id="cityCard" class="card hidden">
+            <h2 class="card-title"><i class="fas fa-location-dot"></i> Città</h2>
+            <div class="city-info">
+                <span id="cityDisplayName" class="city-name">--</span>
+                <span id="cityDisplayCoords" class="city-coords">--</span>
+            </div>
+        </section>
+
+        <!-- Map Card -->
+        <section class="card map-card">
+            <div id="mapLoader" class="map-loader">
+                <div class="spinner"></div>
+                <span>Sto caricando la mappa…</span>
+            </div>
+            <div id="map"></div>
+        </section>
+
+        <!-- Weather Card -->
+        <section id="weatherCard" class="card hidden">
+            <h2 class="card-title"><i class="fas fa-cloud-sun"></i> Meteo attuale</h2>
+            <div class="weather-grid">
+                <div class="weather-tile">
+                    <i class="fas fa-temperature-half"></i>
+                    <span class="label">Temperatura</span>
+                    <span id="weatherTemp" class="value">--</span>
+                </div>
+                <div class="weather-tile">
+                    <i class="fas fa-wind"></i>
+                    <span class="label">Vento</span>
+                    <span id="weatherWind" class="value">--</span>
+                </div>
+                <div class="weather-tile">
+                    <i class="fas fa-droplet"></i>
+                    <span class="label">Umidità</span>
+                    <span id="weatherHumidity" class="value">--</span>
+                </div>
+                <div class="weather-tile">
+                    <i class="fas fa-gauge-high"></i>
+                    <span class="label">Pressione</span>
+                    <span id="weatherPressure" class="value">--</span>
+                </div>
+            </div>
+            <p id="weatherCondition" class="weather-condition">--</p>
+        </section>
+    </div>
+
+    <script>
+    (function() {
+        'use strict';
+
+        const BACKEND_URL = window.BACKEND_URL || 'http://localhost:8000';
+
+        // ── Helpers ─────────────────────────────────────────────
+        function apiFetch(url, options = {}) {
+            const headers = {
+                'bypass-tunnel-reminder': 'true',
+                ...(options.headers || {}),
+            };
+            return fetch(url, { ...options, headers });
+        }
+
+        async function apiFetchJson(url, options = {}) {
+            const response = await apiFetch(url, options);
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(body.detail || body.message || `HTTP ${response.status}`);
+            }
+            return body;
+        }
+
+        function showError(message) {
+            const box = document.getElementById('errorBox');
+            const text = document.getElementById('errorText');
+            text.textContent = message;
+            box.classList.remove('hidden');
+        }
+
+        function hideError() {
+            document.getElementById('errorBox').classList.add('hidden');
+        }
+
+        function setCityCard(name, lat, lon) {
+            document.getElementById('cityDisplayName').textContent = name;
+            document.getElementById('cityDisplayCoords').textContent =
+                `${Number(lat).toFixed(4)}°, ${Number(lon).toFixed(4)}°`;
+            document.getElementById('cityCard').classList.remove('hidden');
+        }
+
+        function setWeatherCard(data) {
+            const temp = data.current?.temp ?? data.temp ?? null;
+            const wind = data.current?.wind_speed ?? data.wind_speed ?? null;
+            const humidity = data.current?.humidity ?? data.humidity ?? null;
+            const pressure = data.current?.pressure ?? data.pressure ?? null;
+            const condition = data.current?.weather?.[0]?.description ?? data.condition ?? '';
+
+            if (temp !== null) {
+                document.getElementById('weatherTemp').textContent = `${Number(temp).toFixed(1)}°C`;
+            }
+            if (wind !== null) {
+                document.getElementById('weatherWind').textContent = `${Math.round(Number(wind))} km/h`;
+            }
+            if (humidity !== null) {
+                document.getElementById('weatherHumidity').textContent = `${Math.round(Number(humidity))}%`;
+            }
+            if (pressure !== null) {
+                document.getElementById('weatherPressure').textContent = `${Math.round(Number(pressure))} hPa`;
+            }
+            if (condition) {
+                document.getElementById('weatherCondition').textContent = condition;
+            }
+            document.getElementById('weatherCard').classList.remove('hidden');
+
+            return {
+                temp: temp !== null ? `${Number(temp).toFixed(1)}°C` : 'N/D',
+                condition: condition || 'N/D',
+                wind: wind !== null ? `${Math.round(Number(wind))}` : 'N/D',
+                humidity: humidity !== null ? `${Math.round(Number(humidity))}` : 'N/D',
+            };
+        }
+
+        // ── Map ─────────────────────────────────────────────────
+        function initMap(lat, lon, name, weatherData) {
+            const mapLoader = document.getElementById('mapLoader');
+            if (mapLoader) mapLoader.classList.add('hidden');
+
+            const map = L.map('map').setView([lat, lon], 13);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19,
+            }).addTo(map);
+
+            let popupHtml = `<b>${name}</b>`;
+            if (weatherData) {
+                popupHtml += `<br>🌡️ ${weatherData.temp} — ${weatherData.condition}<br>`;
+                popupHtml += `💨 ${weatherData.wind} km/h · 💧 ${weatherData.humidity}%`;
+            }
+
+            const marker = L.marker([lat, lon]).addTo(map);
+            marker.bindPopup(popupHtml).openPopup();
+        }
+
+        function initFallbackMap() {
+            const mapLoader = document.getElementById('mapLoader');
+            if (mapLoader) mapLoader.classList.add('hidden');
+
+            const map = L.map('map').setView([41.9, 12.5], 6);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19,
+            }).addTo(map);
+        }
+
+        // ── Main flow ───────────────────────────────────────────
+        async function main() {
+            const params = new URLSearchParams(window.location.search);
+            let lat = params.get('lat');
+            let lon = params.get('lon');
+            let name = params.get('name') || params.get('q') || '';
+
+            // Se mancano lat/lon ma c'è il nome, cerca coordinate
+            if ((!lat || !lon) && name) {
+                try {
+                    const searchUrl = `${BACKEND_URL}/api/cities/search?q=${encodeURIComponent(name)}&limit=1`;
+                    const searchData = await apiFetchJson(searchUrl);
+                    const results = Array.isArray(searchData.results) ? searchData.results : [];
+                    if (results.length > 0) {
+                        const city = results[0];
+                        lat = city.latitude ?? city.lat ?? null;
+                        lon = city.longitude ?? city.lon ?? null;
+                        // Se il backend restituisce nome diverso, usa quello
+                        if (city.name) name = city.name;
+                    }
+                } catch (err) {
+                    // Continua con fallback
+                }
+            }
+
+            // Se ancora senza coordinate, fallback Italia
+            if (!lat || !lon) {
+                lat = 41.9;
+                lon = 12.5;
+                if (!name) name = 'Italia';
+                showError('Coordinate non disponibili: mostro la mappa dell\'Italia.');
+                initFallbackMap();
+                setCityCard(name, lat, lon);
+                return;
+            }
+
+            lat = Number(lat);
+            lon = Number(lon);
+
+            setCityCard(name || 'Località selezionata', lat, lon);
+
+            // Prova a caricare dati meteo
+            let weatherData = null;
+            if (name) {
+                try {
+                    const weatherUrl = `${BACKEND_URL}/api/weather?city=${encodeURIComponent(name)}&lat=${lat}&lon=${lon}`;
+                    const weather = await apiFetchJson(weatherUrl);
+                    weatherData = setWeatherCard(weather);
+                } catch (err) {
+                    // Se l'API meteo fallisce, mostra solo la mappa senza dati meteo nel popup
+                }
+            }
+
+            initMap(lat, lon, name || 'Località selezionata', weatherData);
+        }
+
+        main().catch(err => {
+            showError('Errore imprevisto: ' + (err.message || 'impossibile caricare la mappa'));
+            initFallbackMap();
+        });
+    })();
+    </script>
+</body>
+</html>

@@ -181,6 +181,21 @@ function storeCitySearchResult(key, data) {
     }
 }
 
+async function fetchBackendCitySearch(query, limit, scope, signal) {
+    const params = new URLSearchParams({
+        q: query,
+        limit: String(limit),
+        scope,
+    });
+    const response = await apiFetch(`${API_ENDPOINTS.citySearch}?${params.toString()}`, {
+        method: "GET",
+        signal,
+    });
+    if (!response.ok) return [];
+    const body = await response.json().catch(() => ({}));
+    return Array.isArray(body.results) ? body.results : [];
+}
+
 export async function searchCities(query, limit = 8, scope = "all", options = {}) {
     const trimmedQuery = query.trim();
     if (!trimmedQuery || trimmedQuery.length < 2) return [];
@@ -189,6 +204,23 @@ export async function searchCities(query, limit = 8, scope = "all", options = {}
 
     if (citySearchCache.has(cacheKey)) {
         return citySearchCache.get(cacheKey);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    let backendRaw = [];
+    try {
+        backendRaw = await fetchBackendCitySearch(trimmedQuery, limit, scope, controller.signal);
+    } catch {
+        // Fallback silenzioso a Open-Meteo
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (backendRaw.length > 0) {
+        const results = formatGeocodingResults(backendRaw, trimmedQuery, limit, scope);
+        storeCitySearchResult(cacheKey, results);
+        return results;
     }
 
     const rawResults = await fetchOpenMeteoGeocoding(trimmedQuery, limit, options);
@@ -391,6 +423,23 @@ export async function fetchMlEnrichment(city, weatherPayload) {
             })),
         }),
     });
+}
+
+export async function fetchWeatherAdvanced(city) {
+    let resolvedCity = city;
+    if (resolvedCity.lat == null || resolvedCity.lon == null) {
+        const candidates = await searchCities(resolvedCity.name || "", 1, "comuni");
+        if (!candidates.length) {
+            throw new Error("Coordinate mancanti per questa città");
+        }
+        resolvedCity = { ...resolvedCity, ...candidates[0] };
+    }
+    const params = new URLSearchParams({
+        city: resolvedCity.name,
+        lat: String(resolvedCity.lat),
+        lon: String(resolvedCity.lon),
+    });
+    return fetchJson(`${API_ENDPOINTS.weatherAdvanced}?${params.toString()}`);
 }
 
 export async function createSupporterCheckoutSession(email) {

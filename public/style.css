@@ -1061,3 +1061,16 @@ body {
         font-size: 3rem;
     }
 }
+
+/* UV & AQI badges */
+.uv-low { color: #16a34a; }
+.uv-moderate { color: #ca8a04; }
+.uv-high { color: #ea580c; }
+.uv-very-high { color: #dc2626; }
+.uv-extreme { color: #7c3aed; }
+
+.aqi-good { color: #16a34a; }
+.aqi-moderate { color: #ca8a04; }
+.aqi-poor { color: #ea580c; }
+.aqi-bad { color: #dc2626; }
+.aqi-very-bad { color: #7c3aed; }
