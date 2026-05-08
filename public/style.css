@@ -773,7 +773,17 @@ body {
 }
 
 .weather-icon--partly-cloudy {
-    color: var(--weather-partly-cloudy);
+    background: linear-gradient(45deg, var(--weather-cloud) 45%, var(--sun) 65%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.weather-icon--partly-cloudy-night {
+    background: linear-gradient(45deg, var(--weather-cloud) 45%, var(--weather-night) 65%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 .weather-icon--cloud {
@@ -781,7 +791,10 @@ body {
 }
 
 .weather-icon--rain {
-    color: var(--weather-rain);
+    background: linear-gradient(to bottom, var(--weather-cloud) 48%, var(--weather-rain) 58%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 .weather-icon--storm {
