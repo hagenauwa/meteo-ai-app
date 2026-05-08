@@ -668,6 +668,14 @@ def _approx_cloud_cover_from_wmo(code: int) -> float:
     return 55.0
 
 
+def _series_value(series: dict, key: str, index: int, default=None):
+    values = series.get(key, [])
+    if index >= len(values):
+        return default
+    value = values[index]
+    return default if value is None else value
+
+
 def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
     if not raw_data:
         return None
@@ -717,23 +725,31 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
     daily_formatted = []
     daily_limit = len(daily_times)
     for i, t in enumerate(daily_times[:daily_limit]):
-        wmo_d = daily.get("weather_code", [0] * daily_limit)
-        desc_d, icon_d = wmo_to_description(wmo_d[i] if i < len(wmo_d) else 0)
+        temp_min = _series_value(daily, "temperature_2m_min", i)
+        temp_max = _series_value(daily, "temperature_2m_max", i)
+        if temp_min is None or temp_max is None:
+            continue
+
+        weather_code = _series_value(daily, "weather_code", i, 0)
+        desc_d, icon_d = wmo_to_description(weather_code)
+        precip_probability = _series_value(daily, "precipitation_probability_max", i, 0)
+        precipitation_sum = _series_value(daily, "precipitation_sum", i, 0.0)
+        wind_speed = _series_value(daily, "wind_speed_10m_max", i, 0)
         daily_formatted.append({
             "dt": t,
             "temp": {
-                "min": round(daily["temperature_2m_min"][i], 1) if i < len(daily.get("temperature_2m_min", [])) else 0,
-                "max": round(daily["temperature_2m_max"][i], 1) if i < len(daily.get("temperature_2m_max", [])) else 0,
-                "day": round((daily["temperature_2m_min"][i] + daily["temperature_2m_max"][i]) / 2, 1) if i < len(daily.get("temperature_2m_min", [])) else 0,
+                "min": round(temp_min, 1),
+                "max": round(temp_max, 1),
+                "day": round((temp_min + temp_max) / 2, 1),
             },
             "humidity": 50,
-            "cloud_cover": _approx_cloud_cover_from_wmo(wmo_d[i] if i < len(wmo_d) else 0),
-            "wind_speed": round(daily["wind_speed_10m_max"][i], 1) if i < len(daily.get("wind_speed_10m_max", [])) else 0,
-            "wind_deg": daily["wind_direction_10m_dominant"][i] if i < len(daily.get("wind_direction_10m_dominant", [])) else 0,
-            "pop": (daily["precipitation_probability_max"][i] or 0) / 100 if i < len(daily.get("precipitation_probability_max", [])) else 0,
-            "precipitation_sum": round(daily["precipitation_sum"][i], 1) if i < len(daily.get("precipitation_sum", [])) else 0.0,
+            "cloud_cover": _approx_cloud_cover_from_wmo(weather_code),
+            "wind_speed": round(wind_speed, 1),
+            "wind_deg": _series_value(daily, "wind_direction_10m_dominant", i, 0),
+            "pop": precip_probability / 100,
+            "precipitation_sum": round(precipitation_sum, 1),
             "weather": [{"description": desc_d, "icon": icon_d}],
-            "weather_code": wmo_d[i] if i < len(wmo_d) else 0,
+            "weather_code": weather_code,
         })
 
     return {

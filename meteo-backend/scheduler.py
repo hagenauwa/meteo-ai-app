@@ -398,6 +398,13 @@ async def hourly_cycle():
             )
             return
 
+        cleanup = await asyncio.to_thread(_db_cleanup, cycle_started_at)
+        if any(cleanup.values()):
+            print(
+                f"[CLEAN] pre-save obs={cleanup['deleted_observations']} "
+                f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
+            )
+
         payload = await fetch_all_cities_weather(cities)
         observations = payload.get("observations", [])
         predictions = payload.get("predictions", [])
@@ -503,7 +510,7 @@ async def hourly_cycle():
         cleanup = await asyncio.to_thread(_db_cleanup, now)
         if any(cleanup.values()):
             print(
-                f"[CLEAN] obs={cleanup['deleted_observations']} "
+                f"[CLEAN] post-train obs={cleanup['deleted_observations']} "
                 f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
             )
 
