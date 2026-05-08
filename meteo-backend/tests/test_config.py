@@ -21,12 +21,12 @@ def test_ml_training_bounds_defaults(monkeypatch):
 
     assert settings.ml_training_window_days == 30
     assert settings.ml_training_max_rows == 60000
-    assert settings.ml_city_sample_size == 800
-    assert settings.ml_city_core_size == 100
+    assert settings.ml_city_sample_size == 300
+    assert settings.ml_city_core_size == 80
     assert settings.ml_forecast_leads == (1, 3, 6, 14, 38, 86, 158)
     assert settings.ml_cycle_every_hours == 1
-    assert settings.ml_observation_retention_days == 21
-    assert settings.ml_prediction_retention_days == 21
+    assert settings.ml_observation_retention_days == 7
+    assert settings.ml_prediction_retention_days == 8
 
 
 def test_ml_training_bounds_have_minimums(monkeypatch):
