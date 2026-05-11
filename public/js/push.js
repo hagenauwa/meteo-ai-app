@@ -11,16 +11,19 @@ export async function initializePush() {
     const btn = document.getElementById("pushToggle");
     const icon = document.getElementById("pushIcon");
     if (!btn || !icon) return;
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        btn.style.display = "none";
-        return;
-    }
 
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
+    const hasPushSupport = 'serviceWorker' in navigator && 'PushManager' in window;
+
+    const reg = hasPushSupport ? await navigator.serviceWorker.ready : null;
+    const sub = hasPushSupport ? await reg.pushManager.getSubscription() : null;
     updateIcon(icon, !!sub);
 
     btn.addEventListener("click", async () => {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+            alert("Le notifiche push non sono supportate su questo dispositivo. Su iOS, usa Safari e aggiungi il sito alla schermata home per una migliore esperienza.");
+            return;
+        }
+
         const reg = await navigator.serviceWorker.ready;
         const existing = await reg.pushManager.getSubscription();
         if (existing) {
