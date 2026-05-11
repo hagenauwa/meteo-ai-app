@@ -1,4 +1,4 @@
-const CACHE_NAME = "le-previsioni-static-v13";
+const CACHE_NAME = "le-previsioni-static-v14";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
@@ -51,15 +51,35 @@ self.addEventListener("push", (event) => {
     const data = event.data?.json() || {};
     const title = data.title || "Le Previsioni";
     const body = data.body || "Aggiornamento meteo disponibile";
-    const icon = "./assets/icons/icon-192x192.png";
-    const badge = "./assets/icons/icon-72x72.png";
+    const icon = data.icon || "./assets/icons/icon-192x192.png";
+    const badge = data.badge || "./assets/icons/icon-72x72.png";
+    const isRainAlert = data.data?.type === "rain_alert";
+
     event.waitUntil(
         self.registration.showNotification(title, {
             body,
             icon,
             badge,
-            tag: data.tag || "meteo-update",
-            requireInteraction: false,
+            tag: data.tag || (isRainAlert ? "rain-alert" : "meteo-update"),
+            requireInteraction: isRainAlert ? true : false,
+            data: data.data || {},
+        })
+    );
+});
+
+self.addEventListener("notificationclick", (event) => {
+    event.notification.close();
+    const city = event.notification.data?.city;
+    const url = city ? `/?city=${encodeURIComponent(city)}` : "/";
+
+    event.waitUntil(
+        clients.matchAll({ type: "window", includeUncontrolled: true }).then(clientList => {
+            for (const client of clientList) {
+                if (client.url.includes("leprevisioni.netlify.app") || client.url.includes("localhost")) {
+                    return client.focus();
+                }
+            }
+            return clients.openWindow(url);
         })
     );
 });

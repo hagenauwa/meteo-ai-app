@@ -514,6 +514,15 @@ async def hourly_cycle():
                 f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
             )
 
+        # Controllo allerte pioggia
+        try:
+            from rain_alert_service import check_rain_alerts
+            rain_result = await check_rain_alerts()
+            if rain_result.get("sent", 0) > 0:
+                print(f"[RAIN] {rain_result['sent']} allerte pioggia inviate")
+        except Exception as rain_exc:
+            print(f"[WARN] Errore controllo allerte pioggia: {rain_exc}")
+
         await asyncio.to_thread(
             _db_update_training_state,
             last_cycle_completed_at=datetime.now(timezone.utc),

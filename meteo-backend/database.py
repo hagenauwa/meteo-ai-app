@@ -178,6 +178,8 @@ class PushSubscription(Base):
     p256dh = Column(String(255), nullable=False)
     auth = Column(String(255), nullable=False)
     city = Column(String(100), nullable=True)  # città preferita per alert
+    rain_alerts_enabled = Column(Boolean, default=False, nullable=False)
+    last_rain_alert_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

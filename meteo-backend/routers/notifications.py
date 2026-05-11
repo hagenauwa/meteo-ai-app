@@ -1,10 +1,13 @@
 """
-routers/notifications.py — gestione iscrizioni push Web (Web Push API).
+routers/notifications.py — gestione iscrizioni push Web (Web Push API) e allerte pioggia.
 
 Endpoint:
-  • POST /api/subscriptions/register    — registra/aggiorna una subscription
-  • GET  /api/subscriptions/count       — conteggio iscritti (admin)
-  • POST /api/admin/push-test           — invia notifica di test (admin)
+  • POST /api/subscriptions/register        — registra/aggiorna una subscription
+  • POST /api/subscriptions/rain-alerts     — abilita/disabilita allerte pioggia
+  • GET  /api/subscriptions/rain-alerts     — stato allerte pioggia per una subscription
+  • GET  /api/subscriptions/count           — conteggio iscritti (admin)
+  • POST /api/admin/push-test               — invia notifica di test (admin)
+  • POST /api/admin/rain-alert-check        — forza controllo allerte pioggia (admin)
 """
 from __future__ import annotations
 
@@ -60,11 +63,32 @@ class PushTestIn(BaseModel):
     body: str = "Messaggio di prova"
 
 
+class RainAlertToggle(BaseModel):
+    endpoint: str
+    enabled: bool = True
+    city: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
 
 router = APIRouter(tags=["notifications"])
+
+
+# ---------------------------------------------------------------------------
+# VAPID public key endpoint (pubblico)
+# ---------------------------------------------------------------------------
+
+@router.get("/subscriptions/vapid-public-key")
+def vapid_public_key():
+    """Restituisce la chiave pubblica VAPID per le subscription push."""
+    if not _vapid_ready():
+        raise HTTPException(
+            status_code=501,
+            detail="Notifiche push non configurate",
+        )
+    return {"publicKey": _VAPID_PUBLIC_KEY}
 
 
 # ---------------------------------------------------------------------------
@@ -212,3 +236,81 @@ async def push_test(
                 db.commit()
 
     return {"success": True, "sent": sent, "errors": errors if errors else None}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint allerte pioggia
+# ---------------------------------------------------------------------------
+
+@router.post("/subscriptions/rain-alerts")
+def toggle_rain_alerts(
+    payload: RainAlertToggle,
+    db: Session = Depends(get_db),
+):
+    """
+    Abilita o disabilita le allerte pioggia per una subscription.
+    """
+    subscription = (
+        db.query(PushSubscription)
+        .filter(PushSubscription.endpoint == payload.endpoint)
+        .first()
+    )
+
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription non trovata. Registra prima la subscription push.",
+        )
+
+    subscription.rain_alerts_enabled = payload.enabled
+    if payload.city:
+        subscription.city = payload.city
+
+    db.commit()
+
+    return {
+        "success": True,
+        "rain_alerts_enabled": subscription.rain_alerts_enabled,
+        "city": subscription.city,
+    }
+
+
+@router.get("/subscriptions/rain-alerts")
+def get_rain_alerts_status(
+    endpoint: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Restituisce lo stato delle allerte pioggia per una subscription.
+    """
+    subscription = (
+        db.query(PushSubscription)
+        .filter(PushSubscription.endpoint == endpoint)
+        .first()
+    )
+
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription non trovata",
+        )
+
+    return {
+        "rain_alerts_enabled": subscription.rain_alerts_enabled,
+        "city": subscription.city,
+        "last_rain_alert_at": subscription.last_rain_alert_at.isoformat() if subscription.last_rain_alert_at else None,
+    }
+
+
+@router.post("/admin/rain-alert-check", dependencies=[Depends(require_admin_access)])
+async def admin_rain_alert_check(
+    db: Session = Depends(get_db),
+):
+    """
+    Forza un controllo immediato delle allerte pioggia per tutte le subscription.
+    Richiede token admin.
+    """
+    from rain_alert_service import check_rain_alerts
+
+    result = await check_rain_alerts()
+    return result
