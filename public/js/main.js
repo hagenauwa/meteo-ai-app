@@ -224,19 +224,68 @@ function registerFavoriteButton() {
     });
 }
 
+let mapInstance = null;
+let mapInitialized = false;
+
+function initLeafletMap(lat, lon, name) {
+    mapInitialized = true;
+    const container = document.getElementById("mapContainer");
+    container.innerHTML = "";
+
+    mapInstance = L.map(container).setView([lat, lon], 13);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+    }).addTo(mapInstance);
+
+    let popupHtml = `<b>${name}</b>`;
+    if (currentPayload?.current) {
+        const c = currentPayload.current;
+        if (c.temp != null) popupHtml += `<br>🌡️ ${c.temp.toFixed(1)}°C`;
+        if (c.weather?.[0]?.description) popupHtml += ` — ${c.weather[0].description}`;
+        if (c.wind_speed != null) popupHtml += `<br>💨 ${Math.round(c.wind_speed)} km/h`;
+        if (c.humidity != null) popupHtml += ` · 💧 ${Math.round(c.humidity)}%`;
+    }
+
+    L.marker([lat, lon]).addTo(mapInstance).bindPopup(popupHtml).openPopup();
+}
+
+function openMap() {
+    if (!currentCity || !currentCity.lat || !currentCity.lon) return;
+
+    document.getElementById("mapCityName").textContent = currentCity.name;
+    document.getElementById("mapSection").classList.add("open");
+    document.getElementById("mapBtn").classList.add("is-active");
+
+    if (!mapInitialized) {
+        initLeafletMap(currentCity.lat, currentCity.lon, currentCity.name);
+    } else {
+        mapInstance.setView([currentCity.lat, currentCity.lon], 13);
+        mapInstance.invalidateSize();
+    }
+}
+
+function closeMap() {
+    document.getElementById("mapSection").classList.remove("open");
+    document.getElementById("mapBtn").classList.remove("is-active");
+}
+
 function registerMapButton() {
     const mapBtn = document.getElementById("mapBtn");
-    if (!mapBtn) return;
+    const mapSection = document.getElementById("mapSection");
+    const mapCloseBtn = document.getElementById("mapCloseBtn");
+    if (!mapBtn || !mapSection || !mapCloseBtn) return;
 
     mapBtn.addEventListener("click", () => {
-        if (!currentCity || !currentCity.lat || !currentCity.lon) return;
-        const params = new URLSearchParams({
-            name: currentCity.name,
-            lat: String(currentCity.lat),
-            lon: String(currentCity.lon),
-        });
-        window.open(`map.html?${params.toString()}`, "_blank");
+        if (mapSection.classList.contains("open")) {
+            closeMap();
+        } else {
+            openMap();
+        }
     });
+
+    mapCloseBtn.addEventListener("click", closeMap);
 }
 
 function registerRainAlertButton() {
