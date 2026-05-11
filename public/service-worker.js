@@ -1,4 +1,4 @@
-const CACHE_NAME = "le-previsioni-static-v13";
+const CACHE_NAME = "le-previsioni-static-v15";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
