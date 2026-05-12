@@ -514,7 +514,7 @@ async def hourly_cycle():
                 f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
             )
 
-        # Controllo allerte pioggia
+        # Controllo allerte pioggia push
         try:
             from rain_alert_service import check_rain_alerts
             rain_result = await check_rain_alerts()
@@ -522,6 +522,24 @@ async def hourly_cycle():
                 print(f"[RAIN] {rain_result['sent']} allerte pioggia inviate")
         except Exception as rain_exc:
             print(f"[WARN] Errore controllo allerte pioggia: {rain_exc}")
+
+        # Controllo allerte pioggia Telegram
+        try:
+            from telegram_notify_service import check_telegram_rain_alerts, check_telegram_daily_forecasts
+            tg_rain_result = await check_telegram_rain_alerts()
+            if tg_rain_result.get("sent", 0) > 0:
+                print(f"[TELEGRAM-RAIN] {tg_rain_result['sent']} allerte pioggia Telegram inviate")
+        except Exception as tg_exc:
+            print(f"[WARN] Errore controllo allerte pioggia Telegram: {tg_exc}")
+
+        # Controllo promemoria giornalieri Telegram
+        try:
+            from telegram_notify_service import check_telegram_daily_forecasts
+            tg_daily_result = await check_telegram_daily_forecasts()
+            if tg_daily_result.get("sent", 0) > 0:
+                print(f"[TELEGRAM-DAILY] {tg_daily_result['sent']} promemoria giornalieri Telegram inviati")
+        except Exception as tg_daily_exc:
+            print(f"[WARN] Errore controllo promemoria Telegram: {tg_daily_exc}")
 
         await asyncio.to_thread(
             _db_update_training_state,

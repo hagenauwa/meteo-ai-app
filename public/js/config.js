@@ -10,6 +10,10 @@ export const API_ENDPOINTS = {
     supporterStatus: `${BACKEND_URL}/api/supporters/status`,
     citySearch: `${BACKEND_URL}/api/cities/search`,
     weatherAdvanced: `${BACKEND_URL}/api/weather/advanced`,
+    telegramLinkCode: `${BACKEND_URL}/api/telegram/link-code`,
+    telegramStatus: `${BACKEND_URL}/api/telegram/status`,
+    telegramPreferences: `${BACKEND_URL}/api/telegram/preferences`,
+    telegramUnlink: `${BACKEND_URL}/api/telegram/unlink`,
 };
 
 export const WEATHER_ICONS = {

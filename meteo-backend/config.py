@@ -67,6 +67,8 @@ class Settings:
     stripe_webhook_secret: str = ""
     supporter_email_encryption_key: str = ""
     supporter_email_hash_key: str = ""
+    telegram_bot_token: str = ""
+    telegram_webhook_secret: str = ""
 
     @property
     def is_production(self) -> bool:
@@ -138,6 +140,8 @@ def load_settings() -> Settings:
         stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", "").strip(),
         supporter_email_encryption_key=os.getenv("SUPPORTER_EMAIL_ENCRYPTION_KEY", "").strip(),
         supporter_email_hash_key=os.getenv("SUPPORTER_EMAIL_HASH_KEY", "").strip(),
+        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+        telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip(),
     )
 
 

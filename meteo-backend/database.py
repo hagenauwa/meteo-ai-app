@@ -183,6 +183,25 @@ class PushSubscription(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class TelegramSubscription(Base):
+    """Sottoscrizione Telegram per notifiche meteo."""
+    __tablename__ = "telegram_subscriptions"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    chat_id = Column(BigInteger, nullable=True, unique=True)  # Telegram chat ID (valorizzato dopo il linking)
+    user_name = Column(String(100), nullable=True)  # username Telegram
+    city = Column(String(100), nullable=True)  # città preferita per le notifiche
+    linking_code = Column(String(10), nullable=True, index=True)  # codice OTP temporaneo
+    linked_at = Column(DateTime(timezone=True), nullable=True)  # quando il linking è stato completato
+    rain_alerts_enabled = Column(Boolean, default=False, nullable=False)
+    daily_forecast_enabled = Column(Boolean, default=False, nullable=False)
+    daily_forecast_hour = Column(Integer, default=7, nullable=False)  # ora preferita (0-23)
+    last_rain_alert_at = Column(DateTime(timezone=True), nullable=True)
+    last_daily_forecast_at = Column(DateTime(timezone=True), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 # Indici per performance (compatibili sia SQLite che PostgreSQL)
 Index("idx_obs_city_time",  WeatherObservation.city_id, WeatherObservation.observed_at)
 Index("idx_pred_city_time", MlPrediction.city_id, MlPrediction.predicted_at)
@@ -196,6 +215,8 @@ Index("idx_supporters_email_lookup_hash", Supporter.email_lookup_hash)
 Index("idx_supporter_tokens_supporter_id", SupporterToken.supporter_id)
 Index("idx_supporter_tokens_token_hash", SupporterToken.token_hash)
 Index("idx_push_subscriptions_endpoint", PushSubscription.endpoint)
+Index("idx_telegram_subscriptions_chat_id", TelegramSubscription.chat_id)
+Index("idx_telegram_subscriptions_linking_code", TelegramSubscription.linking_code)
 
 
 def get_db():

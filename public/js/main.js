@@ -9,6 +9,7 @@ import { createAutocomplete } from "./autocomplete.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
 import { initializePush, toggleRainAlert, getRainAlertStatus } from "./push.js";
 import { initializeSupporterWidget } from "./supporter.js";
+import { initializeTelegram } from "./telegram.js";
 import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggleFavorite } from "./storage.js";
 
 let currentCity = null;
@@ -295,6 +296,16 @@ function registerRainAlertButton() {
     btn.addEventListener("click", handleRainAlertToggle);
 }
 
+function registerTelegramPanel() {
+    const closeBtn = document.getElementById("telegramCloseBtn");
+    const panel = document.getElementById("telegramPanel");
+    if (!closeBtn || !panel) return;
+
+    closeBtn.addEventListener("click", () => {
+        panel.classList.add("hidden");
+    });
+}
+
 function registerPwa() {
     if (!("serviceWorker" in navigator)) {
         return;
@@ -407,9 +418,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     registerFavoriteButton();
     registerMapButton();
     registerRainAlertButton();
+    registerTelegramPanel();
     registerPwa();
     initializeSupporterWidget();
     initializePush();
+    initializeTelegram();
     registerCityInputSelection(input);
     registerCityInputWakeUp(input);
 

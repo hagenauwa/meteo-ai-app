@@ -97,6 +97,192 @@
             color: #ffffff;
             border-color: transparent;
         }
+
+        /* Telegram Panel Styles */
+        .telegram-section {
+            padding: 20px 0;
+        }
+        .telegram-card {
+            background: var(--card, rgba(255,255,255,0.88));
+            border-radius: var(--radius-lg, 28px);
+            padding: 24px;
+            box-shadow: var(--shadow, 0 20px 60px rgba(15,23,42,0.14));
+        }
+        .telegram-card-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .telegram-card-head h3 {
+            font-size: 1.2rem;
+            margin: 0;
+        }
+        .telegram-content {
+            min-height: 100px;
+        }
+        .telegram-disconnected p {
+            margin-bottom: 16px;
+            color: var(--ink-soft, #64748b);
+        }
+        .telegram-link-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .telegram-instruction {
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .telegram-code-display {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding: 16px;
+            background: var(--sky, #f1f5f9);
+            border-radius: var(--radius-md, 18px);
+        }
+        .telegram-code-display code {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 4px;
+            color: var(--accent, #3b82f6);
+        }
+        .icon-btn-sm {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border: 1px solid var(--line, rgba(226,232,240,0.96));
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .icon-btn-sm:hover {
+            background: var(--sky, #f1f5f9);
+        }
+        .telegram-steps {
+            color: var(--ink-soft, #64748b);
+            line-height: 1.8;
+            margin-bottom: 16px;
+        }
+        .telegram-steps a {
+            color: var(--accent, #3b82f6);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .telegram-steps a:hover {
+            text-decoration: underline;
+        }
+        .telegram-waiting {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--ink-soft, #64748b);
+            margin-bottom: 12px;
+        }
+        .spinner-sm {
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--line, #e2e8f0);
+            border-top-color: var(--accent, #3b82f6);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .telegram-status-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+        .telegram-check-icon {
+            color: #22c55e;
+            font-size: 1.3rem;
+        }
+        .telegram-username {
+            color: var(--ink-soft, #64748b);
+            margin-bottom: 16px;
+        }
+        .telegram-preferences {
+            background: var(--sky, #f1f5f9);
+            border-radius: var(--radius-md, 18px);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .telegram-preferences h4 {
+            margin-bottom: 16px;
+            font-size: 1rem;
+        }
+        .telegram-pref-item {
+            margin-bottom: 12px;
+        }
+        .telegram-toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+        .telegram-toggle-label input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent, #3b82f6);
+        }
+        .telegram-hour-picker {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .telegram-hour-picker select {
+            padding: 6px 10px;
+            border: 1px solid var(--line, #e2e8f0);
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+        .telegram-city-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--line, #e2e8f0);
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin-top: 4px;
+        }
+        .telegram-save-btn {
+            margin-top: 8px;
+        }
+        .telegram-save-msg {
+            margin-left: 10px;
+            font-size: 0.9rem;
+        }
+        .telegram-save-msg.success {
+            color: #22c55e;
+        }
+        .telegram-save-msg.error {
+            color: #ef4444;
+        }
+        .telegram-unlink-btn {
+            color: #ef4444;
+            border-color: #fecaca;
+        }
+        .telegram-unlink-btn:hover {
+            background: #fef2f2;
+        }
+        .telegram-error {
+            text-align: center;
+            color: #ef4444;
+        }
+        .telegram-error i {
+            margin-right: 6px;
+        }
+        .btn-sm {
+            padding: 8px 16px;
+            font-size: 0.9rem;
+        }
     </style>
 </head>
 <body>
@@ -187,6 +373,9 @@
                         </button>
                         <button type="button" id="rainAlertToggle" class="icon-btn hidden" title="Allerte pioggia" aria-label="Attiva allerte pioggia">
                             <i class="fas fa-cloud-rain" id="rainAlertIcon"></i>
+                        </button>
+                        <button type="button" id="telegramToggle" class="icon-btn" title="Notifiche Telegram" aria-label="Collega Telegram">
+                            <i class="fab fa-telegram-plane" id="telegramIcon"></i>
                         </button>
                         <button id="favoriteBtn" class="btn-secondary">
                             <i class="fas fa-star"></i>
@@ -312,6 +501,25 @@
                     </button>
                 </div>
                 <div id="mapContainer" class="map-container">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="telegramPanel" class="telegram-section hidden">
+        <div class="container">
+            <div class="telegram-card">
+                <div class="telegram-card-head">
+                    <div>
+                        <p class="section-kicker">Telegram</p>
+                        <h3>Notifiche su Telegram</h3>
+                    </div>
+                    <button type="button" id="telegramCloseBtn" class="icon-btn" title="Chiudi" aria-label="Chiudi pannello Telegram">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div id="telegramContent" class="telegram-content">
                     <div class="spinner"></div>
                 </div>
             </div>

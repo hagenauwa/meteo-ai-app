@@ -122,7 +122,7 @@ from rate_limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 
 # Importa e registra i router
-from routers import weather, cities, ml, admin, supporters, advanced, notifications
+from routers import weather, cities, ml, admin, supporters, advanced, notifications, telegram
 
 app.include_router(weather, prefix="/api")
 app.include_router(cities,  prefix="/api")
@@ -131,6 +131,7 @@ app.include_router(admin,   prefix="/api/admin")
 app.include_router(supporters, prefix="/api/supporters")
 app.include_router(advanced, prefix="/api")
 app.include_router(notifications, prefix="/api")
+app.include_router(telegram, prefix="/api")
 
 
 @app.get("/")
