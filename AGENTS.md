@@ -191,4 +191,5 @@ Il training usa storico verificato con feature meteo e geografiche, incluse clou
 - "Marina di Massa" e "Val di Cornia" non vanno più trattate come fallback solo frontend hardcoded: la risoluzione città passa dalla geocoding Open-Meteo lato frontend.
 - Il `README.md` principale è **outdated** (menziona OpenWeatherMap e TensorFlow.js): ignorarlo.
 - Le `netlify/functions/` sono **legacy** e non vengono usate.
+- **Commit solo locali per default**: a meno che l'utente non lo richieda esplicitamente, fare sempre e solo commit locali (`git commit`), mai push (`git push`). Questa regola vale per tutte le modifiche future salvo istruzione contraria.
 - Le lezioni operative datate o incident-driven vanno raccolte in `docs/ops-learnings.md`, non aggiunte automaticamente qui.
