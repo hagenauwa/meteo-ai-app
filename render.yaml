@@ -32,6 +32,10 @@ services:
         value: "21"
       - key: ML_PREDICTION_RETENTION_DAYS
         value: "21"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false        # imposta manualmente su Render dashboard (da @BotFather)
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false        # imposta manualmente su Render dashboard (token segreto per webhook)
       - key: PYTHON_VERSION
         value: "3.11.4"
 
@@ -63,5 +67,28 @@ services:
         value: "21"
       - key: ML_PREDICTION_RETENTION_DAYS
         value: "21"
+      - key: PYTHON_VERSION
+        value: "3.11.4"
+
+  - type: cron
+    name: meteo-ai-telegram-notify
+    runtime: python
+    rootDir: meteo-backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_telegram_checks.py
+    schedule: "0 * * * *"  # ogni ora allo :00
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_ENV
+        value: "production"
+      - key: ENABLE_SCHEDULER
+        value: "false"
+      - key: AUTO_LOAD_CITIES
+        value: "false"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
       - key: PYTHON_VERSION
         value: "3.11.4"

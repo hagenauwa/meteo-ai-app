@@ -89,6 +89,36 @@ def _link_chat_id(code: str, chat_id: int, user_name: str | None) -> bool:
         return True
 
 
+async def register_webhook() -> bool:
+    """Registra il webhook con l'API di Telegram all'avvio del backend."""
+    if not settings.telegram_bot_token:
+        logger.info("TELEGRAM_BOT_TOKEN non configurato, salto registrazione webhook")
+        return False
+
+    url = _bot_api_url("setWebhook")
+    payload = {
+        "url": settings.telegram_webhook_url,
+        "allowed_updates": ["message"],
+    }
+    if settings.telegram_webhook_secret:
+        payload["secret_token"] = settings.telegram_webhook_secret
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, json=payload, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("ok"):
+                logger.info(f"Webhook Telegram registrato: {settings.telegram_webhook_url}")
+                return True
+            else:
+                logger.warning(f"Registrazione webhook Telegram fallita: {data}")
+                return False
+    except Exception as exc:
+        logger.error(f"Errore registrazione webhook Telegram: {exc}")
+        return False
+
+
 async def handle_webhook_update(update: dict) -> None:
     """Processa un aggiornamento ricevuto dal webhook Telegram."""
     message = update.get("message")

@@ -69,6 +69,7 @@ class Settings:
     supporter_email_hash_key: str = ""
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
+    telegram_webhook_url: str = "https://meteo-ai-backend.onrender.com/api/telegram/webhook"
 
     @property
     def is_production(self) -> bool:
@@ -142,6 +143,7 @@ def load_settings() -> Settings:
         supporter_email_hash_key=os.getenv("SUPPORTER_EMAIL_HASH_KEY", "").strip(),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip(),
+        telegram_webhook_url=os.getenv("TELEGRAM_WEBHOOK_URL", "https://meteo-ai-backend.onrender.com/api/telegram/webhook").strip(),
     )
 
 

@@ -60,6 +60,15 @@ def _bootstrap_runtime():
         import ml_model
 
         ml_model.load_latest_model()
+
+        # Registra webhook Telegram se configurato
+        if settings.telegram_bot_token:
+            import asyncio
+            from telegram_bot import register_webhook
+            try:
+                asyncio.run(register_webhook())
+            except Exception as exc:
+                print(f"[WARN] Registrazione webhook Telegram fallita: {exc}", flush=True)
         if settings.enable_scheduler:
             from scheduler import start_scheduler
 
