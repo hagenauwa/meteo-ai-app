@@ -40,6 +40,70 @@ def _wmo_rain_description(code: int) -> str:
     return desc
 
 
+def _find_rain_time_slots(hourly: dict, threshold: float = 0.40) -> list[str]:
+    """
+    Scansiona TUTTE le ore disponibili e raggruppa quelle piovose in range consecutivi.
+
+    Un'ora è piovosa se:
+      - precipitation_probability >= threshold * 100  OPPURE
+      - weather_code in RAIN_WEATHER_CODES           OPPURE
+      - precipitation > 0.1
+
+    Ritorna max 3 periodi formattati come "14:00-16:00" o "14:00" per singola ora.
+    Se nessuna ora piovosa ritorna [].
+    """
+    times = hourly.get("time", [])
+    pops = hourly.get("precipitation_probability", [])
+    weather_codes = hourly.get("weather_code", [])
+    precipitations = hourly.get("precipitation", [])
+
+    if not times:
+        return []
+
+    rainy_indices: list[int] = []
+    for i, time_str in enumerate(times):
+        pop = (pops[i] if i < len(pops) else 0) or 0
+        weather_code = weather_codes[i] if i < len(weather_codes) else None
+        precipitation = precipitations[i] if i < len(precipitations) else 0
+
+        meets_pop = pop >= threshold * 100
+        meets_wmo = _is_rain_weather_code(weather_code)
+        meets_precip = (precipitation or 0) > 0.1
+
+        if meets_pop or meets_wmo or meets_precip:
+            rainy_indices.append(i)
+
+    if not rainy_indices:
+        return []
+
+    # Raggruppa indici consecutivi in range
+    ranges: list[tuple[int, int]] = []
+    start = rainy_indices[0]
+    end = rainy_indices[0]
+    for idx in rainy_indices[1:]:
+        if idx == end + 1:
+            end = idx
+        else:
+            ranges.append((start, end))
+            start = idx
+            end = idx
+    ranges.append((start, end))
+
+    # Formatta: "HH:MM-HH:MM" per range, "HH:MM" per singola ora; max 3
+    result: list[str] = []
+    for start_idx, end_idx in ranges[:3]:
+        start_time = times[start_idx]
+        end_time = times[end_idx]
+        start_hm = start_time[11:16]  # "14:00" da "2024-01-01T14:00"
+        end_hm = end_time[11:16]
+        if start_idx == end_idx:
+            result.append(start_hm)
+        else:
+            result.append(f"{start_hm}-{end_hm}")
+
+    return result
+
+
 def _check_hourly_rain(hourly: dict, max_lead_hours: int = MAX_LEAD_HOURS) -> dict | None:
     """Scansiona le previsioni orarie per trovare pioggia nelle prossime N ore."""
     times = hourly.get("time", [])
@@ -265,6 +329,16 @@ async def _send_daily_forecast(sub: TelegramSubscription, now: datetime) -> dict
     if wind_speeds:
         avg_wind = sum(wind_speeds[:12]) / min(12, len(wind_speeds))
         message += f"💨 Vento medio: {avg_wind:.0f} km/h\n"
+
+    # Sezione pioggia prevista
+    rain_slots = _find_rain_time_slots(hourly)
+    if rain_slots:
+        if len(rain_slots) > 3:
+            message += f"🌧️ Pioggia prevista: {', '.join(rain_slots[:3])}, e altri orari\n"
+        else:
+            message += f"🌧️ Pioggia prevista: {', '.join(rain_slots)}\n"
+    else:
+        message += "☀️ Nessuna pioggia prevista\n"
 
     message += "\nBuona giornata! ☕"
 

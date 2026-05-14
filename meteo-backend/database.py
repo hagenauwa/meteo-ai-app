@@ -195,7 +195,7 @@ class TelegramSubscription(Base):
     linked_at = Column(DateTime(timezone=True), nullable=True)  # quando il linking è stato completato
     rain_alerts_enabled = Column(Boolean, default=False, nullable=False)
     daily_forecast_enabled = Column(Boolean, default=False, nullable=False)
-    daily_forecast_hour = Column(Integer, default=7, nullable=False)  # ora preferita (0-23)
+    daily_forecast_hour = Column(Integer, default=8, nullable=False)  # ora preferita (0-23)
     last_rain_alert_at = Column(DateTime(timezone=True), nullable=True)
     last_daily_forecast_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

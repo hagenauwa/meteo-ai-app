@@ -46,7 +46,7 @@ class TelegramStatusResponse(BaseModel):
     city: str | None = None
     rain_alerts_enabled: bool = False
     daily_forecast_enabled: bool = False
-    daily_forecast_hour: int = 7
+    daily_forecast_hour: int = 8
     linked_at: str | None = None
 
 
