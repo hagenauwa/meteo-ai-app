@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any, cast
 
 import httpx
-from sqlalchemy.orm import Session
 
 from config import settings
 from database import TelegramSubscription, SessionLocal
@@ -24,6 +24,28 @@ TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}"
 
 def _bot_api_url(method: str) -> str:
     return f"{TELEGRAM_API_BASE.format(token=settings.telegram_bot_token)}/{method}"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _is_default_city(value: str | None) -> bool:
+    return value is None or not value.strip()
+
+
+def _copy_preferences_if_default(source: TelegramSubscription, target: TelegramSubscription) -> None:
+    source_row = cast(Any, source)
+    target_row = cast(Any, target)
+
+    if _is_default_city(target_row.city) and source_row.city:
+        target_row.city = source_row.city
+    if target_row.rain_alerts_enabled is not True and source_row.rain_alerts_enabled is True:
+        target_row.rain_alerts_enabled = source_row.rain_alerts_enabled
+    if target_row.daily_forecast_enabled is not True and source_row.daily_forecast_enabled is True:
+        target_row.daily_forecast_enabled = source_row.daily_forecast_enabled
+    if target_row.daily_forecast_hour in (None, 8) and source_row.daily_forecast_hour is not None:
+        target_row.daily_forecast_hour = source_row.daily_forecast_hour
 
 
 async def send_telegram_message(chat_id: int, text: str) -> bool:
@@ -59,6 +81,9 @@ def _find_subscription_by_code(code: str) -> TelegramSubscription | None:
             .filter(
                 TelegramSubscription.linking_code == code,
                 TelegramSubscription.chat_id.is_(None),
+                TelegramSubscription.is_active.is_(True),
+                TelegramSubscription.linking_code_expires_at.is_not(None),
+                TelegramSubscription.linking_code_expires_at > _utcnow(),
             )
             .first()
         )
@@ -75,16 +100,39 @@ def _link_chat_id(code: str, chat_id: int, user_name: str | None) -> bool:
             .filter(
                 TelegramSubscription.linking_code == code,
                 TelegramSubscription.chat_id.is_(None),
+                TelegramSubscription.is_active.is_(True),
+                TelegramSubscription.linking_code_expires_at.is_not(None),
+                TelegramSubscription.linking_code_expires_at > _utcnow(),
             )
             .first()
         )
         if not sub:
             return False
 
-        sub.chat_id = chat_id
-        sub.user_name = user_name
-        sub.linking_code = None  # invalida il codice dopo l'uso
-        sub.linked_at = datetime.now(timezone.utc)
+        sub_row = cast(Any, sub)
+
+        previous_sub = (
+            db.query(TelegramSubscription)
+            .filter(
+                TelegramSubscription.chat_id == chat_id,
+                TelegramSubscription.is_active.is_(True),
+                TelegramSubscription.id != sub.id,
+            )
+            .first()
+        )
+
+        if previous_sub:
+            previous_sub_row = cast(Any, previous_sub)
+            _copy_preferences_if_default(previous_sub, sub)
+            previous_sub_row.is_active = False
+            previous_sub_row.chat_id = None
+            db.flush()
+
+        sub_row.chat_id = chat_id
+        sub_row.user_name = user_name
+        sub_row.linking_code = None  # invalida il codice dopo l'uso
+        sub_row.linking_code_expires_at = None
+        sub_row.linked_at = datetime.now(timezone.utc)
         db.commit()
         return True
 
@@ -119,7 +167,7 @@ async def register_webhook() -> bool:
         return False
 
 
-async def handle_webhook_update(update: dict) -> None:
+async def handle_webhook_update(update: dict[str, Any]) -> None:
     """Processa un aggiornamento ricevuto dal webhook Telegram."""
     message = update.get("message")
     if not message:
@@ -160,7 +208,7 @@ async def handle_webhook_update(update: dict) -> None:
         else:
             await send_telegram_message(
                 chat_id,
-                "❌ Codice non valido o già utilizzato.\n\n"
+                "❌ Codice non valido, scaduto o già utilizzato.\n\n"
                 "Genera un nuovo codice sul sito e riprova.",
             )
         return
@@ -181,10 +229,11 @@ async def handle_webhook_update(update: dict) -> None:
                 )
                 return
 
-            city = sub.city or "Non impostata"
-            rain = "✅ Attive" if sub.rain_alerts_enabled else "❌ Disattive"
-            daily = "✅ Attive" if sub.daily_forecast_enabled else "❌ Disattive"
-            hour = sub.daily_forecast_hour
+            sub_row = cast(Any, sub)
+            city = sub_row.city or "Non impostata"
+            rain = "✅ Attive" if sub_row.rain_alerts_enabled is True else "❌ Disattive"
+            daily = "✅ Attive" if sub_row.daily_forecast_enabled is True else "❌ Disattive"
+            hour = sub_row.daily_forecast_hour
 
             await send_telegram_message(
                 chat_id,
@@ -205,8 +254,9 @@ async def handle_webhook_update(update: dict) -> None:
                 .first()
             )
             if sub:
-                sub.rain_alerts_enabled = False
-                sub.daily_forecast_enabled = False
+                sub_row = cast(Any, sub)
+                sub_row.rain_alerts_enabled = False
+                sub_row.daily_forecast_enabled = False
                 db.commit()
 
             await send_telegram_message(

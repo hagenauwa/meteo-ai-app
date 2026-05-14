@@ -1,7 +1,13 @@
 const BACKEND_URL = window.BACKEND_URL || "http://localhost:8000";
 const TELEGRAM_CODE_KEY = "le_previsioni_telegram_code_v1";
+const TELEGRAM_CLIENT_TOKEN_KEY = "le_previsioni_telegram_client_token_v1";
+const TELEGRAM_PENDING_CODE_KEY = "le_previsioni_telegram_pending_code_v1";
+
+const MAX_CONSECUTIVE_FAILURES = 5;
+const POLL_INTERVAL_MS = 3000;
 
 let telegramPollingInterval = null;
+let consecutiveFailures = 0;
 
 export async function initializeTelegram() {
     const btn = document.getElementById("telegramToggle");
@@ -9,15 +15,38 @@ export async function initializeTelegram() {
 
     btn.addEventListener("click", handleTelegramToggle);
 
-    // Ripristina stato se c'è un codice salvato
-    const savedCode = localStorage.getItem(TELEGRAM_CODE_KEY);
-    if (savedCode) {
-        const status = await checkTelegramStatus(savedCode);
+    // Clean up legacy code-only storage
+    const legacyCode = localStorage.getItem(TELEGRAM_CODE_KEY);
+    if (legacyCode) {
+        localStorage.removeItem(TELEGRAM_CODE_KEY);
+    }
+
+    const clientToken = localStorage.getItem(TELEGRAM_CLIENT_TOKEN_KEY);
+    if (clientToken) {
+        const status = await checkTelegramStatus(clientToken);
         if (status.linked) {
             showTelegramLinked(status);
+        } else if (status.state === "pending") {
+            const pendingCode = localStorage.getItem(TELEGRAM_PENDING_CODE_KEY);
+            if (pendingCode) {
+                showTelegramPending(pendingCode, clientToken);
+            } else {
+                // Token exists but no pending code — likely linked but stale state
+                showTelegramDisconnected("Collegamento precedente non verificabile: genera un nuovo codice.");
+            }
+        } else if (status.state === "expired") {
+            localStorage.removeItem(TELEGRAM_CLIENT_TOKEN_KEY);
+            localStorage.removeItem(TELEGRAM_PENDING_CODE_KEY);
+            showTelegramDisconnected("Codice scaduto, genera un nuovo codice.");
         } else {
-            showTelegramPending(savedCode);
+            // not_found, unlinked, error — clear stale data
+            localStorage.removeItem(TELEGRAM_CLIENT_TOKEN_KEY);
+            localStorage.removeItem(TELEGRAM_PENDING_CODE_KEY);
+            showTelegramDisconnected();
         }
+    } else if (legacyCode) {
+        // Had legacy code but no client token — cannot verify, show disconnected
+        showTelegramDisconnected("Collegamento precedente non verificabile: genera un nuovo codice.");
     }
 }
 
@@ -35,27 +64,38 @@ async function handleTelegramToggle() {
 }
 
 async function refreshTelegramState() {
-    const savedCode = localStorage.getItem(TELEGRAM_CODE_KEY);
+    const clientToken = localStorage.getItem(TELEGRAM_CLIENT_TOKEN_KEY);
 
-    if (savedCode) {
-        const status = await checkTelegramStatus(savedCode);
+    if (clientToken) {
+        const status = await checkTelegramStatus(clientToken);
         if (status.linked) {
             showTelegramLinked(status);
             return;
         }
+        if (status.state === "pending") {
+            const pendingCode = localStorage.getItem(TELEGRAM_PENDING_CODE_KEY);
+            if (pendingCode) {
+                showTelegramPending(pendingCode, clientToken);
+                return;
+            }
+        }
+        // Token exists but not linked/pending — fall through to disconnected
     }
 
     showTelegramDisconnected();
 }
 
-function showTelegramDisconnected() {
+function showTelegramDisconnected(message) {
     const content = document.getElementById("telegramContent");
     if (!content) return;
 
     stopPolling();
 
+    const messageHtml = message ? `<p class="telegram-notice">${message}</p>` : "";
+
     content.innerHTML = `
         <div class="telegram-disconnected">
+            ${messageHtml}
             <p>Collega il tuo account Telegram per ricevere notifiche direttamente su Telegram.</p>
             <button id="telegramLinkBtn" class="btn-primary telegram-link-btn">
                 <i class="fab fa-telegram-plane"></i>
@@ -83,9 +123,14 @@ async function generateLinkCode() {
 
         const data = await response.json();
         const code = data.linking_code;
+        const clientToken = data.client_token;
 
-        localStorage.setItem(TELEGRAM_CODE_KEY, code);
-        showTelegramPending(code);
+        localStorage.setItem(TELEGRAM_CLIENT_TOKEN_KEY, clientToken);
+        localStorage.setItem(TELEGRAM_PENDING_CODE_KEY, code);
+        // Clean up legacy key if it still exists
+        localStorage.removeItem(TELEGRAM_CODE_KEY);
+
+        showTelegramPending(code, clientToken);
     } catch (err) {
         content.innerHTML = `
             <div class="telegram-error">
@@ -97,7 +142,7 @@ async function generateLinkCode() {
     }
 }
 
-function showTelegramPending(code) {
+function showTelegramPending(code, clientToken) {
     const content = document.getElementById("telegramContent");
     if (!content) return;
 
@@ -131,13 +176,13 @@ function showTelegramPending(code) {
     });
 
     document.getElementById("telegramCancelBtn")?.addEventListener("click", () => {
-        localStorage.removeItem(TELEGRAM_CODE_KEY);
+        localStorage.removeItem(TELEGRAM_CLIENT_TOKEN_KEY);
+        localStorage.removeItem(TELEGRAM_PENDING_CODE_KEY);
         stopPolling();
         showTelegramDisconnected();
     });
 
-    // Polling per verificare il collegamento
-    startPolling(code);
+    startPolling(clientToken);
 }
 
 function showTelegramLinked(status) {
@@ -147,9 +192,10 @@ function showTelegramLinked(status) {
 
     stopPolling();
 
-    if (btn) btn.classList.add("is-active");
+    // Clear pending code but keep client token
+    localStorage.removeItem(TELEGRAM_PENDING_CODE_KEY);
 
-    const savedCode = localStorage.getItem(TELEGRAM_CODE_KEY);
+    if (btn) btn.classList.add("is-active");
 
     content.innerHTML = `
         <div class="telegram-linked">
@@ -204,24 +250,24 @@ function showTelegramLinked(status) {
         </div>
     `;
 
-    // Event listeners
     document.getElementById("tgDailyForecast")?.addEventListener("change", (e) => {
         const hourPicker = document.getElementById("tgHourPicker");
         if (hourPicker) hourPicker.style.display = e.target.checked ? '' : 'none';
     });
 
     document.getElementById("telegramSaveBtn")?.addEventListener("click", async () => {
-        await savePreferences(savedCode);
+        await savePreferences();
     });
 
     document.getElementById("telegramUnlinkBtn")?.addEventListener("click", async () => {
-        await unlinkTelegram(savedCode);
+        await unlinkTelegram();
     });
 }
 
-async function savePreferences(linkingCode) {
+async function savePreferences() {
+    const clientToken = localStorage.getItem(TELEGRAM_CLIENT_TOKEN_KEY);
     const msg = document.getElementById("telegramSaveMsg");
-    if (!linkingCode) return;
+    if (!clientToken) return;
 
     const preferences = {
         rain_alerts_enabled: document.getElementById("tgRainAlerts")?.checked || false,
@@ -231,9 +277,12 @@ async function savePreferences(linkingCode) {
     };
 
     try {
-        const response = await fetch(`${BACKEND_URL}/api/telegram/preferences?linking_code=${encodeURIComponent(linkingCode)}`, {
+        const response = await fetch(`${BACKEND_URL}/api/telegram/preferences`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                "X-Telegram-Client-Token": clientToken,
+            },
             body: JSON.stringify(preferences),
         });
 
@@ -256,16 +305,21 @@ async function savePreferences(linkingCode) {
     }
 }
 
-async function unlinkTelegram(linkingCode) {
-    if (!linkingCode) return;
+async function unlinkTelegram() {
+    const clientToken = localStorage.getItem(TELEGRAM_CLIENT_TOKEN_KEY);
+    if (!clientToken) return;
     if (!confirm("Vuoi davvero scollegare Telegram?")) return;
 
     try {
-        await fetch(`${BACKEND_URL}/api/telegram/unlink?linking_code=${encodeURIComponent(linkingCode)}`, {
+        await fetch(`${BACKEND_URL}/api/telegram/unlink`, {
             method: "POST",
+            headers: {
+                "X-Telegram-Client-Token": clientToken,
+            },
         });
 
-        localStorage.removeItem(TELEGRAM_CODE_KEY);
+        localStorage.removeItem(TELEGRAM_CLIENT_TOKEN_KEY);
+        localStorage.removeItem(TELEGRAM_PENDING_CODE_KEY);
         const btn = document.getElementById("telegramToggle");
         if (btn) btn.classList.remove("is-active");
         showTelegramDisconnected();
@@ -274,26 +328,66 @@ async function unlinkTelegram(linkingCode) {
     }
 }
 
-async function checkTelegramStatus(linkingCode) {
+async function checkTelegramStatus(clientToken) {
     try {
-        const response = await fetch(
-            `${BACKEND_URL}/api/telegram/status?linking_code=${encodeURIComponent(linkingCode)}`
-        );
-        if (!response.ok) return { linked: false };
+        const response = await fetch(`${BACKEND_URL}/api/telegram/status`, {
+            headers: {
+                "X-Telegram-Client-Token": clientToken,
+            },
+        });
+        if (!response.ok) {
+            return { linked: false, state: "error" };
+        }
         return await response.json();
     } catch {
-        return { linked: false };
+        return { linked: false, state: "error" };
     }
 }
 
-function startPolling(code) {
+function startPolling(clientToken) {
     stopPolling();
+    consecutiveFailures = 0;
+
     telegramPollingInterval = setInterval(async () => {
-        const status = await checkTelegramStatus(code);
+        const status = await checkTelegramStatus(clientToken);
+
+        // Network error — track consecutive failures
+        if (status.state === "error") {
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                stopPolling();
+                showTelegramError("Errore di connessione, riprova");
+            }
+            return;
+        }
+
+        // Reset failure counter on successful response
+        consecutiveFailures = 0;
+
         if (status.linked) {
             showTelegramLinked(status);
+            return;
         }
-    }, 3000); // ogni 3 secondi
+
+        // Handle terminal non-linked states
+        if (status.state === "expired") {
+            stopPolling();
+            localStorage.removeItem(TELEGRAM_CLIENT_TOKEN_KEY);
+            localStorage.removeItem(TELEGRAM_PENDING_CODE_KEY);
+            showTelegramExpired();
+            return;
+        }
+
+        if (status.state === "not_found" || status.state === "unlinked") {
+            stopPolling();
+            localStorage.removeItem(TELEGRAM_CLIENT_TOKEN_KEY);
+            localStorage.removeItem(TELEGRAM_PENDING_CODE_KEY);
+            showTelegramDisconnected();
+            return;
+        }
+
+        // state === "pending" — keep polling
+    }, POLL_INTERVAL_MS);
 }
 
 function stopPolling() {
@@ -301,4 +395,57 @@ function stopPolling() {
         clearInterval(telegramPollingInterval);
         telegramPollingInterval = null;
     }
+}
+
+function showTelegramExpired() {
+    const content = document.getElementById("telegramContent");
+    if (!content) return;
+
+    stopPolling();
+
+    content.innerHTML = `
+        <div class="telegram-disconnected">
+            <p><i class="fas fa-clock"></i> Codice scaduto, genera un nuovo codice.</p>
+            <button id="telegramLinkBtn" class="btn-primary telegram-link-btn">
+                <i class="fab fa-telegram-plane"></i>
+                <span>Genera nuovo codice</span>
+            </button>
+        </div>
+    `;
+
+    document.getElementById("telegramLinkBtn")?.addEventListener("click", generateLinkCode);
+}
+
+function showTelegramError(message) {
+    const content = document.getElementById("telegramContent");
+    if (!content) return;
+
+    stopPolling();
+
+    content.innerHTML = `
+        <div class="telegram-error">
+            <p><i class="fas fa-exclamation-triangle"></i> ${message}</p>
+            <button id="telegramRetryBtn" class="btn-secondary">Riprova</button>
+        </div>
+    `;
+
+    document.getElementById("telegramRetryBtn")?.addEventListener("click", async () => {
+        const clientToken = localStorage.getItem(TELEGRAM_CLIENT_TOKEN_KEY);
+        if (clientToken) {
+            const status = await checkTelegramStatus(clientToken);
+            if (status.linked) {
+                showTelegramLinked(status);
+                return;
+            }
+            if (status.state === "pending") {
+                const pendingCode = localStorage.getItem(TELEGRAM_PENDING_CODE_KEY);
+                if (pendingCode) {
+                    showTelegramPending(pendingCode, clientToken);
+                    return;
+                }
+            }
+        }
+        // Token lost or invalid — start fresh
+        showTelegramDisconnected();
+    });
 }

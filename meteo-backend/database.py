@@ -192,6 +192,8 @@ class TelegramSubscription(Base):
     user_name = Column(String(100), nullable=True)  # username Telegram
     city = Column(String(100), nullable=True)  # città preferita per le notifiche
     linking_code = Column(String(10), nullable=True, index=True)  # codice OTP temporaneo
+    client_token_hash = Column(String(64), nullable=True, unique=True, index=True)
+    linking_code_expires_at = Column(DateTime(timezone=True), nullable=True)
     linked_at = Column(DateTime(timezone=True), nullable=True)  # quando il linking è stato completato
     rain_alerts_enabled = Column(Boolean, default=False, nullable=False)
     daily_forecast_enabled = Column(Boolean, default=False, nullable=False)
@@ -217,6 +219,7 @@ Index("idx_supporter_tokens_token_hash", SupporterToken.token_hash)
 Index("idx_push_subscriptions_endpoint", PushSubscription.endpoint)
 Index("idx_telegram_subscriptions_chat_id", TelegramSubscription.chat_id)
 Index("idx_telegram_subscriptions_linking_code", TelegramSubscription.linking_code)
+Index("idx_telegram_subscriptions_client_token_hash", TelegramSubscription.client_token_hash)
 
 
 def get_db():

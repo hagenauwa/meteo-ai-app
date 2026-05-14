@@ -11,9 +11,11 @@ Endpoint:
 """
 from __future__ import annotations
 
+import hashlib
 import secrets
 import string
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
@@ -29,6 +31,7 @@ from database import get_db, TelegramSubscription
 
 class LinkCodeResponse(BaseModel):
     linking_code: str
+    client_token: str
     expires_in_minutes: int = 30
 
 
@@ -41,6 +44,7 @@ class PreferencesUpdate(BaseModel):
 
 class TelegramStatusResponse(BaseModel):
     linked: bool
+    state: str
     chat_id: int | None = None
     user_name: str | None = None
     city: str | None = None
@@ -63,6 +67,100 @@ def _generate_linking_code(length: int = 6) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
+def generate_client_token() -> str:
+    """Genera un token browser stabile e imprevedibile."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_client_token(token: str) -> str:
+    """Restituisce l'hash SHA-256 del token browser."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _generate_unique_client_token(db: Session, max_attempts: int = 5) -> tuple[str, str]:
+    """Genera un token browser con hash unico nel database."""
+    for _ in range(max_attempts):
+        token = generate_client_token()
+        token_hash = hash_client_token(token)
+        existing = (
+            db.query(TelegramSubscription.id)
+            .filter(TelegramSubscription.client_token_hash == token_hash)
+            .first()
+        )
+        if not existing:
+            return token, token_hash
+
+    raise HTTPException(status_code=500, detail="Impossibile generare un token client univoco")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _normalize_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _is_linking_expired(sub: TelegramSubscription) -> bool:
+    sub_row = cast(Any, sub)
+    expires_at = _normalize_utc(sub_row.linking_code_expires_at)
+    return expires_at is not None and expires_at <= _utcnow()
+
+
+def _get_subscription_by_client_token(
+    db: Session,
+    client_token: str | None,
+) -> TelegramSubscription | None:
+    if not client_token:
+        return None
+
+    return (
+        db.query(TelegramSubscription)
+        .filter(TelegramSubscription.client_token_hash == hash_client_token(client_token))
+        .first()
+    )
+
+
+def _build_status_response(sub: TelegramSubscription | None) -> TelegramStatusResponse:
+    if not sub:
+        return TelegramStatusResponse(linked=False, state="not_found")
+
+    sub_row = cast(Any, sub)
+
+    if sub_row.is_active is not True:
+        return TelegramStatusResponse(linked=False, state="unlinked")
+
+    if sub_row.chat_id is not None:
+        linked_at = _normalize_utc(sub_row.linked_at)
+        return TelegramStatusResponse(
+            linked=True,
+            state="linked",
+            chat_id=sub_row.chat_id,
+            user_name=sub_row.user_name,
+            city=sub_row.city,
+            rain_alerts_enabled=sub_row.rain_alerts_enabled,
+            daily_forecast_enabled=sub_row.daily_forecast_enabled,
+            daily_forecast_hour=sub_row.daily_forecast_hour,
+            linked_at=linked_at.isoformat() if linked_at is not None else None,
+        )
+
+    if _is_linking_expired(sub):
+        return TelegramStatusResponse(linked=False, state="expired")
+
+    return TelegramStatusResponse(
+        linked=False,
+        state="pending",
+        city=sub_row.city,
+        rain_alerts_enabled=sub_row.rain_alerts_enabled,
+        daily_forecast_enabled=sub_row.daily_forecast_enabled,
+        daily_forecast_hour=sub_row.daily_forecast_hour,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoint pubblici
 # ---------------------------------------------------------------------------
@@ -80,120 +178,114 @@ def generate_link_code(db: Session = Depends(get_db)):
         )
 
     code = _generate_linking_code()
+    client_token, client_token_hash = _generate_unique_client_token(db)
 
     # Crea una nuova subscription in attesa di linking
     sub = TelegramSubscription(
         linking_code=code,
+        client_token_hash=client_token_hash,
+        linking_code_expires_at=_utcnow() + timedelta(minutes=30),
         is_active=True,
     )
     db.add(sub)
     db.commit()
 
-    return LinkCodeResponse(linking_code=code)
+    return LinkCodeResponse(linking_code=code, client_token=client_token)
 
 
 @router.get("/telegram/status")
 def get_telegram_status(
     linking_code: str | None = None,
+    x_telegram_client_token: str | None = Header(default=None, alias="X-Telegram-Client-Token"),
     db: Session = Depends(get_db),
 ):
     """
     Restituisce lo stato del collegamento Telegram.
     Se fornito linking_code, controlla se è stato collegato.
     """
-    if linking_code:
-        sub = (
-            db.query(TelegramSubscription)
-            .filter(TelegramSubscription.linking_code == linking_code)
-            .first()
-        )
-        if sub and sub.chat_id:
-            return TelegramStatusResponse(
-                linked=True,
-                chat_id=sub.chat_id,
-                user_name=sub.user_name,
-                city=sub.city,
-                rain_alerts_enabled=sub.rain_alerts_enabled,
-                daily_forecast_enabled=sub.daily_forecast_enabled,
-                daily_forecast_hour=sub.daily_forecast_hour,
-                linked_at=sub.linked_at.isoformat() if sub.linked_at else None,
-            )
-        return TelegramStatusResponse(linked=False)
+    try:
+        if x_telegram_client_token:
+            sub = _get_subscription_by_client_token(db, x_telegram_client_token)
+            return _build_status_response(sub)
 
-    # Se non fornito code, cerca per sessione (supporter token o simile)
-    # Per ora restituiamo non collegato
-    return TelegramStatusResponse(linked=False)
+        if linking_code:
+            sub = (
+                db.query(TelegramSubscription)
+                .filter(TelegramSubscription.linking_code == linking_code)
+                .first()
+            )
+            return _build_status_response(sub)
+
+        return TelegramStatusResponse(linked=False, state="not_found")
+    except HTTPException:
+        raise
+    except Exception:
+        return TelegramStatusResponse(linked=False, state="error")
 
 
 @router.post("/telegram/preferences")
 def update_preferences(
     payload: PreferencesUpdate,
-    linking_code: str = "",
+    x_telegram_client_token: str | None = Header(default=None, alias="X-Telegram-Client-Token"),
     db: Session = Depends(get_db),
 ):
     """
     Aggiorna le preferenze di notifica Telegram.
-    Richiede il linking_code per identificare la subscription.
+    Richiede il client_token del browser per identificare la subscription.
     """
-    if not linking_code:
-        raise HTTPException(status_code=400, detail="linking_code richiesto")
+    if not x_telegram_client_token:
+        raise HTTPException(status_code=400, detail="X-Telegram-Client-Token richiesto")
 
-    sub = (
-        db.query(TelegramSubscription)
-        .filter(TelegramSubscription.linking_code == linking_code)
-        .first()
-    )
-
-    # Se non trovato per linking_code, potrebbe essere già stato collegato
-    # In quel caso cerca per chat_id (ma non abbiamo il chat_id dal frontend)
-    # Per semplicità, restituiamo errore se non trovato
-    if not sub:
+    sub = _get_subscription_by_client_token(db, x_telegram_client_token)
+    if sub is None:
         raise HTTPException(status_code=404, detail="Subscription non trovata")
 
+    sub_row = cast(Any, sub)
+
     if payload.city is not None:
-        sub.city = payload.city
+        sub_row.city = payload.city
     if payload.rain_alerts_enabled is not None:
-        sub.rain_alerts_enabled = payload.rain_alerts_enabled
+        sub_row.rain_alerts_enabled = payload.rain_alerts_enabled
     if payload.daily_forecast_enabled is not None:
-        sub.daily_forecast_enabled = payload.daily_forecast_enabled
+        sub_row.daily_forecast_enabled = payload.daily_forecast_enabled
     if payload.daily_forecast_hour is not None:
         hour = max(0, min(23, payload.daily_forecast_hour))
-        sub.daily_forecast_hour = hour
+        sub_row.daily_forecast_hour = hour
 
     db.commit()
 
     return {
         "success": True,
-        "city": sub.city,
-        "rain_alerts_enabled": sub.rain_alerts_enabled,
-        "daily_forecast_enabled": sub.daily_forecast_enabled,
-        "daily_forecast_hour": sub.daily_forecast_hour,
+        "city": sub_row.city,
+        "rain_alerts_enabled": sub_row.rain_alerts_enabled,
+        "daily_forecast_enabled": sub_row.daily_forecast_enabled,
+        "daily_forecast_hour": sub_row.daily_forecast_hour,
     }
 
 
 @router.post("/telegram/unlink")
 def unlink_telegram(
-    linking_code: str = "",
+    x_telegram_client_token: str | None = Header(default=None, alias="X-Telegram-Client-Token"),
     db: Session = Depends(get_db),
 ):
     """
     Scollega un account Telegram disattivando la subscription.
     """
-    if not linking_code:
-        raise HTTPException(status_code=400, detail="linking_code richiesto")
+    if not x_telegram_client_token:
+        raise HTTPException(status_code=400, detail="X-Telegram-Client-Token richiesto")
 
-    sub = (
-        db.query(TelegramSubscription)
-        .filter(TelegramSubscription.linking_code == linking_code)
-        .first()
-    )
+    sub = _get_subscription_by_client_token(db, x_telegram_client_token)
 
-    if not sub:
+    if sub is None:
         raise HTTPException(status_code=404, detail="Subscription non trovata")
 
-    sub.is_active = False
-    sub.chat_id = None
-    sub.linking_code = None
+    sub_row = cast(Any, sub)
+
+    sub_row.is_active = False
+    sub_row.chat_id = None
+    sub_row.linking_code = None
+    sub_row.linking_code_expires_at = None
+    sub_row.client_token_hash = None
     db.commit()
 
     return {"success": True, "message": "Telegram scollegato"}
