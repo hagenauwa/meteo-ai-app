@@ -55,3 +55,8 @@
 - Bumped `public/service-worker.js` cache name to `le-previsioni-static-v16-telegram-fix` so the live frontend can drop stale Telegram JS after deploy.
 - `git branch --show-current` confirmed the repo is on `Produzione`, which matches the production workflow rule.
 - `public/service-worker.js` passed a direct Node syntax check after the LSP server was unavailable in this environment.
+
+## 2026-05-14 F4 scope fidelity review
+- Scope check approved: implementation stayed within Telegram linking/status/preferences/unlink plan boundaries; no frontend chat_id requests, no account/auth/session framework additions, and client token use is header/localStorage-only.
+- Verification evidence: pytest Telegram suite passed with --basetemp under approved temp (11 passed); npm build script exited 0; Alembic temp SQLite upgrade head and rerun both exited 0.
+- Diagnostics caveats: database.py still has pre-existing basedpyright uppercase reassignment diagnostics; JS LSP unavailable because typescript-language-server is not installed.
