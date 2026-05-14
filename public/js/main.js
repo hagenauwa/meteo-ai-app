@@ -7,7 +7,7 @@ import {
 } from "./api.js";
 import { createAutocomplete } from "./autocomplete.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
-import { initializePush, toggleRainAlert, getRainAlertStatus } from "./push.js";
+
 import { initializeSupporterWidget } from "./supporter.js";
 import { initializeTelegram } from "./telegram.js";
 import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggleFavorite } from "./storage.js";
@@ -67,56 +67,6 @@ function renderCurrentView() {
         },
     });
     updateFavoriteButtonState();
-    updateRainAlertButtonState();
-}
-
-async function updateRainAlertButtonState() {
-    const btn = document.getElementById("rainAlertToggle");
-    const icon = document.getElementById("rainAlertIcon");
-    if (!btn || !icon) return;
-
-    const reg = await navigator.serviceWorker?.ready;
-    if (!reg || !("PushManager" in window)) {
-        btn.classList.add("hidden");
-        return;
-    }
-
-    const sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-        btn.classList.add("hidden");
-        return;
-    }
-
-    btn.classList.remove("hidden");
-    const status = await getRainAlertStatus();
-    const enabled = status.rain_alerts_enabled;
-
-    icon.className = enabled ? "fas fa-cloud-showers-heavy" : "fas fa-cloud-rain";
-    btn.title = enabled ? "Disattiva allerte pioggia" : "Avvisami quando sta per piovere";
-    btn.classList.toggle("is-active", enabled);
-}
-
-async function handleRainAlertToggle() {
-    const btn = document.getElementById("rainAlertToggle");
-    const icon = document.getElementById("rainAlertIcon");
-    if (!btn || !icon) return;
-
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-        alert("Attiva prima le notifiche push per ricevere le allerte pioggia.");
-        return;
-    }
-
-    const status = await getRainAlertStatus();
-    const newState = !status.rain_alerts_enabled;
-    const success = await toggleRainAlert(newState, currentCity?.name);
-
-    if (success) {
-        icon.className = newState ? "fas fa-cloud-showers-heavy" : "fas fa-cloud-rain";
-        btn.title = newState ? "Disattiva allerte pioggia" : "Avvisami quando sta per piovere";
-        btn.classList.toggle("is-active", newState);
-    }
 }
 
 async function executeSearch(city) {
@@ -289,13 +239,6 @@ function registerMapButton() {
     mapCloseBtn.addEventListener("click", closeMap);
 }
 
-function registerRainAlertButton() {
-    const btn = document.getElementById("rainAlertToggle");
-    if (!btn) return;
-
-    btn.addEventListener("click", handleRainAlertToggle);
-}
-
 function registerTelegramPanel() {
     const closeBtn = document.getElementById("telegramCloseBtn");
     const panel = document.getElementById("telegramPanel");
@@ -417,11 +360,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderSavedCities();
     registerFavoriteButton();
     registerMapButton();
-    registerRainAlertButton();
     registerTelegramPanel();
     registerPwa();
     initializeSupporterWidget();
-    initializePush();
     initializeTelegram();
     registerCityInputSelection(input);
     registerCityInputWakeUp(input);
