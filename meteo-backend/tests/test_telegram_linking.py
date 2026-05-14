@@ -7,7 +7,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from tempfile import mkdtemp
+
 from types import SimpleNamespace
 from typing import TypedDict, cast
 
@@ -40,9 +40,8 @@ class LinkCodePayload(TypedDict):
 
 @pytest.fixture(scope="module")
 def telegram_app(tmp_path_factory: pytest.TempPathFactory):
-    _ = tmp_path_factory
-    temp_root = Path("C:/Users/Andrea/AppData/Local/Temp/opencode")
-    db_path = Path(mkdtemp(prefix="telegram-linking-", dir=str(temp_root))) / "telegram-linking.sqlite"
+    temp_dir = tmp_path_factory.mktemp("telegram-linking")
+    db_path = temp_dir / "telegram-linking.sqlite"
 
     os.environ["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
     os.environ["APP_ENV"] = "development"
