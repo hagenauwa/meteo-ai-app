@@ -209,6 +209,8 @@ function openMap() {
     document.getElementById("mapSection").classList.add("open");
     document.getElementById("mapBtn").classList.add("is-active");
 
+    document.getElementById("mapSection").scrollIntoView({ behavior: "smooth", block: "start" });
+
     if (!mapInitialized) {
         initLeafletMap(currentCity.lat, currentCity.lon, currentCity.name);
     } else {

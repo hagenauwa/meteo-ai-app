@@ -56,6 +56,7 @@ async function handleTelegramToggle() {
 
     if (panel.classList.contains("hidden")) {
         panel.classList.remove("hidden");
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
         await refreshTelegramState();
     } else {
         panel.classList.add("hidden");
