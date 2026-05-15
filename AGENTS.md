@@ -192,4 +192,5 @@ Il training usa storico verificato con feature meteo e geografiche, incluse clou
 - Il `README.md` principale è **outdated** (menziona OpenWeatherMap e TensorFlow.js): ignorarlo.
 - Le `netlify/functions/` sono **legacy** e non vengono usate.
 - **Commit solo locali per default**: a meno che l'utente non lo richieda esplicitamente, fare sempre e solo commit locali (`git commit`), mai push (`git push`). Questa regola vale per tutte le modifiche future salvo istruzione contraria.
+- **NO deploy automatici**: non eseguire mai deploy in produzione (Netlify, Render, ecc.) senza esplicita richiesta dell'utente. Dopo il commit locale, aspettare istruzioni. Il deploy è un'operazione esplicita e deliberata, mai automatica o implicita.
 - Le lezioni operative datate o incident-driven vanno raccolte in `docs/ops-learnings.md`, non aggiunte automaticamente qui.
