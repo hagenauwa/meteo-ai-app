@@ -11,6 +11,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy.orm import Session
@@ -202,7 +203,7 @@ def _should_notify_daily(sub: TelegramSubscription, now: datetime) -> bool:
     if not sub.daily_forecast_enabled or not sub.chat_id:
         return False
 
-    current_hour = now.astimezone(timezone(timedelta(hours=1))).hour  # CET roughly
+    current_hour = now.astimezone(ZoneInfo("Europe/Rome")).hour
     if current_hour != sub.daily_forecast_hour:
         return False
 
