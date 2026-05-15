@@ -317,7 +317,6 @@ function formatWeatherForFrontend(rawData, cityName) {
         weather: [{ description, icon }],
     };
 
-    const hourlyTimes = hourly.time || [];
     const hourlyFormatted = [];
     const hourlyLimit = Math.min(hourlyTimes.length, OPEN_METEO_FORECAST_HOURS);
 
