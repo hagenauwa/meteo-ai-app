@@ -295,6 +295,7 @@ function formatWeatherForFrontend(rawData, cityName) {
         visibility: 10000,
         clouds: current.cloud_cover || 0,
         precipitation: current.precipitation || 0,
+        pop: (current.precipitation || 0) > 0 ? 1 : 0,
         weather_code: current.weather_code || 0,
         weather: [{ description, icon }],
     };

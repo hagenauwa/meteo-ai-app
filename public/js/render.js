@@ -205,6 +205,8 @@ function renderCurrent(payload) {
     const icon = document.getElementById("weatherIcon");
     applyWeatherVisual(icon, {
         iconCode: current.weather?.[0]?.icon,
+        rainProbability: current.pop || 0,
+        preferRainIcon: true,
     });
 }
 
