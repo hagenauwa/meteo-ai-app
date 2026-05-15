@@ -7,20 +7,20 @@
     --line: rgba(226, 232, 240, 0.96);
     --accent: #3b82f6;
     --accent-strong: #2563eb;
-    --sun: #eab308;
+    --sun: #ea580c;
     --storm: #0f4c81;
     --shadow: 0 20px 60px rgba(15, 23, 42, 0.14);
     --radius-lg: 28px;
     --radius-md: 18px;
     --radius-sm: 14px;
     --transition: 180ms ease;
-    --weather-night: #1e3a5f;
-    --weather-partly-cloudy: #64748b;
-    --weather-cloud: #6b7280;
-    --weather-rain: #0ea5e9;
-    --weather-storm: #374151;
-    --weather-snow: #7dd3fc;
-    --weather-fog: #9ca3af;
+    --weather-night: #6366f1;
+    --weather-partly-cloudy: #6474d4;
+    --weather-cloud: #6474d4;
+    --weather-rain: #0284c7;
+    --weather-storm: #7c3aed;
+    --weather-snow: #0891b2;
+    --weather-fog: #7c8aa6;
 }
 
 * {
