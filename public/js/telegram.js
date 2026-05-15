@@ -8,12 +8,15 @@ const POLL_INTERVAL_MS = 3000;
 
 let telegramPollingInterval = null;
 let consecutiveFailures = 0;
+let isGeneratingLinkCode = false;
+let linkCodeRequestId = 0;
 
 export async function initializeTelegram() {
     const btn = document.getElementById("telegramToggle");
     if (!btn) return;
 
     btn.addEventListener("click", handleTelegramToggle);
+    document.getElementById("telegramCloseBtn")?.addEventListener("click", stopPolling);
 
     // Clean up legacy code-only storage
     const legacyCode = localStorage.getItem(TELEGRAM_CODE_KEY);
@@ -108,23 +111,42 @@ function showTelegramDisconnected(message) {
     document.getElementById("telegramLinkBtn")?.addEventListener("click", generateLinkCode);
 }
 
-async function generateLinkCode() {
+async function generateLinkCode(event) {
     const content = document.getElementById("telegramContent");
-    if (!content) return;
+    if (!content || isGeneratingLinkCode) return;
+
+    isGeneratingLinkCode = true;
+    const requestId = ++linkCodeRequestId;
+    const trigger = event?.currentTarget;
+    const triggerLabel = trigger?.querySelector?.("span") || trigger;
+    const previousLabel = triggerLabel?.textContent || "";
+    if (trigger) {
+        trigger.disabled = true;
+        trigger.setAttribute("aria-busy", "true");
+    }
+    if (triggerLabel) {
+        triggerLabel.textContent = "Genero codice...";
+    }
 
     try {
         const response = await fetch(`${BACKEND_URL}/api/telegram/link-code`, {
             method: "POST",
         });
 
+        const data = await response.json().catch(() => ({}));
+
         if (!response.ok) {
-            const error = await response.json();
+            const error = data;
             throw new Error(error.detail || "Errore nella generazione del codice");
         }
 
-        const data = await response.json();
-        const code = data.linking_code;
-        const clientToken = data.client_token;
+        const code = typeof data.linking_code === "string" ? data.linking_code.trim() : "";
+        const clientToken = typeof data.client_token === "string" ? data.client_token.trim() : "";
+        if (!code || !clientToken) {
+            throw new Error("Risposta non valida, riprova");
+        }
+
+        if (requestId !== linkCodeRequestId) return;
 
         localStorage.setItem(TELEGRAM_CLIENT_TOKEN_KEY, clientToken);
         localStorage.setItem(TELEGRAM_PENDING_CODE_KEY, code);
@@ -133,6 +155,7 @@ async function generateLinkCode() {
 
         showTelegramPending(code, clientToken);
     } catch (err) {
+        if (requestId !== linkCodeRequestId) return;
         content.innerHTML = `
             <div class="telegram-error">
                 <p><i class="fas fa-exclamation-triangle"></i> ${err.message}</p>
@@ -140,6 +163,17 @@ async function generateLinkCode() {
             </div>
         `;
         document.getElementById("telegramRetryBtn")?.addEventListener("click", generateLinkCode);
+    } finally {
+        if (requestId === linkCodeRequestId) {
+            isGeneratingLinkCode = false;
+        }
+        if (trigger?.isConnected) {
+            trigger.disabled = false;
+            trigger.removeAttribute("aria-busy");
+        }
+        if (triggerLabel?.isConnected) {
+            triggerLabel.textContent = previousLabel;
+        }
     }
 }
 

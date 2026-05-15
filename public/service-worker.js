@@ -1,10 +1,11 @@
-const CACHE_NAME = "le-previsioni-static-v17-rain-icon-fix";
+const CACHE_NAME = "le-previsioni-static-v18-telegram-pairing";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
     "/style.css",
     "/manifest.webmanifest",
     "/js/main.js",
+    "/js/telegram.js",
     "/js/api.js",
     "/js/config.js",
     "/js/render.js",
