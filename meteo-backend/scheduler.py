@@ -312,7 +312,9 @@ def _db_read_training_state() -> dict:
             state = _db_get_or_create_training_state(db)
             db.commit()
             return _serialize_training_state(state)
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Failed to read training state from DB: %s", exc)
         return _empty_training_state()
 
 
@@ -386,7 +388,7 @@ async def hourly_cycle():
         cities = await asyncio.to_thread(_db_get_cities)
         if not cities:
             print("[WARN] Nessuna città nel DB")
-            await asyncio.to_thread(
+            return await asyncio.to_thread(
                 _db_update_training_state,
                 last_cycle_completed_at=datetime.now(timezone.utc),
                 last_cycle_status="skipped",
@@ -396,7 +398,6 @@ async def hourly_cycle():
                 last_cycle_verified=0,
                 last_cycle_avg_error=0.0,
             )
-            return
 
         cleanup = await asyncio.to_thread(_db_cleanup, cycle_started_at)
         if any(cleanup.values()):
@@ -410,7 +411,7 @@ async def hourly_cycle():
         predictions = payload.get("predictions", [])
         if not observations:
             print("[WARN] Nessuna osservazione scaricata")
-            await asyncio.to_thread(
+            return await asyncio.to_thread(
                 _db_update_training_state,
                 last_cycle_completed_at=datetime.now(timezone.utc),
                 last_cycle_status="skipped",
@@ -420,7 +421,6 @@ async def hourly_cycle():
                 last_cycle_verified=0,
                 last_cycle_avg_error=0.0,
             )
-            return
 
         n_obs, n_pred = await asyncio.to_thread(_db_save_cycle_data, payload)
         print(f"[SAVE] Salvate {n_obs} osservazioni e {n_pred} previsioni future")
@@ -541,7 +541,7 @@ async def hourly_cycle():
         except Exception as tg_daily_exc:
             print(f"[WARN] Errore controllo promemoria Telegram: {tg_daily_exc}")
 
-        await asyncio.to_thread(
+        state = await asyncio.to_thread(
             _db_update_training_state,
             last_cycle_completed_at=datetime.now(timezone.utc),
             last_cycle_status="success",
@@ -552,8 +552,9 @@ async def hourly_cycle():
             last_cycle_avg_error=avg_error,
         )
         print("[OK] Ciclo completato — prossimo tra 1 ora\n")
+        return state
     except Exception as exc:
-        await asyncio.to_thread(
+        state = await asyncio.to_thread(
             _db_update_training_state,
             last_cycle_completed_at=datetime.now(timezone.utc),
             last_cycle_status="failed",
@@ -563,7 +564,8 @@ async def hourly_cycle():
             last_cycle_verified=verified_count,
             last_cycle_avg_error=avg_error,
         )
-        raise
+        print(f"[ERR] Ciclo fallito: {exc}")
+        return state
 
 
 def start_scheduler():

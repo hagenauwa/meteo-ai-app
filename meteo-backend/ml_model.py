@@ -11,6 +11,7 @@ import logging
 import pickle
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import sklearn
@@ -25,6 +26,7 @@ from config import settings
 from database import City, MlModelStore, MlPrediction, SessionLocal
 
 logger = logging.getLogger(__name__)
+ROME_TZ = ZoneInfo("Europe/Rome")
 
 CONDITION_LABELS = ("sereno", "parzialmente nuvoloso", "nuvoloso", "pioggia")
 CONDITION_TO_CODE = {label: index for index, label in enumerate(CONDITION_LABELS)}
@@ -72,6 +74,7 @@ _temperature_feature_variant = "v1"
 _blend_profiles: dict[str, dict[str, dict[str, float | int]]] = {"v1": {}, "v2": {}}
 
 _latest_summary: dict = {
+    "model_status": "disabled",
     "model_ready": False,
     "rain_model_ready": False,
     "condition_model_ready": False,
@@ -98,6 +101,7 @@ _latest_summary: dict = {
 
 def _empty_model_summary() -> dict:
     return {
+        "model_status": "disabled",
         "model_ready": False,
         "rain_model_ready": False,
         "condition_model_ready": False,
@@ -244,12 +248,24 @@ def _model_record_iso(record) -> str | None:
     return trained_at.isoformat() if trained_at is not None else None
 
 
-def _model_incompatibility_warning(stored_format_version: int, stored_sklearn_version: str | None) -> str:
-    return (
-        f"incompatible_model_pickle: stored_format={stored_format_version} "
-        f"runtime_format={MODEL_FORMAT_VERSION} stored_sklearn={stored_sklearn_version or 'unknown'} "
-        f"runtime_sklearn={sklearn.__version__}"
-    )
+def _model_incompatibility_warning(stored_format_version: int, _stored_sklearn_version: str | None) -> str:
+    if stored_format_version != MODEL_FORMAT_VERSION:
+        return "incompatible_model_format"
+    return "incompatible_model_sklearn"
+
+
+def _model_load_failure_status(exc: Exception) -> str:
+    message = str(exc)
+    if message == "invalid_model_signature":
+        return "invalid_model_signature"
+    return "corrupt_model_blob"
+
+
+def _disabled_model_warning_status() -> str | None:
+    if _latest_summary.get("model_status") != "disabled":
+        return None
+    warning = _latest_summary.get("model_load_warning")
+    return str(warning) if warning else None
 
 
 def _model_load_attempt(
@@ -2276,13 +2292,16 @@ def load_latest_model() -> bool:
             _loaded_model_store_id = None
             _loaded_model_trained_at = None
             _last_model_version_check_at = datetime.now(timezone.utc)
-            _latest_summary = _empty_model_summary()
+            _latest_summary = {
+                **_empty_model_summary(),
+                "model_load_warning": "missing_model_row",
+            }
             return False
 
         attempts: list[dict] = []
         for record in records:
             if not record or not record.model_bytes:
-                warning = "missing_model_bytes"
+                warning = "corrupt_model_blob"
                 attempts.append(_model_load_attempt(record, warning=warning) if record else {"warning": warning, "loaded": False})
                 continue
 
@@ -2331,6 +2350,7 @@ def load_latest_model() -> bool:
                 attempts.append(_model_load_attempt(record, warning="loaded", loaded=True))
 
                 _latest_summary = {
+                    "model_status": "loaded",
                     "model_ready": _pipeline is not None and _temperature_feature_variant in {"legacy", "v1", "v2"},
                     "rain_model_ready": _rain_pipeline is not None and rain_feature_variant in {"legacy", "v1"},
                     "condition_model_ready": _condition_pipeline is not None and condition_feature_variant in {"legacy", "v1"},
@@ -2356,7 +2376,7 @@ def load_latest_model() -> bool:
                 print(f"[OK] Modello ML caricato (addestrato: {record.trained_at}, MAE: {record.mae})")
                 return True
             except Exception as exc:
-                warning = f"model_load_failed:{exc}"
+                warning = _model_load_failure_status(exc)
                 attempts.append(_model_load_attempt(record, warning=warning))
                 print(f"[WARN]  Errore caricamento modello {getattr(record, 'id', '?')}: {exc}")
 
@@ -2370,6 +2390,7 @@ def load_latest_model() -> bool:
         preserve_record_summary = not str(latest_warning).startswith("model_load_failed:")
         _latest_summary = {
             **_empty_model_summary(),
+            "model_status": "disabled",
             "model_mae": latest_record.mae if latest_record and preserve_record_summary else None,
             "model_format_version": latest_attempt.get("model_format_version"),
             "model_sklearn_version": latest_attempt.get("model_sklearn_version"),
@@ -2403,7 +2424,13 @@ def predict_correction(
     """Predice la correzione da applicare alla temperatura prevista."""
     _ensure_latest_model_loaded()
     if _pipeline is None:
-        return {"correction": 0.0, "corrected_temp": temp, "model_ready": False, "model_variant": "provider"}
+        return {
+            "correction": 0.0,
+            "corrected_temp": temp,
+            "model_ready": False,
+            "model_variant": "provider",
+            "warning_status": _disabled_model_warning_status(),
+        }
 
     try:
         features, active_variant = _build_temperature_features_for_inference(
@@ -2431,6 +2458,7 @@ def predict_correction(
                 "model_ready": False,
                 "model_variant": "provider",
                 "message": "legacy_temperature_guardrail",
+                "warning_status": None,
             }
         confidence = _empirical_confidence(_confidence_from_score(abs(correction) / 1.5), lead_hours)
 
@@ -2440,6 +2468,7 @@ def predict_correction(
             "model_ready": True,
             "confidence": confidence,
             "model_variant": active_variant,
+            "warning_status": None,
         }
     except Exception as e:
         return {
@@ -2448,6 +2477,7 @@ def predict_correction(
             "model_ready": False,
             "error": str(e),
             "model_variant": "provider",
+            "warning_status": _disabled_model_warning_status(),
         }
 
 
@@ -2506,12 +2536,14 @@ def predict_rain_probability(
                 "model_ready": True,
                 "confidence": confidence,
                 "model_variant": "v2",
+                "warning_status": None,
             }
         except Exception as e:
             return {
                 "model_ready": False,
                 "error": str(e),
                 "model_variant": "provider",
+                "warning_status": _disabled_model_warning_status(),
             }
 
     if _rain_pipeline is None:
@@ -2519,6 +2551,7 @@ def predict_rain_probability(
             "model_ready": False,
             "message": "Modello pioggia non ancora disponibile",
             "model_variant": "provider",
+            "warning_status": _disabled_model_warning_status(),
         }
 
     try:
@@ -2547,12 +2580,14 @@ def predict_rain_probability(
             "model_ready": True,
             "confidence": confidence,
             "model_variant": active_variant,
+            "warning_status": None,
         }
     except Exception as e:
         return {
             "model_ready": False,
             "error": str(e),
             "model_variant": "provider",
+            "warning_status": _disabled_model_warning_status(),
         }
 
 
@@ -2615,6 +2650,7 @@ def predict_condition_outlook(
                 "probability": round(top_probability, 3),
                 "provider_condition": provider_condition,
                 "model_variant": "v2",
+                "warning_status": None,
             }
         except Exception as e:
             return {
@@ -2625,6 +2661,7 @@ def predict_condition_outlook(
                 "source": "provider",
                 "error": str(e),
                 "model_variant": "provider",
+                "warning_status": _disabled_model_warning_status(),
             }
 
     if _condition_pipeline is None:
@@ -2635,6 +2672,7 @@ def predict_condition_outlook(
             "confidence": "media",
             "source": "provider",
             "model_variant": "provider",
+            "warning_status": _disabled_model_warning_status(),
         }
 
     try:
@@ -2667,6 +2705,7 @@ def predict_condition_outlook(
             "probability": round(top_probability, 3),
             "provider_condition": provider_condition,
             "model_variant": active_variant,
+            "warning_status": None,
         }
     except Exception as e:
         return {
@@ -2677,6 +2716,7 @@ def predict_condition_outlook(
             "source": "provider",
             "error": str(e),
             "model_variant": "provider",
+            "warning_status": _disabled_model_warning_status(),
         }
 
 
@@ -2689,8 +2729,13 @@ def build_daily_insight(
     lon: float | None = None,
     city_name: str | None = None,
 ) -> dict:
-    day_date = datetime.fromisoformat(day["dt"])
-    hour = 14
+    representative_time = datetime.fromisoformat(day["dt"]).replace(
+        hour=14,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=ROME_TZ,
+    )
     forecast_temp = day.get("temp", {}).get("day", 0.0)
     forecast_pop = _safe_float(day.get("pop"), 0.0)
     forecast_precipitation = _safe_float(day.get("precipitation_sum"), 0.0)
@@ -2705,8 +2750,8 @@ def build_daily_insight(
     correction = predict_correction(
         temp=forecast_temp,
         humidity=_safe_float(day.get("humidity"), 55.0),
-        hour=hour,
-        month=day_date.month,
+        hour=representative_time.hour,
+        month=representative_time.month,
         lat=lat,
         lon=lon,
         region=region,
@@ -2742,8 +2787,8 @@ def build_daily_insight(
         rain = predict_rain_probability(
             forecast_temp=forecast_temp,
             humidity=_safe_float(day.get("humidity"), 55.0),
-            hour=hour,
-            month=day_date.month,
+            hour=representative_time.hour,
+            month=representative_time.month,
             lat=lat,
             lon=lon,
             region=region,
@@ -2759,8 +2804,8 @@ def build_daily_insight(
         condition = predict_condition_outlook(
             forecast_temp=forecast_temp,
             humidity=_safe_float(day.get("humidity"), 55.0),
-            hour=hour,
-            month=day_date.month,
+            hour=representative_time.hour,
+            month=representative_time.month,
             lat=lat,
             lon=lon,
             region=region,

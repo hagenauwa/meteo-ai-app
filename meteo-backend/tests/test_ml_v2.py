@@ -446,7 +446,7 @@ def test_load_latest_model_rejects_incompatible_sklearn_pickle(monkeypatch):
     assert summary["rain_model_ready"] is False
     assert summary["condition_model_ready"] is False
     assert summary["model_sklearn_version"] == "1.5.2"
-    assert "incompatible_model_pickle" in summary["model_load_warning"]
+    assert summary["model_load_warning"] == "incompatible_model_sklearn"
 
     correction = ml_model.predict_correction(
         temp=18.0,
@@ -597,7 +597,7 @@ def test_load_latest_model_rejects_legacy_payload_without_metadata(monkeypatch):
     summary = ml_model.get_public_summary()
     assert summary["model_format_version"] == 1
     assert summary["model_sklearn_version"] is None
-    assert "stored_sklearn=unknown" in summary["model_load_warning"]
+    assert summary["model_load_warning"] == "incompatible_model_format"
 
 
 def test_load_latest_model_clears_state_on_malformed_payload(monkeypatch):
@@ -633,12 +633,12 @@ def test_load_latest_model_clears_state_on_malformed_payload(monkeypatch):
     assert ml_model._rain_pipeline is None
     summary = ml_model.get_public_summary()
     assert summary["model_ready"] is False
-    assert summary["model_mae"] is None
+    assert summary["model_mae"] == 1.4
     assert summary["baseline_mae"] is None
     assert summary["rain_accuracy"] is None
-    assert summary["model_samples"] is None
-    assert summary["model_trained_at"] is None
-    assert summary["model_load_warning"].startswith("model_load_failed:")
+    assert summary["model_samples"] == 250
+    assert summary["model_trained_at"] == "2026-04-16T13:00:00+00:00"
+    assert summary["model_load_warning"] == "corrupt_model_blob"
 
 
 def test_load_latest_model_rejects_unsupported_format_version(monkeypatch):
@@ -666,7 +666,7 @@ def test_load_latest_model_rejects_unsupported_format_version(monkeypatch):
     assert loaded is False
     summary = ml_model.get_public_summary()
     assert summary["model_format_version"] == 999
-    assert "stored_format=999" in summary["model_load_warning"]
+    assert summary["model_load_warning"] == "incompatible_model_format"
 
 
 def test_train_uses_bounded_training_rows(monkeypatch):
