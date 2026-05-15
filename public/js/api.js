@@ -284,7 +284,24 @@ function formatWeatherForFrontend(rawData, cityName) {
     const hourly = rawData.hourly || {};
     const daily = rawData.daily || {};
 
-    const [description, icon] = wmoToDescription(current.weather_code || 0);
+    const hourlyTimes = hourly.time || [];
+    const now = new Date();
+    const currentDatePrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const currentHourPrefix = `${currentDatePrefix}T${String(now.getHours()).padStart(2, "0")}`;
+    const currentHourIndex = hourlyTimes.findIndex(t => String(t).startsWith(currentHourPrefix));
+
+    const hourlyWmo = currentHourIndex >= 0 ? (hourly.weather_code || [])[currentHourIndex] : null;
+    const hourlyPop = currentHourIndex >= 0 ? (((hourly.precipitation_probability || [])[currentHourIndex] || 0) / 100) : 0;
+    const hourlyPrecip = currentHourIndex >= 0 ? ((hourly.precipitation || [])[currentHourIndex] || 0) : 0;
+
+    const currentWmo = current.weather_code || 0;
+    const hourHasRain = (hourlyWmo && hourlyWmo >= 51) || hourlyPop >= 0.5 || hourlyPrecip > 0;
+    const currentHasRain = (current.precipitation || 0) > 0 || currentWmo >= 51;
+
+    const effectiveWmo = hourHasRain && !currentHasRain ? (hourlyWmo || 61) : currentWmo;
+    const pop = currentHasRain || hourHasRain ? 1 : 0;
+    const [description, icon] = wmoToDescription(effectiveWmo);
+
     const currentFormatted = {
         temp: Math.round((current.temperature_2m || 0) * 10) / 10,
         feels_like: Math.round((current.apparent_temperature || 0) * 10) / 10,
@@ -295,8 +312,8 @@ function formatWeatherForFrontend(rawData, cityName) {
         visibility: 10000,
         clouds: current.cloud_cover || 0,
         precipitation: current.precipitation || 0,
-        pop: (current.precipitation || 0) > 0 ? 1 : 0,
-        weather_code: current.weather_code || 0,
+        pop,
+        weather_code: effectiveWmo,
         weather: [{ description, icon }],
     };
 
