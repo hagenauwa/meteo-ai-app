@@ -41,6 +41,11 @@ MODEL_VERSION_CHECK_TTL_SECONDS = 90
 MAX_KPI_EVAL_ROWS = 2500
 SHADOW_REQUIRED_STREAK = 3
 RECENCY_HALF_LIFE_DAYS = 21
+MIN_TEMPERATURE_MAE_IMPROVEMENT_C = 0.05
+MIN_TEMPERATURE_MAE_IMPROVEMENT_RATIO = 0.03
+MIN_RAIN_BRIER_IMPROVEMENT_RATIO = 0.10
+MIN_RAIN_F1_GAIN = 0.05
+MIN_CONDITION_MACRO_F1_GAIN = 0.05
 LEAD_BUCKETS = (
     "short",
     "intraday",
@@ -325,6 +330,37 @@ def _temperature_failure_message(diagnostics: dict) -> str:
     return "Nessun modello temperatura promosso; " + "; ".join(parts)
 
 
+def _temperature_result_is_useful(result: dict) -> bool:
+    if not result.get("success"):
+        return False
+
+    mae = result.get("mae")
+    baseline = result.get("baseline_mae")
+    if mae is None or baseline is None:
+        return False
+
+    improvement = float(baseline) - float(mae)
+    improvement_ratio = improvement / max(float(baseline), 1e-6)
+    return (
+        improvement >= MIN_TEMPERATURE_MAE_IMPROVEMENT_C
+        or improvement_ratio >= MIN_TEMPERATURE_MAE_IMPROVEMENT_RATIO
+    )
+
+
+def _temperature_not_useful_message(result: dict) -> str:
+    mae = result.get("mae")
+    baseline = result.get("baseline_mae")
+    if mae is None or baseline is None:
+        return "Il modello temperatura non ha metriche sufficienti"
+
+    improvement = float(baseline) - float(mae)
+    improvement_ratio = improvement / max(float(baseline), 1e-6)
+    return (
+        "Il modello temperatura batte il baseline ma non abbastanza "
+        f"(miglioramento {improvement:.3f}C, {improvement_ratio:.1%})"
+    )
+
+
 def _ensure_latest_model_loaded(*, force: bool = False) -> None:
     global _last_model_version_check_at
 
@@ -582,6 +618,28 @@ def _global_model_variant_for_stats() -> str:
     return _resolve_live_model_variant(None)
 
 
+def _rain_model_variant_for_stats() -> str:
+    serving = _global_model_variant_for_stats()
+    if serving == "v2" and _rain_pipeline_v2 is not None:
+        return "v2"
+    if _rain_pipeline is not None:
+        return "v1"
+    if _rain_pipeline_v2 is not None:
+        return "v2"
+    return "provider"
+
+
+def _condition_model_variant_for_stats() -> str:
+    serving = _global_model_variant_for_stats()
+    if serving == "v2" and _condition_pipeline_v2 is not None:
+        return "v2"
+    if _condition_pipeline is not None:
+        return "v1"
+    if _condition_pipeline_v2 is not None:
+        return "v2"
+    return "provider"
+
+
 def _build_features(
     *,
     forecast_temp: float,
@@ -744,7 +802,7 @@ def _infer_condition_feature_variant_from_pipeline(default_variant: str | None =
         return "legacy"
     if feature_count == 13:
         return "v1"
-    if feature_count == 26:
+    if feature_count in {26, 27}:
         return "v2"
     return default_variant or "v1"
 
@@ -1953,6 +2011,63 @@ def _kpi_gate(v1: dict, v2: dict) -> dict:
     }
 
 
+def _rain_v2_gate(v1: dict, v2: dict, train_result: dict) -> dict:
+    rain_brier_v2 = v2.get("rain_brier")
+    rain_f1_v2 = v2.get("rain_f1")
+    rain_brier_v1 = v1.get("rain_brier")
+    rain_f1_v1 = v1.get("rain_f1")
+
+    if rain_brier_v2 is not None and rain_f1_v2 is not None and rain_brier_v1 is not None and rain_f1_v1 is not None:
+        rain_brier_improvement = (float(rain_brier_v1) - float(rain_brier_v2)) / max(float(rain_brier_v1), 1e-6)
+        rain_f1_gain = float(rain_f1_v2) - float(rain_f1_v1)
+        return {
+            "pass": rain_brier_improvement >= MIN_RAIN_BRIER_IMPROVEMENT_RATIO and rain_f1_gain >= MIN_RAIN_F1_GAIN,
+            "source": "recent_v1",
+            "rain_brier_improvement": round(float(rain_brier_improvement), 4),
+            "rain_f1_gain": round(float(rain_f1_gain), 4),
+        }
+
+    brier = train_result.get("brier")
+    baseline_brier = train_result.get("baseline_brier")
+    f1 = train_result.get("f1")
+    baseline_f1 = train_result.get("baseline_f1")
+    if brier is None or baseline_brier is None or f1 is None or baseline_f1 is None:
+        return {"pass": False, "reason": "rain_kpi_insufficient"}
+
+    brier_improvement = (float(baseline_brier) - float(brier)) / max(float(baseline_brier), 1e-6)
+    f1_gain = float(f1) - float(baseline_f1)
+    return {
+        "pass": brier_improvement >= MIN_RAIN_BRIER_IMPROVEMENT_RATIO and f1_gain >= 0.0,
+        "source": "training_baseline",
+        "rain_brier_improvement": round(float(brier_improvement), 4),
+        "rain_f1_gain": round(float(f1_gain), 4),
+    }
+
+
+def _condition_v2_gate(v1: dict, v2: dict, train_result: dict) -> dict:
+    condition_f1_v2 = v2.get("condition_macro_f1")
+    condition_f1_v1 = v1.get("condition_macro_f1")
+    if condition_f1_v2 is not None and condition_f1_v1 is not None:
+        f1_gain = float(condition_f1_v2) - float(condition_f1_v1)
+        return {
+            "pass": f1_gain >= MIN_CONDITION_MACRO_F1_GAIN,
+            "source": "recent_v1",
+            "condition_macro_f1_gain": round(float(f1_gain), 4),
+        }
+
+    macro_f1 = train_result.get("macro_f1")
+    baseline_macro_f1 = train_result.get("baseline_macro_f1")
+    if macro_f1 is None or baseline_macro_f1 is None:
+        return {"pass": False, "reason": "condition_kpi_insufficient"}
+
+    f1_gain = float(macro_f1) - float(baseline_macro_f1)
+    return {
+        "pass": f1_gain >= MIN_CONDITION_MACRO_F1_GAIN,
+        "source": "training_baseline",
+        "condition_macro_f1_gain": round(float(f1_gain), 4),
+    }
+
+
 def evaluate_shadow_window() -> dict:
     global _runtime_force_v1
 
@@ -1966,7 +2081,7 @@ def evaluate_shadow_window() -> dict:
             "rollout_allowed": _can_use_v2_live(),
         }
 
-    if _rain_pipeline is None or _condition_pipeline is None or _rain_pipeline_v2 is None or _condition_pipeline_v2 is None:
+    if _rain_pipeline_v2 is None and _condition_pipeline_v2 is None:
         return {
             "checked": False,
             "reason": "models_not_ready",
@@ -1996,7 +2111,17 @@ def evaluate_shadow_window() -> dict:
 
         v1 = _compute_variant_kpis(rows, "v1")
         v2 = _compute_variant_kpis(rows, "v2")
-        gate = _kpi_gate(v1, v2)
+        rain_gate = _rain_v2_gate(v1, v2, {}) if _rain_pipeline_v2 is not None else {"pass": False, "reason": "v2_not_ready"}
+        condition_gate = (
+            _condition_v2_gate(v1, v2, {})
+            if _condition_pipeline_v2 is not None
+            else {"pass": False, "reason": "v2_not_ready"}
+        )
+        gate = {
+            "pass": bool(rain_gate.get("pass") or condition_gate.get("pass")),
+            "rain_gate": rain_gate,
+            "condition_gate": condition_gate,
+        }
 
         if gate.get("pass"):
             _shadow_state["consecutive_positive_windows"] = int(_shadow_state.get("consecutive_positive_windows", 0)) + 1
@@ -2013,6 +2138,8 @@ def evaluate_shadow_window() -> dict:
             "v1": v1,
             "v2": v2,
             "gate": gate,
+            "rain_gate": rain_gate,
+            "condition_gate": condition_gate,
         }
 
         _invalidate_stats_cache()
@@ -2073,20 +2200,32 @@ def train(min_samples: int = 100) -> dict:
             temperature_v2=temp_result_v2,
         )
         temp_candidates = [result for result in (temp_result_v2, temp_result_v1) if result.get("success")]
+        useful_temp_candidates = [result for result in temp_candidates if _temperature_result_is_useful(result)]
         if not temp_candidates:
             best_temp_result = temp_result_v2 if temp_result_v2.get("mae") is not None else temp_result_v1
             message = _temperature_failure_message(temp_diagnostics)
-            return {
+            temp_result = best_temp_result
+            pipeline = None
+            temperature_feature_variant = "provider"
+            temperature_message = message
+        elif not useful_temp_candidates:
+            temp_result = min(temp_candidates, key=lambda result: float(result["mae"]))
+            pipeline = None
+            temperature_feature_variant = "provider"
+            temperature_message = _temperature_not_useful_message(temp_result)
+            temp_diagnostics["temperature_promotion"] = {
                 "success": False,
-                "message": message,
-                "baseline_mae": best_temp_result.get("baseline_mae"),
-                "mae": best_temp_result.get("mae"),
-                "training_diagnostics": temp_diagnostics,
+                "message": temperature_message,
+                "mae": temp_result.get("mae"),
+                "baseline_mae": temp_result.get("baseline_mae"),
+                "feature_variant": temp_result.get("feature_variant"),
             }
+        else:
+            temp_result = min(useful_temp_candidates, key=lambda result: float(result["mae"]))
+            pipeline = temp_result["pipeline"]
+            temperature_feature_variant = temp_result.get("feature_variant", "v1")
+            temperature_message = None
 
-        temp_result = min(temp_candidates, key=lambda result: float(result["mae"]))
-        pipeline = temp_result["pipeline"]
-        temperature_feature_variant = temp_result.get("feature_variant", "v1")
 
         rain_result = _train_rain_pipeline(rows, encoder)
         condition_result = _train_condition_pipeline(rows, encoder)
@@ -2100,6 +2239,8 @@ def train(min_samples: int = 100) -> dict:
             condition_v1=condition_result,
             condition_v2=condition_v2_result,
         )
+        if "temperature_promotion" in temp_diagnostics:
+            diagnostics["temperature_promotion"] = temp_diagnostics["temperature_promotion"]
 
         rain_pipeline = rain_result["pipeline"] if rain_result.get("success") else None
         condition_pipeline = condition_result["pipeline"] if condition_result.get("success") else None
@@ -2109,7 +2250,9 @@ def train(min_samples: int = 100) -> dict:
         rain_platt_v2 = rain_v2_result.get("platt") if rain_pipeline_v2 is not None else None
         condition_platt_v2 = condition_v2_result.get("platt") if condition_pipeline_v2 is not None else None
 
-        # Backtest automatico rolling sugli ultimi N giorni prima della promozione v2
+        # Backtest automatico rolling sugli ultimi N giorni prima della promozione v2.
+        # Pioggia e condizioni sono gate indipendenti: un modello valido non deve
+        # restare fermo solo perche l'altro componente non e pronto.
         backtest = {
             "pass": False,
             "reason": "v2_not_ready",
@@ -2117,49 +2260,74 @@ def train(min_samples: int = 100) -> dict:
         blend_profile_v1 = {bucket: {"ml_weight": limits[0], "samples": 0} for bucket, limits in BLEND_BUCKET_ML_WEIGHT_LIMITS.items()}
         blend_profile_v2 = {bucket: {"ml_weight": limits[0], "samples": 0} for bucket, limits in BLEND_BUCKET_ML_WEIGHT_LIMITS.items()}
 
-        if rain_pipeline is not None and condition_pipeline is not None:
-            backtest_pipelines = {
-                "rain_pipeline": rain_pipeline,
-                "condition_pipeline": condition_pipeline,
-                "rain_pipeline_v2": rain_pipeline_v2,
-                "condition_pipeline_v2": condition_pipeline_v2,
-                "rain_platt_v2": rain_platt_v2,
-                "condition_platt_v2": condition_platt_v2,
-            }
-
-            window_start = datetime.now(timezone.utc) - timedelta(days=settings.ml_kpi_window_days)
-            backtest_rows = [row for row in rows if row["target_time"] >= window_start][-MAX_KPI_EVAL_ROWS:]
-            if len(backtest_rows) >= 200:
+        backtest_pipelines = {
+            "rain_pipeline": rain_pipeline,
+            "condition_pipeline": condition_pipeline,
+            "rain_pipeline_v2": rain_pipeline_v2,
+            "condition_pipeline_v2": condition_pipeline_v2,
+            "rain_platt_v2": rain_platt_v2,
+            "condition_platt_v2": condition_platt_v2,
+        }
+        window_start = datetime.now(timezone.utc) - timedelta(days=settings.ml_kpi_window_days)
+        backtest_rows = [row for row in rows if row["target_time"] >= window_start][-MAX_KPI_EVAL_ROWS:]
+        if len(backtest_rows) >= 200:
+            if rain_pipeline is not None:
                 blend_profile_v1 = _compute_blend_profile(backtest_rows, "v1", backtest_pipelines)
-                if rain_pipeline_v2 is not None and condition_pipeline_v2 is not None:
-                    v1 = _compute_variant_kpis(backtest_rows, "v1", backtest_pipelines)
-                    v2 = _compute_variant_kpis(backtest_rows, "v2", backtest_pipelines)
-                    blend_profile_v2 = _compute_blend_profile(backtest_rows, "v2", backtest_pipelines)
-                    backtest = {
-                        "rows": len(backtest_rows),
-                        "v1": v1,
-                        "v2": v2,
-                        "gate": _kpi_gate(v1, v2),
-                    }
-                    backtest["pass"] = bool(backtest["gate"].get("pass"))
-                else:
-                    backtest = {
-                        "pass": False,
-                        "reason": "v2_not_ready",
-                        "rows": len(backtest_rows),
-                    }
-            else:
-                backtest = {
-                    "pass": False,
-                    "reason": "not_enough_rows",
-                    "rows": len(backtest_rows),
-                }
+            v1 = _compute_variant_kpis(backtest_rows, "v1", backtest_pipelines)
+            v2 = _compute_variant_kpis(backtest_rows, "v2", backtest_pipelines)
+            if rain_pipeline_v2 is not None:
+                blend_profile_v2 = _compute_blend_profile(backtest_rows, "v2", backtest_pipelines)
 
-        if not backtest.get("pass"):
-            rain_pipeline_v2 = None
-            condition_pipeline_v2 = None
-            rain_platt_v2 = None
-            condition_platt_v2 = None
+            rain_gate = _rain_v2_gate(v1, v2, rain_v2_result) if rain_pipeline_v2 is not None else {"pass": False, "reason": "v2_not_ready"}
+            condition_gate = (
+                _condition_v2_gate(v1, v2, condition_v2_result)
+                if condition_pipeline_v2 is not None
+                else {"pass": False, "reason": "v2_not_ready"}
+            )
+            backtest = {
+                "pass": bool(rain_gate.get("pass") or condition_gate.get("pass")),
+                "rows": len(backtest_rows),
+                "v1": v1,
+                "v2": v2,
+                "rain_gate": rain_gate,
+                "condition_gate": condition_gate,
+            }
+            if not rain_gate.get("pass"):
+                rain_pipeline_v2 = None
+                rain_platt_v2 = None
+            if not condition_gate.get("pass"):
+                condition_pipeline_v2 = None
+                condition_platt_v2 = None
+        else:
+            rain_gate = _rain_v2_gate({}, {}, rain_v2_result) if rain_pipeline_v2 is not None else {"pass": False, "reason": "v2_not_ready"}
+            condition_gate = (
+                _condition_v2_gate({}, {}, condition_v2_result)
+                if condition_pipeline_v2 is not None
+                else {"pass": False, "reason": "v2_not_ready"}
+            )
+            backtest = {
+                "pass": bool(rain_gate.get("pass") or condition_gate.get("pass")),
+                "reason": "not_enough_recent_rows",
+                "rows": len(backtest_rows),
+                "rain_gate": rain_gate,
+                "condition_gate": condition_gate,
+            }
+            if not rain_gate.get("pass"):
+                rain_pipeline_v2 = None
+                rain_platt_v2 = None
+            if not condition_gate.get("pass"):
+                condition_pipeline_v2 = None
+                condition_platt_v2 = None
+
+        if pipeline is None and rain_pipeline is None and condition_pipeline is None and rain_pipeline_v2 is None and condition_pipeline_v2 is None:
+            return {
+                "success": False,
+                "message": temperature_message or "Nessun modello promosso",
+                "baseline_mae": temp_result.get("baseline_mae"),
+                "mae": temp_result.get("mae"),
+                "v2_backtest": backtest,
+                "training_diagnostics": diagnostics,
+            }
 
         payload = {
             "model_format_version": MODEL_FORMAT_VERSION,
@@ -2180,7 +2348,8 @@ def train(min_samples: int = 100) -> dict:
             },
             "le": encoder,
             "regions": _known_regions,
-            "baseline_mae": temp_result["baseline_mae"],
+            "baseline_mae": temp_result.get("baseline_mae"),
+            "temperature_message": temperature_message,
             "rain_accuracy": rain_result.get("accuracy"),
             "rain_baseline_accuracy": rain_result.get("baseline_accuracy"),
             "condition_accuracy": condition_result.get("accuracy"),
@@ -2194,8 +2363,8 @@ def train(min_samples: int = 100) -> dict:
         record = MlModelStore(
             trained_at=datetime.now(timezone.utc),
             model_bytes=model_data,
-            mae=temp_result["mae"],
-            n_samples=temp_result["n_samples"],
+            mae=temp_result.get("mae"),
+            n_samples=temp_result.get("n_samples", len(rows)),
         )
         db.add(record)
         db.commit()
@@ -2217,13 +2386,14 @@ def train(min_samples: int = 100) -> dict:
         _last_model_version_check_at = datetime.now(timezone.utc)
 
         _latest_summary = {
-            "model_ready": temperature_feature_variant in {"v1", "v2"},
+            "model_status": "loaded",
+            "model_ready": pipeline is not None and temperature_feature_variant in {"v1", "v2"},
             "rain_model_ready": rain_pipeline is not None,
             "condition_model_ready": condition_pipeline is not None,
             "rain_model_v2_ready": rain_pipeline_v2 is not None,
             "condition_model_v2_ready": condition_pipeline_v2 is not None,
-            "model_mae": temp_result["mae"],
-            "baseline_mae": temp_result["baseline_mae"],
+            "model_mae": temp_result.get("mae"),
+            "baseline_mae": temp_result.get("baseline_mae"),
             "rain_accuracy": rain_result.get("accuracy"),
             "rain_baseline_accuracy": rain_result.get("baseline_accuracy"),
             "condition_accuracy": condition_result.get("accuracy"),
@@ -2234,7 +2404,7 @@ def train(min_samples: int = 100) -> dict:
             "model_format_version": MODEL_FORMAT_VERSION,
             "model_sklearn_version": sklearn.__version__,
             "model_load_warning": None,
-            "model_samples": temp_result["n_samples"],
+            "model_samples": temp_result.get("n_samples", len(rows)),
             "model_trained_at": record.trained_at.isoformat(),
             "training_diagnostics": diagnostics,
         }
@@ -2242,10 +2412,12 @@ def train(min_samples: int = 100) -> dict:
 
         return {
             "success": True,
-            "mae": temp_result["mae"],
-            "baseline_mae": temp_result["baseline_mae"],
-            "n_samples": temp_result["n_samples"],
+            "mae": temp_result.get("mae"),
+            "baseline_mae": temp_result.get("baseline_mae"),
+            "n_samples": temp_result.get("n_samples", len(rows)),
             "temperature_model_variant": temperature_feature_variant,
+            "temperature_model_ready": pipeline is not None,
+            "temperature_message": temperature_message,
             "trained_at": record.trained_at.isoformat(),
             "rain_accuracy": rain_result.get("accuracy"),
             "rain_baseline_accuracy": rain_result.get("baseline_accuracy"),
@@ -2508,6 +2680,8 @@ def predict_rain_probability(
     """Predice la probabilità di pioggia per una previsione futura."""
     _ensure_latest_model_loaded()
     requested_variant = _resolve_requested_variant(force_variant, city_name)
+    if requested_variant != "v2" and _rain_pipeline is None and _rain_pipeline_v2 is not None:
+        requested_variant = "v2"
 
     if requested_variant == "v2" and _rain_pipeline_v2 is not None:
         try:
@@ -2617,6 +2791,8 @@ def predict_condition_outlook(
     )
 
     requested_variant = _resolve_requested_variant(force_variant, city_name)
+    if requested_variant != "v2" and _condition_pipeline is None and _condition_pipeline_v2 is not None:
+        requested_variant = "v2"
 
     if requested_variant == "v2" and _condition_pipeline_v2 is not None:
         try:
@@ -2777,6 +2953,7 @@ def build_daily_insight(
             "confidence": "media",
             "source": "provider",
             "expected_condition": condition_label,
+            "provider_condition": condition_label,
         }
         rain = {
             "model_ready": False,
@@ -2830,6 +3007,7 @@ def build_daily_insight(
                 "display_condition": _condition_display(provider_condition),
                 "confidence": "media",
                 "source": "provider",
+                "provider_condition": provider_condition,
             })
 
         blended_rain = forecast_pop
@@ -2839,8 +3017,11 @@ def build_daily_insight(
             provider_weight = 1.0 - blend_weight
             blended_rain = round((forecast_pop * provider_weight) + (rain["rain_probability"] * blend_weight), 3)
 
-        model_variant = condition.get("model_variant") or rain.get("model_variant") or requested_variant
-        if not (rain.get("model_ready") or condition.get("model_ready")):
+        if condition.get("model_ready"):
+            model_variant = condition.get("model_variant") or requested_variant
+        elif rain.get("model_ready"):
+            model_variant = rain.get("model_variant") or requested_variant
+        else:
             model_variant = "provider"
 
     delta = correction["correction"] if correction.get("model_ready") else 0.0
@@ -2854,6 +3035,7 @@ def build_daily_insight(
         "display_condition": condition["display_condition"],
         "condition_confidence": confidence,
         "condition_source": condition["source"],
+        "provider_condition": condition.get("provider_condition"),
         "rain_probability": blended_rain,
         "rain_blend_weight": round(float(blend_weight), 3),
         "rain_confidence": rain.get("confidence", "media") if rain.get("model_ready") else "provider",
@@ -2967,8 +3149,11 @@ def get_stats() -> dict:
         rain_v2_by_bucket = _compute_rain_kpis_by_bucket(recent_rows, "v2") if recent_rows else {}
 
         serving_variant = _global_model_variant_for_stats()
-        serving_kpis = v2_kpis if serving_variant == "v2" else v1_kpis
-        serving_rain_by_bucket = rain_v2_by_bucket if serving_variant == "v2" else rain_v1_by_bucket
+        rain_serving_variant = _rain_model_variant_for_stats()
+        condition_serving_variant = _condition_model_variant_for_stats()
+        rain_kpis = v2_kpis if rain_serving_variant == "v2" else v1_kpis
+        condition_kpis = v2_kpis if condition_serving_variant == "v2" else v1_kpis
+        serving_rain_by_bucket = rain_v2_by_bucket if rain_serving_variant == "v2" else rain_v1_by_bucket
 
         stats = {
             "total_predictions": int(total),
@@ -2978,16 +3163,18 @@ def get_stats() -> dict:
                 {"lead_hours": lead_hours or 0, "avg_abs_error": round(float(value), 3)}
                 for lead_hours, value in lead_error_rows
             ],
-            "rain_brier_14d": round(float(serving_kpis.get("rain_brier")), 4)
-            if serving_kpis.get("rain_brier") is not None else None,
-            "rain_f1_14d": round(float(serving_kpis.get("rain_f1")), 4)
-            if serving_kpis.get("rain_f1") is not None else None,
-            "condition_macro_f1_14d": round(float(serving_kpis.get("condition_macro_f1")), 4)
-            if serving_kpis.get("condition_macro_f1") is not None else None,
+            "rain_brier_14d": round(float(rain_kpis.get("rain_brier")), 4)
+            if rain_kpis.get("rain_brier") is not None else None,
+            "rain_f1_14d": round(float(rain_kpis.get("rain_f1")), 4)
+            if rain_kpis.get("rain_f1") is not None else None,
+            "condition_macro_f1_14d": round(float(condition_kpis.get("condition_macro_f1")), 4)
+            if condition_kpis.get("condition_macro_f1") is not None else None,
             "temp_mae_14d_by_lead": temp_mae_14d_by_lead,
             "temp_mae_14d_by_bucket": temp_mae_14d_by_bucket,
             "rain_14d_by_bucket": serving_rain_by_bucket,
             "model_variant": serving_variant,
+            "rain_model_variant": rain_serving_variant,
+            "condition_model_variant": condition_serving_variant,
             "kpi_window_days": settings.ml_kpi_window_days,
             "v1_kpis": v1_kpis,
             "v2_kpis": v2_kpis,

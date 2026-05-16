@@ -455,10 +455,13 @@ async def hourly_cycle():
             if result["success"]:
                 latest_model = await asyncio.to_thread(_db_latest_model_info)
                 cycle_message = "train_success"
-                print(
-                    f"[DONE] Modello temperatura aggiornato — MAE: {result['mae']:.3f} "
-                    f"(baseline {result['baseline_mae']:.3f})"
-                )
+                if result.get("temperature_model_ready") and result.get("mae") is not None:
+                    print(
+                        f"[DONE] Modello temperatura aggiornato — MAE: {result['mae']:.3f} "
+                        f"(baseline {result['baseline_mae']:.3f})"
+                    )
+                elif result.get("temperature_message"):
+                    print(f"[INFO] Modello temperatura non promosso: {result['temperature_message']}")
                 if result.get("rain_model_ready"):
                     print(
                         f"[DONE] Modello pioggia — Accuracy: {result.get('rain_accuracy', 0):.3f} "

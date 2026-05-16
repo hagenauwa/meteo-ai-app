@@ -1,4 +1,4 @@
-const CACHE_NAME = "le-previsioni-static-v18-telegram-pairing";
+const CACHE_NAME = "le-previsioni-static-v19-ml-impact";
 const STATIC_ASSETS = [
     "/",
     "/index.html",

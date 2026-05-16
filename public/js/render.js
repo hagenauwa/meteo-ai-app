@@ -114,6 +114,25 @@ function buildDaySummary(day) {
     return `${description}. Scenario nel complesso regolare per la giornata selezionata.`;
 }
 
+function hasMeaningfulMlImpact(payload) {
+    const correction = payload.ml?.correction;
+    if (correction?.model_ready && Math.abs(Number(correction.correction || 0)) >= 0.1) {
+        return true;
+    }
+
+    return (payload.daily || []).some(day => {
+        const ml = day.ml || {};
+        if (Math.abs(Number(ml.temperature_delta || 0)) >= 0.1) return true;
+        if (Number(ml.rain_blend_weight || 0) > 0) return true;
+        return (
+            ml.condition_source === "ml" &&
+            ml.provider_condition &&
+            ml.expected_condition &&
+            ml.expected_condition !== ml.provider_condition
+        );
+    });
+}
+
 function setText(id, value) {
     const node = document.getElementById(id);
     if (node) node.textContent = value;
@@ -130,12 +149,7 @@ function renderPlannerHead(payload, selectedDay, selectedIndex) {
     setText("selectedDayDate", formatDate(selectedDay.dt));
 
     const badge = document.getElementById("forecastBadge");
-    const mlReady = Boolean(
-        payload.ml?.summary?.model_ready ||
-        payload.ml?.summary?.condition_model_ready ||
-        payload.ml?.rain_prediction?.model_ready
-    );
-    badge.classList.toggle("hidden", !mlReady);
+    badge.classList.toggle("hidden", !hasMeaningfulMlImpact(payload));
 }
 
 function renderDaySelector(daily, selectedIndex, onDaySelect) {
@@ -265,12 +279,7 @@ function renderHourlyDetail(selectedDay, hourly) {
 
 function renderModelNote(payload) {
     const note = document.getElementById("modelNote");
-    const mlReady = Boolean(
-        payload.ml?.summary?.model_ready ||
-        payload.ml?.summary?.condition_model_ready ||
-        payload.ml?.rain_prediction?.model_ready
-    );
-    note.textContent = mlReady
+    note.textContent = hasMeaningfulMlImpact(payload)
         ? "Le previsioni vengono affinate automaticamente usando osservazioni meteo reali, nuvolosità e vento."
         : "Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.";
 }

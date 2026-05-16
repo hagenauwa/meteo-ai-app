@@ -1,6 +1,7 @@
 """Unit test mirati per ML v2 (feature engineering, calibrazione, horizon blending)."""
 import importlib
 import pickle
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import numpy as np
@@ -196,6 +197,38 @@ def test_predict_rain_probability_supports_legacy_models(monkeypatch):
     assert result["rain_probability"] == 0.2
 
 
+def test_predict_rain_probability_uses_v2_when_v1_is_not_available(monkeypatch):
+    class FakeRainV2Pipeline:
+        def predict_proba(self, features):
+            assert features.shape == (1, 26)
+            return np.array([[0.3, 0.7]])
+
+    monkeypatch.setattr(ml_model, "_rain_pipeline", None)
+    monkeypatch.setattr(ml_model, "_rain_pipeline_v2", FakeRainV2Pipeline())
+    monkeypatch.setattr(ml_model, "_rain_platt_v2", None)
+    monkeypatch.setattr(ml_model, "_ensure_latest_model_loaded", lambda **kwargs: None)
+
+    result = ml_model.predict_rain_probability(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        cloud_cover=45.0,
+        lead_hours=72,
+        forecast_precipitation=0.4,
+        forecast_wind_speed=18.0,
+        forecast_wind_direction=180.0,
+        forecast_weather_code=61,
+    )
+
+    assert result["model_ready"] is True
+    assert result["model_variant"] == "v2"
+    assert result["rain_probability"] == 0.7
+
+
 def test_predict_condition_outlook_supports_legacy_models(monkeypatch):
     class FakePipeline:
         def __init__(self):
@@ -235,6 +268,38 @@ def test_predict_condition_outlook_supports_legacy_models(monkeypatch):
     assert result["expected_condition"] == "parzialmente nuvoloso"
 
 
+def test_predict_condition_outlook_uses_v2_when_v1_is_not_available(monkeypatch):
+    class FakeConditionV2Pipeline:
+        def predict_proba(self, features):
+            assert features.shape == (1, 27)
+            return np.array([[0.1, 0.1, 0.1, 0.7]])
+
+    monkeypatch.setattr(ml_model, "_condition_pipeline", None)
+    monkeypatch.setattr(ml_model, "_condition_pipeline_v2", FakeConditionV2Pipeline())
+    monkeypatch.setattr(ml_model, "_condition_platt_v2", None)
+    monkeypatch.setattr(ml_model, "_ensure_latest_model_loaded", lambda **kwargs: None)
+
+    result = ml_model.predict_condition_outlook(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        cloud_cover=45.0,
+        lead_hours=72,
+        forecast_precipitation=0.4,
+        forecast_wind_speed=18.0,
+        forecast_wind_direction=180.0,
+        forecast_weather_code=61,
+    )
+
+    assert result["model_ready"] is True
+    assert result["model_variant"] == "v2"
+    assert result["expected_condition"] == "pioggia"
+
+
 def test_platt_scaler_produces_bounded_probabilities():
     raw_probs = np.array([0.1, 0.2, 0.4, 0.55, 0.6, 0.8, 0.9, 0.3, 0.7, 0.85] * 6)
     y = np.array([0, 0, 0, 1, 1, 1, 1, 0, 1, 1] * 6)
@@ -244,6 +309,43 @@ def test_platt_scaler_produces_bounded_probabilities():
 
     calibrated = [ml_model._apply_platt(float(prob), params) for prob in raw_probs]
     assert all(0.0 < prob < 1.0 for prob in calibrated)
+
+
+def test_v2_gates_are_independent_when_v1_component_is_missing():
+    rain_gate = ml_model._rain_v2_gate(
+        {},
+        {},
+        {
+            "brier": 0.04,
+            "baseline_brier": 0.08,
+            "f1": 0.4,
+            "baseline_f1": 0.0,
+        },
+    )
+    condition_gate = ml_model._condition_v2_gate(
+        {},
+        {},
+        {
+            "macro_f1": 0.55,
+            "baseline_macro_f1": 0.45,
+        },
+    )
+
+    assert rain_gate["pass"] is True
+    assert rain_gate["source"] == "training_baseline"
+    assert condition_gate["pass"] is True
+    assert condition_gate["source"] == "training_baseline"
+
+
+def test_stats_variant_helpers_expose_v2_when_v1_component_is_missing(monkeypatch):
+    monkeypatch.setattr(ml_model, "_rain_pipeline", None)
+    monkeypatch.setattr(ml_model, "_rain_pipeline_v2", object())
+    monkeypatch.setattr(ml_model, "_condition_pipeline", object())
+    monkeypatch.setattr(ml_model, "_condition_pipeline_v2", object())
+    monkeypatch.setattr(ml_model, "_global_model_variant_for_stats", lambda: "v1")
+
+    assert ml_model._rain_model_variant_for_stats() == "v2"
+    assert ml_model._condition_model_variant_for_stats() == "v1"
 
 
 def test_daily_insight_applies_horizon_support_rules(monkeypatch):
@@ -371,6 +473,50 @@ def test_daily_insight_low_pop_clear_code_does_not_claim_rain(monkeypatch):
     assert insight["expected_condition"] == "sereno"
     assert insight["display_condition"] == "Cielo sereno"
     assert "Pioggia probabile" not in insight["summary"]
+
+
+def test_daily_insight_exposes_provider_condition_for_frontend_impact_checks(monkeypatch):
+    monkeypatch.setattr(
+        ml_model,
+        "predict_correction",
+        lambda **kwargs: {"model_ready": False, "correction": 0.0, "corrected_temp": kwargs["temp"]},
+    )
+    monkeypatch.setattr(
+        ml_model,
+        "predict_rain_probability",
+        lambda **kwargs: {"model_ready": False, "model_variant": "provider"},
+    )
+    monkeypatch.setattr(
+        ml_model,
+        "predict_condition_outlook",
+        lambda **kwargs: {
+            "model_ready": True,
+            "expected_condition": "pioggia",
+            "display_condition": "Pioggia probabile",
+            "confidence": "media",
+            "source": "ml",
+            "model_variant": "v1",
+            "provider_condition": "sereno",
+        },
+    )
+
+    day = {
+        "dt": "2026-04-11",
+        "temp": {"min": 10.0, "max": 20.0, "day": 15.0},
+        "humidity": 70,
+        "cloud_cover": 10,
+        "wind_speed": 8,
+        "wind_deg": 180,
+        "pop": 0.15,
+        "precipitation_sum": 0.0,
+        "weather_code": 1,
+    }
+
+    insight = ml_model.build_daily_insight(day=day, lat=41.9, lon=12.5, region="Lazio", lead_hours=14, city_name="Roma")
+
+    assert insight["condition_source"] == "ml"
+    assert insight["provider_condition"] == "sereno"
+    assert insight["expected_condition"] == "pioggia"
 
 
 def test_daily_insight_rain_code_or_real_precipitation_claims_rain(monkeypatch):
@@ -710,8 +856,8 @@ def test_train_failure_reports_temperature_v1_and_v2_diagnostics(monkeypatch):
 
     rows = [
         {
-            "target_time": object(),
-            "verified_at": object(),
+            "target_time": datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+            "verified_at": datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
             "region": "Lazio",
         }
         for _ in range(20)
@@ -723,6 +869,7 @@ def test_train_failure_reports_temperature_v1_and_v2_diagnostics(monkeypatch):
         SimpleNamespace(
             ml_training_window_days=7,
             ml_training_max_rows=100,
+            ml_kpi_window_days=14,
         ),
     )
     monkeypatch.setattr(ml_model, "_prepare_training_rows", lambda *args, **kwargs: rows)
@@ -748,6 +895,14 @@ def test_train_failure_reports_temperature_v1_and_v2_diagnostics(monkeypatch):
             "baseline_mae": 0.3,
             "feature_variant": "v2",
         },
+    )
+    monkeypatch.setattr(ml_model, "_train_rain_pipeline", lambda rows, encoder: {"success": False, "message": "rain off"})
+    monkeypatch.setattr(ml_model, "_train_condition_pipeline", lambda rows, encoder: {"success": False, "message": "condition off"})
+    monkeypatch.setattr(ml_model, "_train_rain_pipeline_v2", lambda rows, encoder: {"success": False, "message": "rain v2 off"})
+    monkeypatch.setattr(
+        ml_model,
+        "_train_condition_pipeline_v2",
+        lambda rows, encoder: {"success": False, "message": "condition v2 off"},
     )
 
     result = ml_model.train(min_samples=10)
