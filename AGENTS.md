@@ -13,6 +13,7 @@ App meteo italiana (**leprevisioni**). Frontend Vanilla JS su Netlify, backend F
 ## Non negoziabili
 
 - Rispondere in italiano all'utente, salvo richiesta diversa.
+- In caso di dubbi sulla richiesta dell'utente, fare domande prima di procedere con assunzioni operative.
 - Prima di modificare codice, esplorare con `rg` / `rg --files`. Non fidarsi del `README.md`: verificare sempre nel codice reale.
 - Non committare: `.env`, segreti, DB locali, cache, artifact generati.
 - Non fare `git push` né deploy senza richiesta esplicita. La parola `deploy` è richiesta sufficiente — non chiedere conferma aggiuntiva.
