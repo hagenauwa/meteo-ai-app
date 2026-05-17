@@ -1,10 +1,14 @@
 """Test unitari per _find_rain_time_slots() in telegram_notify_service.py."""
 import sys
 import os
+from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from telegram_notify_service import _find_rain_time_slots
+from scripts import run_telegram_checks
 
 
 def test_no_rain():
@@ -134,3 +138,26 @@ def test_missing_data():
     # Empty time list
     result = _find_rain_time_slots({"time": [], "precipitation_probability": []})
     assert result == []
+
+
+def test_telegram_cron_requires_secrets_in_production(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(
+        run_telegram_checks,
+        "settings",
+        SimpleNamespace(is_production=True, telegram_bot_token=""),
+    )
+
+    with pytest.raises(RuntimeError, match="DATABASE_URL, TELEGRAM_BOT_TOKEN"):
+        run_telegram_checks._validate_runtime_config()
+
+
+def test_telegram_cron_allows_development_without_production_secrets(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(
+        run_telegram_checks,
+        "settings",
+        SimpleNamespace(is_production=False, telegram_bot_token=""),
+    )
+
+    run_telegram_checks._validate_runtime_config()

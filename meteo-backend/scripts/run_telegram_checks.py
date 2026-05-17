@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -9,12 +10,31 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from config import settings
 from database import init_db
 from telegram_notify_service import check_telegram_rain_alerts, check_telegram_daily_forecasts
 
 
+def _validate_runtime_config() -> None:
+    if not settings.is_production:
+        return
+
+    missing = []
+    if not os.getenv("DATABASE_URL", "").strip():
+        missing.append("DATABASE_URL")
+    if not settings.telegram_bot_token:
+        missing.append("TELEGRAM_BOT_TOKEN")
+
+    if missing:
+        raise RuntimeError(
+            "Configurazione cron Telegram incompleta: "
+            + ", ".join(missing)
+        )
+
+
 async def main() -> None:
     print("[TELEGRAM-CRON] Avvio check notifiche Telegram")
+    _validate_runtime_config()
     init_db()
 
     rain_result = await check_telegram_rain_alerts()
