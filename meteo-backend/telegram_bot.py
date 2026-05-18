@@ -6,6 +6,7 @@ Gestisce:
   - Verifica codice OTP per collegare chat_id
   - Risposte automatiche agli utenti
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,43 +35,123 @@ def _is_default_city(value: str | None) -> bool:
     return value is None or not value.strip()
 
 
-def _copy_preferences_if_default(source: TelegramSubscription, target: TelegramSubscription) -> None:
+def _copy_preferences_if_default(
+    source: TelegramSubscription, target: TelegramSubscription
+) -> None:
     source_row = cast(Any, source)
     target_row = cast(Any, target)
 
     if _is_default_city(target_row.city) and source_row.city:
         target_row.city = source_row.city
-    if target_row.rain_alerts_enabled is not True and source_row.rain_alerts_enabled is True:
+    if (
+        target_row.rain_alerts_enabled is not True
+        and source_row.rain_alerts_enabled is True
+    ):
         target_row.rain_alerts_enabled = source_row.rain_alerts_enabled
-    if target_row.daily_forecast_enabled is not True and source_row.daily_forecast_enabled is True:
+    if (
+        target_row.daily_forecast_enabled is not True
+        and source_row.daily_forecast_enabled is True
+    ):
         target_row.daily_forecast_enabled = source_row.daily_forecast_enabled
-    if target_row.daily_forecast_hour in (None, 8) and source_row.daily_forecast_hour is not None:
+    if (
+        target_row.daily_forecast_hour in (None, 8)
+        and source_row.daily_forecast_hour is not None
+    ):
         target_row.daily_forecast_hour = source_row.daily_forecast_hour
 
 
-async def send_telegram_message(chat_id: int, text: str) -> bool:
-    """Invia un messaggio Telegram a una chat specifica."""
+async def send_telegram_message(
+    chat_id: int,
+    text: str,
+    *,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+) -> bool:
+    """
+    Invia un messaggio Telegram a una chat specifica.
+    Retry con backoff esponenziale per errori recuperabili.
+    """
     if not settings.telegram_bot_token:
         logger.warning("TELEGRAM_BOT_TOKEN non configurato")
         return False
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                _bot_api_url("sendMessage"),
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                },
-                timeout=10,
+    last_exc: Exception | None = None
+
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    _bot_api_url("sendMessage"),
+                    json={
+                        "chat_id": chat_id,
+                        "text": text,
+                        "parse_mode": "HTML",
+                    },
+                    timeout=10,
+                )
+
+                # Gestione rate limit Telegram (429)
+                if resp.status_code == 429:
+                    retry_after = (
+                        resp.json().get("parameters", {}).get("retry_after", 5)
+                    )
+                    logger.warning(
+                        f"Telegram rate limit 429 per {chat_id}, "
+                        f"retry dopo {retry_after}s (tentativo {attempt + 1}/{max_retries})"
+                    )
+                    if attempt < max_retries - 1:
+                        import asyncio
+
+                        await asyncio.sleep(retry_after)
+                        continue
+                    return False
+
+                # Chat bloccata o non trovata (403) — non riprovare
+                if resp.status_code == 403:
+                    logger.warning(
+                        f"Telegram 403 per {chat_id}: chat bloccata o bot rimosso"
+                    )
+                    return False
+
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("ok", False)
+
+        except httpx.TimeoutException as exc:
+            last_exc = exc
+            logger.warning(
+                f"Timeout invio Telegram a {chat_id} "
+                f"(tentativo {attempt + 1}/{max_retries}): {exc}"
             )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("ok", False)
-    except Exception as exc:
-        logger.error(f"Errore invio messaggio Telegram a {chat_id}: {exc}")
-        return False
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            # Errori server Telegram (5xx) — retry
+            if exc.response is not None and exc.response.status_code >= 500:
+                logger.warning(
+                    f"Errore server Telegram {exc.response.status_code} per {chat_id} "
+                    f"(tentativo {attempt + 1}/{max_retries})"
+                )
+            else:
+                # Altri errori HTTP — non retry
+                logger.error(f"Errore HTTP Telegram per {chat_id}: {exc}")
+                return False
+        except Exception as exc:
+            last_exc = exc
+            logger.error(f"Errore invio messaggio Telegram a {chat_id}: {exc}")
+            return False
+
+        # Backoff esponenziale: 1s, 2s, 4s...
+        if attempt < max_retries - 1:
+            import asyncio
+
+            delay = base_delay * (2**attempt)
+            await asyncio.sleep(delay)
+
+    if last_exc:
+        logger.error(
+            f"Invio Telegram fallito dopo {max_retries} tentativi a {chat_id}: {last_exc}"
+        )
+    return False
 
 
 def _find_subscription_by_code(code: str) -> TelegramSubscription | None:
@@ -157,7 +238,9 @@ async def register_webhook() -> bool:
             resp.raise_for_status()
             data = resp.json()
             if data.get("ok"):
-                logger.info(f"Webhook Telegram registrato: {settings.telegram_webhook_url}")
+                logger.info(
+                    f"Webhook Telegram registrato: {settings.telegram_webhook_url}"
+                )
                 return True
             else:
                 logger.warning(f"Registrazione webhook Telegram fallita: {data}")
@@ -231,8 +314,14 @@ async def handle_webhook_update(update: dict[str, Any]) -> None:
 
             sub_row = cast(Any, sub)
             city = sub_row.city or "Non impostata"
-            rain = "✅ Attive" if sub_row.rain_alerts_enabled is True else "❌ Disattive"
-            daily = "✅ Attive" if sub_row.daily_forecast_enabled is True else "❌ Disattive"
+            rain = (
+                "✅ Attive" if sub_row.rain_alerts_enabled is True else "❌ Disattive"
+            )
+            daily = (
+                "✅ Attive"
+                if sub_row.daily_forecast_enabled is True
+                else "❌ Disattive"
+            )
             hour = sub_row.daily_forecast_hour
 
             await send_telegram_message(
