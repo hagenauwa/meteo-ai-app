@@ -261,6 +261,55 @@ def test_hourly_cycle_success_persists_training_state_and_calls_cleanup(monkeypa
         assert state.verified_count_at_last_train == 1
 
 
+def test_count_verified_since_uses_timestamp_not_retention_affected_total(scheduler_db):
+    with scheduler_db() as db:
+        db.add(
+            City(
+                id=10,
+                name="Massa",
+                name_lower="massa",
+                region="Toscana",
+                province="Massa-Carrara",
+                lat=44.04,
+                lon=10.14,
+                population=100,
+                locality_type="comune",
+            )
+        )
+        last_train_at = datetime(2026, 5, 21, 6, tzinfo=timezone.utc)
+        before_target = last_train_at - timedelta(hours=1)
+        after_target = last_train_at + timedelta(hours=1)
+        db.add_all([
+            MlPrediction(
+                city_id=10,
+                predicted_at=before_target - timedelta(hours=1),
+                target_time=before_target,
+                lead_hours=1,
+                predicted_temp=18.0,
+                forecast_temp=18.0,
+                verified=True,
+                actual_temp=18.5,
+                error=0.5,
+                verified_at=before_target,
+            ),
+            MlPrediction(
+                city_id=10,
+                predicted_at=after_target - timedelta(hours=1),
+                target_time=after_target,
+                lead_hours=1,
+                predicted_temp=19.0,
+                forecast_temp=19.0,
+                verified=True,
+                actual_temp=20.0,
+                error=1.0,
+                verified_at=after_target,
+            ),
+        ])
+        db.commit()
+
+    assert scheduler._db_count_verified_since(last_train_at) == 1
+
+
 def test_hourly_cycle_failure_marks_state_without_reraising(monkeypatch, scheduler_db):
     _seed_cities(scheduler_db)
 

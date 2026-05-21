@@ -1138,12 +1138,25 @@ def _build_condition_features_for_inference(
     ), "v1"
 
 
+def _normalise_province(value: str | None) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _allowed_training_provinces() -> set[str]:
+    return {
+        _normalise_province(province)
+        for province in getattr(settings, "ml_training_allowed_provinces", ())
+        if _normalise_province(province)
+    }
+
+
 def _prepare_training_rows(
     db: Session,
     *,
     window_start: datetime | None = None,
     limit: int | None = None,
 ) -> list[dict]:
+    allowed_provinces = _allowed_training_provinces()
     query = (
         db.query(
             MlPrediction.predicted_at,
@@ -1167,6 +1180,7 @@ def _prepare_training_rows(
             City.lat,
             City.lon,
             City.region,
+            City.province,
         )
         .join(City, MlPrediction.city_id == City.id)
         .filter(MlPrediction.verified.is_(True))
@@ -1180,6 +1194,9 @@ def _prepare_training_rows(
             MlPrediction.verified_at >= window_start,
         )
 
+    if allowed_provinces:
+        query = query.filter(City.province.isnot(None))
+
     if limit is not None and limit > 0:
         query = query.order_by(MlPrediction.verified_at.desc(), MlPrediction.id.desc()).limit(int(limit))
 
@@ -1187,6 +1204,10 @@ def _prepare_training_rows(
 
     prepared: list[dict] = []
     for row in rows:
+        province_key = _normalise_province(row.province)
+        if allowed_provinces and province_key not in allowed_provinces:
+            continue
+
         target_time = row.target_time or row.predicted_at
         if not target_time:
             continue
@@ -1204,6 +1225,7 @@ def _prepare_training_rows(
             "cloud_cover": row.forecast_cloud_cover,
             "lead_hours": row.lead_hours or 0,
             "region": row.region or "Sconosciuta",
+            "province": row.province,
             "error": row.error,
             "forecast_precipitation": row.forecast_precipitation,
             "forecast_weather_code": row.forecast_weather_code,

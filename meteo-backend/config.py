@@ -59,6 +59,7 @@ class Settings:
     ml_min_new_verified_for_retrain: int = 500
     ml_city_sample_size: int = 300
     ml_city_core_size: int = 80
+    ml_training_allowed_provinces: tuple[str, ...] = ("Massa-Carrara", "MS")
     ml_forecast_leads: tuple[int, ...] = (1, 3, 6, 14, 38, 86, 158)
     ml_cycle_every_hours: int = 1
     ml_observation_retention_days: int = 7
@@ -128,6 +129,9 @@ def load_settings() -> Settings:
         ml_min_new_verified_for_retrain=max(50, int(os.getenv("ML_MIN_NEW_VERIFIED_FOR_RETRAIN", "500"))),
         ml_city_sample_size=max(1, int(os.getenv("ML_CITY_SAMPLE_SIZE", "300"))),
         ml_city_core_size=max(0, int(os.getenv("ML_CITY_CORE_SIZE", "80"))),
+        ml_training_allowed_provinces=tuple(
+            _split_csv(os.getenv("ML_TRAINING_ALLOWED_PROVINCES", "Massa-Carrara,MS"))
+        ),
         ml_forecast_leads=tuple(
             sorted({
                 max(1, min(240, lead))

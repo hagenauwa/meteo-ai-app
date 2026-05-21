@@ -63,6 +63,29 @@ def _city_group_key(city: dict) -> tuple[str, str]:
     )
 
 
+def _normalise_province(value: str | None) -> str:
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def _allowed_training_provinces() -> set[str]:
+    return {
+        _normalise_province(province)
+        for province in getattr(settings, "ml_training_allowed_provinces", ())
+        if _normalise_province(province)
+    }
+
+
+def _filter_training_cities_by_province(cities: list[dict]) -> list[dict]:
+    allowed = _allowed_training_provinces()
+    if not allowed:
+        return cities
+    return [
+        city
+        for city in cities
+        if _normalise_province(city.get("province")) in allowed
+    ]
+
+
 def _cycle_seed(now: datetime) -> int:
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
@@ -72,6 +95,7 @@ def _cycle_seed(now: datetime) -> int:
 
 def _select_training_cities(cities: list[dict], now: datetime | None = None) -> list[dict]:
     """Seleziona un campione stabile, bilanciato e rotante per contenere il carico DB."""
+    cities = _filter_training_cities_by_province(cities)
     sample_size = min(len(cities), settings.ml_city_sample_size)
     if sample_size <= 0 or len(cities) <= sample_size:
         return sorted(cities, key=lambda city: int(city["id"]))
@@ -247,6 +271,19 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
 def _db_count_verified() -> int:
     with SessionLocal() as db:
         return db.query(MlPrediction).filter(MlPrediction.verified.is_(True)).count()
+
+
+def _db_count_verified_since(since: datetime | None) -> int:
+    if since is None:
+        return _db_count_verified()
+    with SessionLocal() as db:
+        return (
+            db.query(MlPrediction)
+            .filter(MlPrediction.verified.is_(True))
+            .filter(MlPrediction.verified_at.isnot(None))
+            .filter(MlPrediction.verified_at > since)
+            .count()
+        )
 
 
 def _db_get_or_create_training_state(db) -> MlTrainingState:
@@ -434,7 +471,10 @@ async def hourly_cycle():
         last_training_iso = training_state.get("last_successful_train_at")
         last_training = datetime.fromisoformat(last_training_iso) if last_training_iso else None
         verified_at_last_train = int(training_state.get("verified_count_at_last_train") or 0)
-        new_verified_since_last = max(0, total_verified - verified_at_last_train)
+        if last_training is None:
+            new_verified_since_last = max(0, total_verified - verified_at_last_train)
+        else:
+            new_verified_since_last = await asyncio.to_thread(_db_count_verified_since, last_training)
         model_ready = bool(ml_model.get_public_summary().get("model_ready"))
         should_retrain = (
             total_verified >= MIN_VERIFIED_FOR_TRAINING
