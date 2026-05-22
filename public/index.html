@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Previsioni meteo per città e giorno, con risultati chiari e aggiornati per l'Italia.">
-    <meta name="theme-color" content="#0f4c81">
+    <meta name="theme-color" content="#a8231e">
     <title>Le Previsioni</title>
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -69,231 +69,28 @@
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="style.css">
-    <style>
-        .icon-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 42px;
-            height: 42px;
-            border: 1px solid rgba(226, 232, 240, 0.96);
-            border-radius: 14px;
-            background: rgba(255, 255, 255, 0.88);
-            color: #0f172a;
-            cursor: pointer;
-            transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
-            font-size: 16px;
-        }
-        .icon-btn:hover {
-            transform: translateY(-2px);
-            background: #ffffff;
-        }
-        .icon-btn:active {
-            transform: translateY(0);
-        }
-        .icon-btn.is-active {
-            background: linear-gradient(135deg, #3b82f6, #06b6d4);
-            color: #ffffff;
-            border-color: transparent;
-        }
-
-        /* Telegram Panel Styles */
-        .telegram-section {
-            padding: 20px 0;
-        }
-        .telegram-card {
-            background: var(--card, rgba(255,255,255,0.88));
-            border-radius: var(--radius-lg, 28px);
-            padding: 24px;
-            box-shadow: var(--shadow, 0 20px 60px rgba(15,23,42,0.14));
-        }
-        .telegram-card-head {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-        .telegram-card-head h3 {
-            font-size: 1.2rem;
-            margin: 0;
-        }
-        .telegram-content {
-            min-height: 100px;
-        }
-        .telegram-disconnected p {
-            margin-bottom: 16px;
-            color: var(--ink-soft, #64748b);
-        }
-        .telegram-link-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .telegram-instruction {
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        .telegram-code-display {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
-            padding: 16px;
-            background: var(--sky, #f1f5f9);
-            border-radius: var(--radius-md, 18px);
-        }
-        .telegram-code-display code {
-            font-size: 1.5rem;
-            font-weight: 700;
-            letter-spacing: 4px;
-            color: var(--accent, #3b82f6);
-        }
-        .icon-btn-sm {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 32px;
-            height: 32px;
-            border: 1px solid var(--line, rgba(226,232,240,0.96));
-            border-radius: 8px;
-            background: white;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
-        }
-        .icon-btn-sm:hover {
-            background: var(--sky, #f1f5f9);
-        }
-        .telegram-steps {
-            color: var(--ink-soft, #64748b);
-            line-height: 1.8;
-            margin-bottom: 16px;
-        }
-        .telegram-steps a {
-            color: var(--accent, #3b82f6);
-            text-decoration: none;
-            font-weight: 600;
-        }
-        .telegram-steps a:hover {
-            text-decoration: underline;
-        }
-        .telegram-waiting {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--ink-soft, #64748b);
-            margin-bottom: 12px;
-        }
-        .spinner-sm {
-            width: 18px;
-            height: 18px;
-            border: 2px solid var(--line, #e2e8f0);
-            border-top-color: var(--accent, #3b82f6);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        .telegram-status-header {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 12px;
-            font-weight: 700;
-            font-size: 1.1rem;
-        }
-        .telegram-check-icon {
-            color: #22c55e;
-            font-size: 1.3rem;
-        }
-        .telegram-username {
-            color: var(--ink-soft, #64748b);
-            margin-bottom: 16px;
-        }
-        .telegram-preferences {
-            background: var(--sky, #f1f5f9);
-            border-radius: var(--radius-md, 18px);
-            padding: 20px;
-            margin-bottom: 16px;
-        }
-        .telegram-preferences h4 {
-            margin-bottom: 16px;
-            font-size: 1rem;
-        }
-        .telegram-pref-item {
-            margin-bottom: 12px;
-        }
-        .telegram-toggle-label {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            cursor: pointer;
-        }
-        .telegram-toggle-label input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            accent-color: var(--accent, #3b82f6);
-        }
-        .telegram-hour-picker {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .telegram-hour-picker select {
-            padding: 6px 10px;
-            border: 1px solid var(--line, #e2e8f0);
-            border-radius: 8px;
-            font-size: 0.9rem;
-        }
-        .telegram-city-input {
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid var(--line, #e2e8f0);
-            border-radius: 8px;
-            font-size: 0.9rem;
-            margin-top: 4px;
-        }
-        .telegram-save-btn {
-            margin-top: 8px;
-        }
-        .telegram-save-msg {
-            margin-left: 10px;
-            font-size: 0.9rem;
-        }
-        .telegram-save-msg.success {
-            color: #22c55e;
-        }
-        .telegram-save-msg.error {
-            color: #ef4444;
-        }
-        .telegram-unlink-btn {
-            color: #ef4444;
-            border-color: #fecaca;
-        }
-        .telegram-unlink-btn:hover {
-            background: #fef2f2;
-        }
-        .telegram-error {
-            text-align: center;
-            color: #ef4444;
-        }
-        .telegram-error i {
-            margin-right: 6px;
-        }
-        .btn-sm {
-            padding: 8px 16px;
-            font-size: 0.9rem;
-        }
-    </style>
+    <link rel="stylesheet" href="editorial.css">
 </head>
-<body>
+<body data-scenario="sereno">
+    <section class="allerta hidden" id="allertaBanner" data-level="gialla" role="alert">
+        <span class="allerta-mark" aria-hidden="true">!</span>
+        <div>
+            <p class="allerta-kicker">▌ Edizione speciale · Allerta meteo <span id="allertaLivello">gialla</span></p>
+            <p class="allerta-msg" id="allertaMsg"></p>
+        </div>
+    </section>
+
     <header class="header">
         <div class="container">
+            <div class="paper-meta">
+                <span id="paperDate">--</span>
+                <span id="paperUpdated">Aggiornato alle --:--</span>
+            </div>
             <div class="brand-row">
                 <div class="logo">
-                    <i class="fas fa-cloud-sun-rain"></i>
                     <div>
                         <h1>Le Previsioni</h1>
-                        <p class="brand-kicker">QUELLE BELLE</p>
+                        <p class="brand-kicker">quelle belle</p>
                     </div>
                 </div>
                 <p class="subtitle">Cerca una città, scegli un giorno e guarda subito cosa aspettarti.</p>
@@ -400,6 +197,13 @@
                             </div>
                         </div>
 
+                        <p class="confronto">
+                            <span><em>oggi</em> <strong id="confrOggi">--</strong></span>
+                            <span><em>ieri</em> <strong id="confrIeri">n/d</strong></span>
+                            <span><em>media periodo</em> <strong id="confrMedia">--</strong></span>
+                            <span><em>percepita</em> <strong id="confrPercepita">--</strong></span>
+                        </p>
+
                         <div class="selected-stats">
                             <div class="stat-tile">
                                 <span class="stat-label">Massima</span>
@@ -468,6 +272,21 @@
                     </aside>
                 </div>
 
+                <aside class="ml-trust" aria-label="Affidabilità del modello">
+                    <p class="ml-trust-kicker">● Modello affinato in locale</p>
+                    <div><strong id="mlCicli">--</strong> <span>cicli per città</span></div>
+                    <div><strong id="mlMargine">--</strong> <span>margine sulle massime</span></div>
+                    <div><strong id="mlAccuratezza">--</strong> <span>accuratezza ultimi 30 giorni</span></div>
+                    <em id="mlOsservazioni">Statistiche ML dettagliate non ancora esposte dal backend.</em>
+                </aside>
+
+                <section class="sintesi" aria-label="Sintesi della settimana">
+                    <p class="sintesi-kicker">▌ A colpo<br>d'occhio</p>
+                    <p class="sintesi-body" id="sintesiBody">
+                        <em>Scenario in aggiornamento</em>: cerca una città per leggere una sintesi rapida dei prossimi giorni.
+                    </p>
+                </section>
+
                 <section id="hourlySection" class="forecast-detail-section">
                     <div class="section-head">
                         <div>
@@ -521,7 +340,8 @@
     </section>
 
     <footer class="footer">
-        <div class="container footer-grid">
+        <div class="container">
+            <div class="footer-grid">
             <div class="footer-copy">
                 <p>Dati forniti da <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a>.</p>
                 <p id="modelNote">Le previsioni vengono aggiornate automaticamente con osservazioni meteo recenti.</p>
@@ -570,6 +390,13 @@
                     </div>
                 </div>
             </section>
+            </div>
+
+            <div class="colophon">
+                <span>open-meteo · <span id="colophonUpdated">aggiornato alle --:--</span></span>
+                <em>Le previsioni, quelle belle.</em>
+                <span class="accent-name">Accento di oggi:</span>
+            </div>
         </div>
     </footer>
 

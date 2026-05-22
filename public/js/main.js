@@ -18,6 +18,31 @@ let selectedDayIndex = 0;
 let latestSearchToken = 0;
 const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
+function calcolaScenario(weatherCode, hour, hasAllerta) {
+    if (hasAllerta) return "tempesta";
+    if (hour < 6 || hour >= 21) return "notte";
+    if (weatherCode >= 95) return "tempesta";
+    if ((weatherCode >= 51 && weatherCode <= 67) || (weatherCode >= 80 && weatherCode <= 86)) return "pioggia";
+    return "sereno";
+}
+
+function getAllertaFromPayload(payload) {
+    if (!payload) return null;
+    if (payload.allerta) return payload.allerta;
+    if (payload.alert) return payload.alert;
+    if (Array.isArray(payload.alerts) && payload.alerts.length) return payload.alerts[0];
+    if (payload.rain_alert) return payload.rain_alert;
+    return null;
+}
+
+function applicaScenarioVisivo(current, allerta) {
+    if (!current) return;
+    const ora = new Date().getHours();
+    const weatherCode = Number(current.weather_code ?? current.weathercode ?? current.code ?? 0);
+    const scenario = calcolaScenario(weatherCode, ora, !!allerta);
+    document.body.dataset.scenario = scenario;
+}
+
 function applyMlEnrichment(payload, enrichment) {
     if (!payload || !enrichment) return payload;
 
@@ -66,6 +91,7 @@ function renderCurrentView() {
             renderCurrentView();
         },
     });
+    applicaScenarioVisivo(currentPayload.current, getAllertaFromPayload(currentPayload));
     updateFavoriteButtonState();
 }
 

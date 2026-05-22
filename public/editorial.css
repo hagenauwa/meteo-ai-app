@@ -1,0 +1,1079 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Le Previsioni — Editorial Theme
+   ───────────────────────────────────────────────────────────────────
+   Drop-in replacement / overlay for public/style.css.
+   Mantiene gli stessi nomi di classe del progetto attuale.
+   Aggiunge classi nuove per: allerta, ML trust, sintesi, confronto,
+   moduli (telegram, mappa), 4 scenari cromatici.
+
+   Uso minimo:
+     <link rel="stylesheet" href="editorial.css">
+
+   Uso scenario reattivo (cambia accento col meteo):
+     <body data-scenario="sereno|pioggia|notte|tempesta">
+
+   Modalità notturna manuale:
+     <body data-scenario="notte">
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Fonts ──────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,500&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+/* ═══ TOKENS ═══════════════════════════════════════════════════════ */
+
+:root {
+  /* Tipografie */
+  --font-serif: 'Fraunces', 'Times New Roman', serif;
+  --font-sans:  'Manrope', system-ui, sans-serif;
+  --font-mono:  'IBM Plex Mono', ui-monospace, monospace;
+  --font-num:   'Manrope', system-ui, sans-serif;
+
+  /* Spaziature & raggi (l'editoriale usa angoli vivi, ma li teniamo come variabili) */
+  --gutter: 56px;
+  --rule-w: 1px;
+  --rule-h: 2px;
+  --transition: 700ms cubic-bezier(.4, 0, .2, 1);
+
+  /* ── Palette SERENO (default) ── */
+  --paper:     #f3ece0;
+  --paper-hi:  #f8f2e7;
+  --paper-lo:  #ecdfcd;
+  --ink:       #14110d;
+  --ink-soft:  #574e42;
+  --ink-mute:  #8b8273;
+  --rule:      rgba(20, 17, 13, 0.18);
+  --rule-soft: rgba(20, 17, 13, 0.08);
+  --accent:      #a8231e;
+  --accent-deep: #7a1814;
+  --accent-tint: rgba(168, 35, 30, 0.08);
+  --dot-grid:    rgba(20, 17, 13, 0.025);
+  --accent-name: 'rosso bandiera';
+}
+
+/* ── Scenario: PIOGGIA — accento blu inchiostro ── */
+body[data-scenario='pioggia'] {
+  --paper:     #ecebe4;
+  --paper-hi:  #f1f0e9;
+  --paper-lo:  #dcdcd3;
+  --ink:       #14110d;
+  --ink-soft:  #4a5466;
+  --ink-mute:  #7a8294;
+  --rule:      rgba(20, 30, 46, 0.18);
+  --rule-soft: rgba(20, 30, 46, 0.08);
+  --accent:      #1e4a8a;
+  --accent-deep: #163a6f;
+  --accent-tint: rgba(30, 74, 138, 0.08);
+  --dot-grid:    rgba(20, 30, 46, 0.03);
+  --accent-name: 'blu inchiostro';
+}
+
+/* ── Scenario: NOTTE — carta scura, ocra ── */
+body[data-scenario='notte'] {
+  --paper:     #1a1714;
+  --paper-hi:  #221e1a;
+  --paper-lo:  #0f0d0b;
+  --ink:       #f3ece0;
+  --ink-soft:  #b8ad97;
+  --ink-mute:  #6a614f;
+  --rule:      rgba(243, 236, 224, 0.18);
+  --rule-soft: rgba(243, 236, 224, 0.08);
+  --accent:      #e0a851;
+  --accent-deep: #c08828;
+  --accent-tint: rgba(224, 168, 81, 0.10);
+  --dot-grid:    rgba(243, 236, 224, 0.025);
+  --accent-name: 'ocra · oro';
+}
+
+/* ── Scenario: TEMPESTA — accento piombo ── */
+body[data-scenario='tempesta'] {
+  --paper:     #e8e6e2;
+  --paper-hi:  #eeece8;
+  --paper-lo:  #d8d6d2;
+  --ink:       #14110d;
+  --ink-soft:  #3d3d42;
+  --ink-mute:  #6a6a72;
+  --rule:      rgba(20, 17, 13, 0.22);
+  --rule-soft: rgba(20, 17, 13, 0.1);
+  --accent:      #3a3a44;
+  --accent-deep: #222229;
+  --accent-tint: rgba(58, 58, 68, 0.08);
+  --dot-grid:    rgba(20, 17, 13, 0.03);
+  --accent-name: 'grigio piombo';
+}
+
+/* ═══ TRANSIZIONI tra scenari ══════════════════════════════════════ */
+/* Tutto ciò che ha colore transita morbido. Limite ai 'theme props'
+   per non rallentare animazioni distinte. */
+body, body * {
+  transition:
+    background-color var(--transition),
+    color var(--transition),
+    border-color var(--transition),
+    box-shadow var(--transition),
+    fill var(--transition),
+    stroke var(--transition);
+}
+
+/* ═══ RESET & BASE ═════════════════════════════════════════════════ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  background-image: radial-gradient(var(--dot-grid) 1px, transparent 1px);
+  background-size: 4px 4px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  width: min(1280px, calc(100% - 32px));
+  margin: 0 auto;
+}
+
+.hidden { display: none !important; }
+
+/* Numerali tabulari ovunque servano */
+.num,
+.snapshot-temp,
+.day-pill-temp,
+.stat-tile strong,
+.detail-item .value,
+.hour-card .temp,
+.hour-card .rain {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  letter-spacing: -0.02em;
+}
+
+/* ═══ HEADER ═══════════════════════════════════════════════════════ */
+
+.header {
+  padding: 40px var(--gutter) 0;
+}
+
+.brand-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 24px;
+  padding-bottom: 22px;
+  border-top: 2px solid var(--rule);
+  border-bottom: 2px solid var(--rule);
+  padding: 22px 0 18px;
+}
+
+.logo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.logo i { display: none; } /* L'editoriale non usa l'icona, vince la tipografia */
+
+.logo h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(2.5rem, 6vw, 4.875rem);
+  font-weight: 700;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  background: none;
+  -webkit-text-fill-color: var(--ink);
+}
+
+.brand-kicker {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.375rem;
+  color: var(--accent);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-top: 4px;
+}
+.brand-kicker::after { content: '.'; }
+
+.subtitle {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.125rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+  max-width: 360px;
+  text-align: right;
+}
+
+/* Data + ultimo aggiornamento sopra al brand
+   ➜ aggiungi in HTML: <div class="paper-meta">…</div> */
+.paper-meta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding-bottom: 14px;
+}
+
+/* ═══ SEARCH ══════════════════════════════════════════════════════ */
+
+.search-section {
+  padding: 18px 0 32px;
+}
+
+.search-panel {
+  display: block; /* l'editoriale è lineare, non a griglia */
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.search-copy h2 { display: none; } /* il payoff vive nel sottotitolo del brand */
+
+.search-box {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  padding-top: 18px;
+}
+
+.search-box::before {
+  content: 'Cerca';
+  align-self: center;
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 800;
+}
+
+.input-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+#cityInput {
+  width: 100%;
+  height: auto;
+  padding: 14px 18px;
+  background: var(--paper-hi);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.1875rem;
+  color: var(--ink);
+  box-shadow: none;
+}
+#cityInput::placeholder { color: var(--ink-mute); }
+#cityInput:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.btn-primary {
+  padding: 15px 22px;
+  min-height: 0;
+  background: var(--ink);
+  color: var(--paper);
+  border: 0;
+  border-radius: 0;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+.btn-primary:hover { transform: translateY(-1px); }
+.btn-primary i { display: none; }
+
+.btn-secondary {
+  padding: 12px 18px;
+  min-height: 0;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.btn-secondary.is-active { background: var(--accent); color: var(--paper); border-color: var(--accent); }
+
+/* Autocomplete a stile tabella editoriale */
+.autocomplete-list {
+  top: calc(100% + 0px);
+  border: 1px solid var(--rule);
+  border-top: 0;
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: 0 12px 28px rgba(20, 17, 13, 0.10);
+}
+.autocomplete-item {
+  padding: 14px 18px;
+  border-bottom: 1px dotted var(--rule);
+  border-left: 3px solid transparent;
+  background: transparent;
+}
+.autocomplete-item:hover,
+.autocomplete-item.active {
+  background: var(--accent-tint);
+  border-left-color: var(--accent);
+}
+.autocomplete-item i { display: none; }
+.autocomplete-item .city-name {
+  font-family: var(--font-serif);
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.autocomplete-item .region {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 0.9375rem;
+  color: var(--ink-soft);
+}
+
+/* ═══ SAVED CITIES (Recenti / Preferite) ═══════════════════════════ */
+
+.saved-cities {
+  margin-top: 16px;
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.saved-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.saved-group-head .label {
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 700;
+}
+.saved-action {
+  color: var(--accent);
+  font-weight: 800;
+  text-decoration: underline;
+  background: transparent;
+}
+.city-chip,
+.city-chip-row {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1rem;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  padding: 2px 0;
+}
+.city-chip-row { font-style: normal; }
+.saved-group:has(.label:contains('Preferite')) .city-chip { /* fallback non universale */ }
+/* Marcatore preferita */
+.city-chip[data-favorite='true'],
+.city-chip-row[data-favorite='true'] .city-chip-main {
+  color: var(--accent);
+  font-weight: 600;
+  font-style: normal;
+}
+.city-chip[data-favorite='true']::before,
+.city-chip-row[data-favorite='true']::before { content: '★ '; color: var(--accent); }
+
+.city-chip-remove { background: transparent; border: 0; color: var(--ink-mute); }
+.city-chip-remove:hover { color: var(--accent); background: transparent; }
+
+/* ═══ PLANNER SHELL ════════════════════════════════════════════════ */
+
+.weather-results { padding: 0 0 40px; }
+
+.planner-shell {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  padding: 28px 0 0;
+}
+
+.planner-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  padding-bottom: 4px;
+}
+
+.results-kicker,
+.snapshot-kicker,
+.section-kicker {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 800;
+}
+.results-kicker::before,
+.section-kicker::before { content: '▌ '; color: var(--accent); }
+
+.planner-title h2 {
+  font-family: var(--font-serif);
+  font-size: clamp(2.5rem, 5.5vw, 5.5rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 0.92;
+  color: var(--ink);
+  margin: 8px 0 8px;
+}
+.planner-title h2::after { content: '.'; color: var(--ink); }
+
+.city-meta {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.125rem;
+  color: var(--ink-soft);
+}
+
+.planner-actions { gap: 8px; }
+
+.forecast-badge,
+.panel-badge {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 0;
+  border: 1px solid var(--rule);
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  font-weight: 800;
+  background-image: none;
+}
+
+/* Icon button (mappa, telegram, ecc.) */
+.icon-btn {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink);
+  width: 42px; height: 42px;
+}
+.icon-btn:hover { background: var(--paper-hi); transform: none; }
+.icon-btn.is-active {
+  background: var(--accent);
+  color: var(--paper);
+  border-color: var(--accent);
+  background-image: none;
+}
+
+/* ═══ DAY SELECTOR (pill orizzontale) ══════════════════════════════ */
+
+.day-selector {
+  margin-top: 24px;
+  border-top: 2px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0;
+  padding-bottom: 0;
+}
+
+.day-pill {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  border-right: 1px solid var(--rule-soft);
+  padding: 16px 12px;
+  text-align: center;
+  border-top: 2px solid transparent;
+}
+.day-pill:last-child { border-right: 0; }
+.day-pill:hover { background: var(--paper-hi); transform: none; }
+.day-pill.active {
+  background: var(--paper-hi);
+  border-top-color: var(--accent);
+  border-right-color: var(--rule-soft);
+}
+
+.day-pill-top {
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.day-pill.active .day-pill-top { color: var(--accent); }
+.day-pill-date {
+  font-family: var(--font-num);
+  font-size: 0.75rem;
+  color: var(--ink-mute);
+  font-weight: 600;
+  margin-top: 4px;
+}
+.day-pill-temp {
+  font-family: var(--font-num);
+  font-weight: 800;
+  font-size: 1.25rem;
+  color: var(--ink);
+  margin-top: 10px;
+}
+
+/* ═══ PLANNER GRID (sinistra: giornata · destra: indici) ═══════════ */
+
+.planner-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 32px;
+  margin-top: 24px;
+  align-items: stretch;
+}
+.planner-grid::before {
+  content: '';
+  position: absolute;
+  /* divisore verticale: posizionato via separator inline o pseudo */
+}
+
+/* SELECTED DAY PANEL — colonna sinistra */
+.selected-day-panel {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  border-right: 1px solid var(--rule);
+  padding-right: 32px;
+}
+.selected-day-header { padding-bottom: 18px; border-bottom: 1px solid var(--rule); }
+.selected-day-label {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  font-weight: 800;
+}
+.selected-day-panel h3 {
+  font-family: var(--font-serif);
+  font-size: 2.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-top: 4px;
+}
+
+.selected-day-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  margin-top: 20px;
+}
+.selected-day-visual {
+  width: auto;
+  height: auto;
+  background: transparent;
+  border-radius: 0;
+}
+.selected-day-visual i {
+  font-size: 5rem;
+  color: var(--accent);
+}
+.selected-day-description {
+  font-family: var(--font-serif);
+  font-size: 1.375rem;
+  font-style: italic;
+  color: var(--accent);
+  font-weight: 400;
+  line-height: 1.25;
+}
+.selected-day-summary {
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
+  color: var(--ink);
+  line-height: 1.5;
+  margin-top: 14px;
+}
+
+/* Stats tiles → 4 colonne, hairline rules */
+.selected-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  margin-top: 26px;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.stat-tile {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--rule-soft);
+  padding: 16px 12px;
+}
+.stat-tile:last-child { border-right: 0; }
+.stat-label { font-family: var(--font-sans); font-size: 0.625rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-mute); font-weight: 700; }
+.stat-tile strong { font-family: var(--font-num); font-size: 1.875rem; font-weight: 800; color: var(--ink); margin-top: 6px; display: block; }
+
+/* SNAPSHOT (Adesso) — colonna destra */
+.snapshot-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.snapshot-header h3 {
+  font-family: var(--font-serif);
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: 4px;
+}
+.snapshot-main {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin: 18px 0;
+  gap: 16px;
+}
+.snapshot-temp-wrap { display: flex; align-items: baseline; gap: 4px; }
+.snapshot-temp {
+  font-family: var(--font-num);
+  font-size: clamp(3.5rem, 8vw, 6rem);
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 0.85;
+}
+.unit { font-family: var(--font-serif); font-style: italic; color: var(--accent); font-size: 2rem; font-weight: 400; }
+
+.snapshot-icon-wrap i { font-size: 3.5rem; color: var(--accent); }
+.snapshot-icon-wrap p { font-family: var(--font-serif); font-style: italic; font-size: 1rem; color: var(--ink-soft); text-transform: none; margin-top: 8px; }
+
+.snapshot-details {
+  display: block;
+}
+.detail-item {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dotted var(--rule);
+  border-radius: 0;
+  padding: 12px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.detail-item .label { font-family: var(--font-serif); font-size: 1rem; color: var(--ink); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.detail-item .value { font-family: var(--font-num); font-weight: 700; font-size: 1rem; color: var(--accent); margin-top: 0; display: inline; }
+
+/* ═══ HOURLY ═══════════════════════════════════════════════════════ */
+
+.forecast-detail-section {
+  background: transparent;
+  border: 0;
+  border-top: 2px solid var(--rule);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 22px 0;
+  margin-top: 24px;
+}
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.section-head h3 {
+  font-family: var(--font-serif);
+  font-size: 2.25rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.section-note { font-family: var(--font-serif); font-style: italic; font-size: 1rem; color: var(--ink-soft); }
+
+.hourly-forecast {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0;
+  padding-top: 18px;
+  overflow-x: auto;
+}
+.hour-card {
+  flex: 0 0 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--rule-soft);
+  border-top: 2px solid var(--rule);
+  border-radius: 0;
+  padding: 18px 8px;
+  text-align: center;
+}
+.hour-card:last-child { border-right: 0; }
+.hour-card .time { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--ink-mute); letter-spacing: 0.08em; }
+.hour-card i { font-size: 1.25rem; margin: 10px 0; color: var(--ink); }
+.hour-card .temp { font-family: var(--font-num); font-size: 1.625rem; font-weight: 800; color: var(--ink); }
+.hour-card .rain { font-family: var(--font-num); font-size: 0.6875rem; color: var(--ink-mute); font-weight: 600; margin-top: 6px; }
+
+/* ═══ NUOVE SEZIONI ════════════════════════════════════════════════ */
+
+/* ── ALLERTA METEO (edizione speciale) ──
+   <section class="allerta" data-level="gialla">
+     <span class="allerta-mark">!</span>
+     <div>
+       <p class="allerta-kicker">▌ Edizione speciale · Allerta meteo gialla</p>
+       <p class="allerta-msg">Pioggia intensa e raffiche di vento su Roma — valido fino alle ore 19:00.</p>
+     </div>
+   </section>                                                   */
+
+.allerta {
+  background: #a8231e;
+  color: #f3ece0;
+  padding: 16px var(--gutter);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  border-bottom: 4px double rgba(243, 236, 224, 0.4);
+}
+.allerta-mark {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: #f3ece0; color: #a8231e;
+  display: grid; place-items: center;
+  font-family: var(--font-serif); font-size: 1.625rem;
+  font-style: italic; font-weight: 700;
+  flex-shrink: 0;
+}
+.allerta-kicker {
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  font-weight: 800;
+  opacity: 0.85;
+}
+.allerta-msg {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.375rem;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+/* ── CONFRONTO EDITORIALE ──
+   <p class="confronto">
+     <span><em>oggi</em> <strong>24°</strong></span>
+     <span><em>ieri</em> <strong>22°</strong></span>
+     <span><em>media maggio</em> <strong>23°</strong></span>
+     <span><em>percepita</em> <strong>23°</strong></span>
+   </p>                                                          */
+
+.confronto {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-top: 18px;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+  flex-wrap: wrap;
+}
+.confronto span { display: inline-flex; align-items: baseline; gap: 6px; }
+.confronto span + span::before {
+  content: '·';
+  color: var(--ink-mute);
+  margin-right: 8px;
+}
+.confronto em { font-style: normal; color: var(--ink-mute); }
+.confronto strong {
+  font-family: var(--font-num);
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.confronto span:first-child strong { color: var(--accent); font-weight: 800; }
+
+/* ── ML TRUST STRIP ──
+   <aside class="ml-trust">
+     <p class="ml-trust-kicker">● Modello affinato in locale</p>
+     <div><strong>47</strong> <span>cicli per Roma</span></div>
+     <div><strong>±0.8°</strong> <span>margine sulle massime</span></div>
+     <div><strong>91%</strong> <span>accuratezza 30 giorni</span></div>
+     <em>affinata su 123 osservazioni dirette</em>
+   </aside>                                                       */
+
+.ml-trust {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 18px 22px;
+  background: var(--accent-tint);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  margin-top: 24px;
+}
+.ml-trust-kicker {
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 800;
+}
+.ml-trust div { display: flex; align-items: baseline; gap: 8px; }
+.ml-trust div + div { border-left: 1px solid var(--rule); padding-left: 28px; }
+.ml-trust strong {
+  font-family: var(--font-num);
+  font-weight: 800;
+  font-size: 1.375rem;
+  color: var(--ink);
+}
+.ml-trust span { font-family: var(--font-sans); font-size: 0.75rem; color: var(--ink-soft); }
+.ml-trust em {
+  margin-left: auto;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
+/* ── SINTESI SETTIMANALE ──
+   <section class="sintesi">
+     <p class="sintesi-kicker">▌ A colpo<br>d'occhio</p>
+     <p class="sintesi-body"><em>Settimana di sole instabile</em>: martedì velature, mercoledì e giovedì piogge, weekend in ripresa.</p>
+   </section>                                                     */
+
+.sintesi {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 24px;
+  padding: 24px 0 8px;
+}
+.sintesi-kicker {
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 800;
+  padding-top: 8px;
+  line-height: 1.4;
+}
+.sintesi-body {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.375rem;
+  line-height: 1.45;
+  color: var(--ink);
+  max-width: 52ch;
+}
+
+/* ═══ MAPPA / TELEGRAM (override su classi esistenti) ══════════════ */
+
+.map-card,
+.telegram-card {
+  background: var(--paper-hi);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  box-shadow: none;
+}
+.map-card-head h3,
+.telegram-card-head h3 {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: 4px;
+}
+
+/* ═══ FOOTER & SUPPORT ═════════════════════════════════════════════ */
+
+.footer { padding: 32px 0 28px; color: var(--ink-soft); }
+.footer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  gap: 20px;
+  border-top: 2px solid var(--rule);
+  padding-top: 18px;
+}
+.footer-copy,
+.support-card {
+  background: var(--paper-hi);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  backdrop-filter: none;
+  box-shadow: none;
+  padding: 22px 24px;
+}
+.footer-copy { background: transparent; border: 0; padding-left: 0; padding-right: 0; }
+.footer a { color: var(--accent); }
+
+.support-card h3 {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.supporter-icon, .supporter-smile {
+  width: 44px; height: 44px;
+  background: var(--accent);
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--paper);
+}
+.supporter-kicker {
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 800;
+}
+.supporter-input {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  min-height: 0;
+  padding: 12px 14px;
+  box-shadow: none;
+}
+.supporter-button {
+  background: var(--accent);
+  background-image: none;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--paper);
+  min-width: 0;
+  padding: 12px 18px;
+}
+.supporter-button:hover { background: var(--accent-deep); }
+
+/* Pié di pagina con accento del giorno */
+.colophon {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 2px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--ink-mute);
+  letter-spacing: 0.1em;
+}
+.colophon em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+  letter-spacing: 0;
+}
+.colophon .accent-name {
+  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+.colophon .accent-name::after {
+  content: var(--accent-name);
+  color: var(--accent);
+  margin-left: 8px;
+}
+
+/* ═══ STATI (loading / errore / vuoto) ═════════════════════════════ */
+
+.loading-state {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 60px 24px;
+  text-align: center;
+}
+.loading-state p {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.125rem;
+  color: var(--ink-soft);
+  margin-top: 16px;
+}
+.spinner {
+  border: 1px solid var(--rule);
+  border-top-color: var(--accent);
+  width: 48px; height: 48px;
+}
+
+.error-message {
+  background: var(--accent);
+  background-image: none;
+  border-radius: 0;
+  border-top: 2px solid var(--accent-deep);
+  padding: 18px 22px;
+}
+
+/* ═══ MOBILE ═══════════════════════════════════════════════════════ */
+
+@media (max-width: 840px) {
+  :root { --gutter: 20px; }
+
+  .header { padding: 20px var(--gutter) 0; }
+  .brand-row { flex-direction: column; align-items: flex-start; }
+  .subtitle { text-align: left; }
+
+  .planner-grid { grid-template-columns: 1fr; gap: 24px; }
+  .selected-day-panel { border-right: 0; border-bottom: 1px solid var(--rule); padding-right: 0; padding-bottom: 24px; }
+  .selected-stats { grid-template-columns: repeat(2, 1fr); }
+  .stat-tile { border-bottom: 1px solid var(--rule-soft); }
+  .stat-tile:nth-last-child(-n+2) { border-bottom: 0; }
+  .stat-tile:nth-child(2n) { border-right: 0; }
+
+  .day-selector { grid-template-columns: repeat(4, 1fr); overflow-x: auto; }
+  .day-pill { padding: 12px 8px; }
+  .day-pill-top { font-size: 1rem; }
+  .day-pill-temp { font-size: 1.125rem; }
+
+  .ml-trust { flex-wrap: wrap; gap: 14px; }
+  .ml-trust div + div { padding-left: 14px; }
+  .ml-trust em { margin-left: 0; width: 100%; }
+
+  .sintesi { grid-template-columns: 1fr; gap: 8px; }
+  .sintesi-body { font-size: 1.125rem; }
+
+  .confronto { font-size: 0.75rem; }
+
+  .footer-grid { grid-template-columns: 1fr; }
+  .colophon { flex-direction: column; gap: 8px; align-items: flex-start; }
+}
+
+/* ═══ PRINT (bonus: il bollettino stampabile) ══════════════════════ */
+
+@media print {
+  body { background: white; }
+  .icon-btn, .btn-primary, .btn-secondary, .support-card, .telegram-section, .map-section { display: none; }
+  .planner-shell, .footer { box-shadow: none; }
+}

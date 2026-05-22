@@ -147,6 +147,122 @@ function setText(id, value) {
     if (node) node.textContent = value;
 }
 
+function formatSignedTemperature(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "n/d";
+    const rounded = Math.round(number * 10) / 10;
+    return `${rounded > 0 ? "+" : ""}${rounded}°`;
+}
+
+function formatTemperature(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "--";
+    return `${Math.round(number)}°`;
+}
+
+function getAdjustedRange(day) {
+    return day?.ml?.adjusted_temp_range || day?.temp || {};
+}
+
+function getAllertaFromPayload(payload) {
+    if (!payload) return null;
+    if (payload.allerta) return payload.allerta;
+    if (payload.alert) return payload.alert;
+    if (Array.isArray(payload.alerts) && payload.alerts.length) return payload.alerts[0];
+    if (payload.rain_alert) return payload.rain_alert;
+    return null;
+}
+
+function renderEditorialMeta() {
+    const now = new Date();
+    setText("paperDate", now.toLocaleDateString("it-IT", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+    }));
+    const updated = `aggiornato alle ${formatTime(now)}`;
+    setText("paperUpdated", updated.charAt(0).toUpperCase() + updated.slice(1));
+    setText("colophonUpdated", updated);
+}
+
+function renderAllerta(payload) {
+    const banner = document.getElementById("allertaBanner");
+    if (!banner) return;
+
+    const allerta = getAllertaFromPayload(payload);
+    if (!allerta) {
+        banner.classList.add("hidden");
+        return;
+    }
+
+    const livello = allerta.livello || allerta.level || allerta.severity || "meteo";
+    const messaggio = allerta.messaggio || allerta.message || allerta.description || "Allerta meteo attiva per la zona selezionata.";
+    banner.dataset.level = String(livello).toLowerCase();
+    setText("allertaLivello", livello);
+    setText("allertaMsg", messaggio);
+    banner.classList.remove("hidden");
+}
+
+function renderConfronto(payload, selectedDay, daily) {
+    const selectedRange = getAdjustedRange(selectedDay);
+    const todayRange = getAdjustedRange(daily[0] || selectedDay);
+    const averageMax = daily.length
+        ? daily.reduce((sum, day) => sum + Number(getAdjustedRange(day).max || 0), 0) / daily.length
+        : null;
+
+    setText("confrOggi", formatTemperature(todayRange.max));
+    setText("confrIeri", "n/d");
+    setText("confrMedia", Number.isFinite(averageMax) ? formatTemperature(averageMax) : "--");
+    setText("confrPercepita", formatTemperature(payload.current?.feels_like ?? selectedRange.max));
+}
+
+function renderMlTrust(payload) {
+    const ml = payload.ml || {};
+    const correction = ml.correction || {};
+    const dailyMl = (payload.daily || []).map(day => day.ml).filter(Boolean);
+    const firstDelta = dailyMl.find(day => day.temperature_delta != null)?.temperature_delta;
+    const observations = ml.observations ?? ml.osservazioni ?? ml.verified_observations ?? correction.observations;
+    const cycles = ml.cycles ?? ml.cicli ?? ml.training_cycles ?? correction.training_cycles;
+    const accuracy = ml.accuracy ?? ml.accuratezza ?? ml.accuracy_30d;
+
+    setText("mlCicli", cycles != null ? cycles : (correction.model_ready ? "attivo" : "n/d"));
+    setText("mlMargine", firstDelta != null ? formatSignedTemperature(firstDelta) : "n/d");
+    setText("mlAccuratezza", accuracy != null ? `${Math.round(Number(accuracy) * (Number(accuracy) <= 1 ? 100 : 1))}%` : "n/d");
+
+    const osservazioniText = observations != null
+        ? `affinata su ${observations} osservazioni dirette`
+        : "Statistiche ML dettagliate non ancora esposte dal backend.";
+    setText("mlOsservazioni", osservazioniText);
+}
+
+function renderSintesi(payload, selectedDay, daily) {
+    const node = document.getElementById("sintesiBody");
+    if (!node) return;
+
+    const rainyDays = daily.filter(day => (day.ml?.rain_probability ?? day.pop ?? 0) >= 0.5);
+    const windyDays = daily.filter(day => (day.wind_speed || 0) >= 28);
+    const selectedDescription = selectedDay.weather?.[0]?.description || "condizioni variabili";
+    const selectedRange = getAdjustedRange(selectedDay);
+    const maxTemp = formatTemperature(selectedRange.max);
+
+    let headline = "Quadro stabile";
+    let text = `${selectedDescription.toLowerCase()} per la giornata selezionata, con massime intorno a ${maxTemp}.`;
+
+    if (rainyDays.length >= 3) {
+        headline = "Settimana instabile";
+        text = `piogge possibili in ${rainyDays.length} giornate del periodo, meglio seguire il dettaglio ora per ora.`;
+    } else if (rainyDays.length > 0) {
+        headline = "Qualche passaggio piovoso";
+        text = `ombrello da tenere vicino in ${rainyDays.length} giornata${rainyDays.length > 1 ? "e" : ""}, con fasi asciutte prevalenti nel resto del periodo.`;
+    } else if (windyDays.length > 0) {
+        headline = "Aria in movimento";
+        text = `tempo perlopiù asciutto, ma vento più presente in ${windyDays.length} giornata${windyDays.length > 1 ? "e" : ""}.`;
+    }
+
+    node.innerHTML = `<em>${headline}</em>: ${text}`;
+}
+
 function renderPlannerHead(payload, selectedDay, selectedIndex) {
     setText("cityName", payload.name || "--");
 
@@ -385,6 +501,11 @@ export function renderWeather(payload, { selectedDayIndex = 0, onDaySelect = () 
     renderHourlyDetail(selectedDay, payload.hourly || []);
     renderModelNote(payload);
     renderAdvanced(payload);
+    renderEditorialMeta();
+    renderAllerta(payload);
+    renderConfronto(payload, selectedDay, daily);
+    renderMlTrust(payload);
+    renderSintesi(payload, selectedDay, daily);
 
     document.getElementById("weatherResults").classList.remove("hidden");
     showLoading(false);

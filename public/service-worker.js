@@ -1,8 +1,8 @@
-const CACHE_NAME = "le-previsioni-static-v19-ml-impact";
+const CACHE_NAME = "le-previsioni-static-v20-editorial";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
-    "/style.css",
+    "/editorial.css",
     "/manifest.webmanifest",
     "/js/main.js",
     "/js/telegram.js",
