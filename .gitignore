@@ -47,6 +47,9 @@ meteo-backend/*.db-wal
 
 # Artefatti operativi/locali
 .claude/
+.opencode/
+.tmp/
+meteo-backend/C:/
 render-*.json
 create-service.html
 update-env-vars.html
