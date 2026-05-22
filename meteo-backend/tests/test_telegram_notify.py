@@ -1,4 +1,5 @@
-"""Test unitari per _find_rain_time_slots() in telegram_notify_service.py."""
+"""Test unitari per find_rain_time_slots() in notification_utils.py."""
+
 import sys
 import os
 from types import SimpleNamespace
@@ -7,7 +8,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from telegram_notify_service import _find_rain_time_slots
+from notification_utils import (
+    build_daily_message,
+    find_rain_time_slots as _find_rain_time_slots,
+)
 from scripts import run_telegram_checks
 
 
@@ -138,6 +142,55 @@ def test_missing_data():
     # Empty time list
     result = _find_rain_time_slots({"time": [], "precipitation_probability": []})
     assert result == []
+
+
+def test_daily_message_prefers_clear_hourly_picture_over_cloudy_daily_code():
+    daily = {
+        "time": ["2026-05-22"],
+        "temperature_2m_max": [24.0],
+        "temperature_2m_min": [17.0],
+        "weather_code": [3],  # Open-Meteo daily può essere pessimista
+        "precipitation_probability_max": [0],
+        "precipitation_sum": [0.0],
+    }
+    hourly = {
+        "time": [f"2026-05-22T{hour:02d}:00" for hour in range(9, 21)],
+        "weather_code": [0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+        "cloud_cover": [5, 9, 0, 0, 1, 6, 0, 3, 0, 0, 0, 0],
+        "precipitation_probability": [0] * 12,
+        "precipitation": [0.0] * 12,
+        "wind_speed_10m": [5.0] * 12,
+    }
+
+    message = build_daily_message("Avenza", daily, hourly)
+
+    assert "Condizioni: Cielo sereno" in message
+    assert "Condizioni: Nuvoloso" not in message
+    assert "Nessuna pioggia prevista" in message
+
+
+def test_daily_message_keeps_rainy_daily_code_when_hourly_has_rain_risk():
+    daily = {
+        "time": ["2026-05-22"],
+        "temperature_2m_max": [20.0],
+        "temperature_2m_min": [15.0],
+        "weather_code": [61],
+        "precipitation_probability_max": [70],
+        "precipitation_sum": [2.0],
+    }
+    hourly = {
+        "time": ["2026-05-22T10:00", "2026-05-22T11:00"],
+        "weather_code": [0, 61],
+        "cloud_cover": [5, 80],
+        "precipitation_probability": [10, 70],
+        "precipitation": [0.0, 1.2],
+        "wind_speed_10m": [5.0, 5.0],
+    }
+
+    message = build_daily_message("Avenza", daily, hourly)
+
+    assert "Condizioni: Pioggia leggera" in message
+    assert "Pioggia prevista: 11:00" in message
 
 
 def test_telegram_cron_requires_secrets_in_production(monkeypatch):

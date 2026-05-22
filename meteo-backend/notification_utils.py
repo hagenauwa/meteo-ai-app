@@ -438,6 +438,93 @@ def build_rain_message(city_name: str, rain_info: dict) -> str:
     return message
 
 
+def _derive_daily_weather_code_from_hourly(
+    daily: dict,
+    hourly: dict,
+    today_idx: int,
+    fallback_code: int | None,
+) -> int | None:
+    """
+    Preferisce il quadro orario quando il codice giornaliero Open-Meteo è troppo
+    pessimista per una giornata quasi tutta serena.
+
+    Il daily `weather_code` di Open-Meteo sintetizza l'intera giornata e può
+    diventare "Nuvoloso" anche con molte ore soleggiate. Per il promemoria
+    giornaliero è più utile descrivere le ore disponibili della data, mantenendo
+    comunque priorità assoluta a pioggia/nebbia quando sono presenti.
+    """
+    daily_times = daily.get("time", [])
+    if today_idx >= len(daily_times):
+        return fallback_code
+
+    day_prefix = str(daily_times[today_idx])
+    hourly_times = hourly.get("time", [])
+    if not hourly_times:
+        return fallback_code
+
+    codes = hourly.get("weather_code", [])
+    clouds = hourly.get("cloud_cover", [])
+    pops = hourly.get("precipitation_probability", [])
+    precipitations = hourly.get("precipitation", [])
+
+    relevant: list[tuple[int | None, float | None, float, float]] = []
+    for idx, time_str in enumerate(hourly_times):
+        if not str(time_str).startswith(day_prefix):
+            continue
+        code = codes[idx] if idx < len(codes) else None
+        cloud = clouds[idx] if idx < len(clouds) else None
+        pop = (pops[idx] if idx < len(pops) else 0) or 0
+        precipitation = (precipitations[idx] if idx < len(precipitations) else 0) or 0
+        relevant.append((code, cloud, pop, precipitation))
+
+    if not relevant:
+        return fallback_code
+
+    if any(
+        _is_rain_weather_code(code) or precipitation > 0.1
+        for code, _, _, precipitation in relevant
+    ):
+        return fallback_code
+    if any((pop or 0) >= 40 for _, _, pop, _ in relevant):
+        return fallback_code
+
+    non_null_clouds = [cloud for _, cloud, _, _ in relevant if cloud is not None]
+    avg_cloud = sum(non_null_clouds) / len(non_null_clouds) if non_null_clouds else None
+    max_cloud = max(non_null_clouds) if non_null_clouds else None
+    codes_present = [code for code, _, _, _ in relevant if code is not None]
+
+    if 45 in codes_present or 48 in codes_present:
+        return fallback_code
+
+    cloudy_fraction = (
+        sum(1 for code in codes_present if code == 3) / len(codes_present)
+        if codes_present
+        else 0
+    )
+    partly_fraction = (
+        sum(1 for code in codes_present if code == 2) / len(codes_present)
+        if codes_present
+        else 0
+    )
+
+    if avg_cloud is not None:
+        if avg_cloud <= 20 and (max_cloud or 0) <= 35:
+            return 0
+        if avg_cloud <= 35 and cloudy_fraction < 0.25:
+            return 1
+        if avg_cloud <= 65 or partly_fraction >= 0.35:
+            return 2
+        return 3
+
+    if cloudy_fraction >= 0.5:
+        return 3
+    if partly_fraction >= 0.35:
+        return 2
+    if codes_present:
+        return 1 if 1 in codes_present else 0
+    return fallback_code
+
+
 def build_daily_message(
     city_name: str,
     daily: dict,
@@ -450,7 +537,10 @@ def build_daily_message(
     """
     max_temp = daily.get("temperature_2m_max", [None])[today_idx]
     min_temp = daily.get("temperature_2m_min", [None])[today_idx]
-    weather_code = daily.get("weather_code", [None])[today_idx]
+    daily_weather_code = daily.get("weather_code", [None])[today_idx]
+    weather_code = _derive_daily_weather_code_from_hourly(
+        daily, hourly, today_idx, daily_weather_code
+    )
     precip_prob = daily.get("precipitation_probability_max", [None])[today_idx]
     precip_sum = daily.get("precipitation_sum", [None])[today_idx]
 

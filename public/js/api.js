@@ -248,6 +248,49 @@ function approxCloudCoverFromWmo(code) {
     return 88;
 }
 
+function isRainWmoCode(code) {
+    return [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].includes(Number(code));
+}
+
+function deriveDailyWmoFromHourly(dailyDate, fallbackCode, hourly = {}) {
+    const times = hourly.time || [];
+    if (!dailyDate || !times.length) return fallbackCode;
+
+    const entries = [];
+    for (let i = 0; i < times.length; i++) {
+        if (!String(times[i]).startsWith(String(dailyDate))) continue;
+        entries.push({
+            code: (hourly.weather_code || [])[i],
+            cloud: (hourly.cloud_cover || [])[i],
+            pop: (hourly.precipitation_probability || [])[i] || 0,
+            precipitation: (hourly.precipitation || [])[i] || 0,
+        });
+    }
+
+    if (!entries.length) return fallbackCode;
+    if (entries.some(entry => isRainWmoCode(entry.code) || entry.precipitation > 0.1 || entry.pop >= 40)) {
+        return fallbackCode;
+    }
+    if (entries.some(entry => entry.code === 45 || entry.code === 48)) {
+        return fallbackCode;
+    }
+
+    const clouds = entries
+        .map(entry => Number(entry.cloud))
+        .filter(value => Number.isFinite(value));
+    if (!clouds.length) return fallbackCode;
+
+    const avgCloud = clouds.reduce((sum, value) => sum + value, 0) / clouds.length;
+    const maxCloud = Math.max(...clouds);
+    const cloudyFraction = entries.filter(entry => entry.code === 3).length / entries.length;
+    const partlyFraction = entries.filter(entry => entry.code === 2).length / entries.length;
+
+    if (avgCloud <= 20 && maxCloud <= 35) return 0;
+    if (avgCloud <= 35 && cloudyFraction < 0.25) return 1;
+    if (avgCloud <= 65 || partlyFraction >= 0.35) return 2;
+    return 3;
+}
+
 function buildOpenMeteoUrl(lat, lon) {
     const params = new URLSearchParams({
         latitude: String(lat),
@@ -342,7 +385,8 @@ function formatWeatherForFrontend(rawData, cityName) {
     const dailyFormatted = [];
 
     for (let i = 0; i < dailyTimes.length; i++) {
-        const wmoCode = (daily.weather_code || [])[i] || 0;
+        const rawWmoCode = (daily.weather_code || [])[i] || 0;
+        const wmoCode = deriveDailyWmoFromHourly(dailyTimes[i], rawWmoCode, hourly);
         const [dayDesc, dayIcon] = wmoToDescription(wmoCode);
         const minTemp = ((daily.temperature_2m_min || [])[i] || 0);
         const maxTemp = ((daily.temperature_2m_max || [])[i] || 0);
