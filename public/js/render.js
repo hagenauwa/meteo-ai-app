@@ -2,6 +2,15 @@ import { WEATHER_ICONS } from "./config.js";
 
 const CLOUDY_ICON_CODES = new Set(["02d", "02n", "03d", "03n", "04d", "04n"]);
 
+const CONDITION_TO_ICON_CODE = {
+    "Cielo sereno": "01d",
+    "Prevalentemente sereno": "02d",
+    "Parzialmente nuvoloso": "02d",
+    "Nuvoloso": "04d",
+    "Pioggia probabile": "10d",
+    "Condizioni variabili": "03d",
+};
+
 function isNightIcon(iconCode) {
     return String(iconCode || "").endsWith("n");
 }
@@ -197,9 +206,14 @@ function renderSelectedDay(day) {
     setText("selectedDayWind", `${Math.round(day.wind_speed || 0)} km/h`);
     setText("selectedDayTag", buildDayTag(day));
 
+    const providerIcon = day.weather?.[0]?.icon;
+    const mlIconCode = mlDay.display_condition
+        ? (CONDITION_TO_ICON_CODE[mlDay.display_condition] || providerIcon)
+        : providerIcon;
+
     const icon = document.getElementById("selectedDayIcon");
     applyWeatherVisual(icon, {
-        iconCode: day.weather?.[0]?.icon,
+        iconCode: mlIconCode,
         rainProbability,
     });
 }

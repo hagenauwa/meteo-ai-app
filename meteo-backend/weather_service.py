@@ -1,6 +1,7 @@
 """
 weather_service.py — integrazione con Open-Meteo.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -136,17 +137,19 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
         current_time_raw = current.get("time")
         if current_time_raw and current.get("temperature_2m") is not None:
             current_time = parse_utc_timestamp(current_time_raw)
-            observations.append({
-                "city_id": city["id"],
-                "observed_at": current_time,
-                "temp": current.get("temperature_2m"),
-                "humidity": current.get("relative_humidity_2m"),
-                "cloud_cover": current.get("cloud_cover"),
-                "wind_speed": current.get("wind_speed_10m"),
-                "wind_direction": current.get("wind_direction_10m"),
-                "precipitation": current.get("precipitation", 0.0),
-                "weather_code": current.get("weather_code"),
-            })
+            observations.append(
+                {
+                    "city_id": city["id"],
+                    "observed_at": current_time,
+                    "temp": current.get("temperature_2m"),
+                    "humidity": current.get("relative_humidity_2m"),
+                    "cloud_cover": current.get("cloud_cover"),
+                    "wind_speed": current.get("wind_speed_10m"),
+                    "wind_direction": current.get("wind_direction_10m"),
+                    "precipitation": current.get("precipitation", 0.0),
+                    "weather_code": current.get("weather_code"),
+                }
+            )
 
         hourly = city_data.get("hourly", {})
         hourly_times = hourly.get("time", [])
@@ -157,7 +160,9 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
         for idx, raw_time in enumerate(hourly_times):
             hourly_map[parse_utc_timestamp(raw_time)] = idx
 
-        forecast_anchor = parse_utc_timestamp(current_time_raw).replace(minute=0, second=0, microsecond=0)
+        forecast_anchor = parse_utc_timestamp(current_time_raw).replace(
+            minute=0, second=0, microsecond=0
+        )
         for lead_hours in ML_FORECAST_LEADS:
             target_time = forecast_anchor + timedelta(hours=lead_hours)
             idx = hourly_map.get(target_time)
@@ -176,20 +181,32 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
             wind_speeds = hourly.get("wind_speed_10m", [])
             wind_directions = hourly.get("wind_direction_10m", [])
 
-            predictions.append({
-                "city_id": city["id"],
-                "predicted_at": forecast_anchor,
-                "target_time": target_time,
-                "lead_hours": lead_hours,
-                "forecast_source": "open-meteo",
-                "forecast_temp": forecast_temp,
-                "humidity": humidities[idx] if idx < len(humidities) else None,
-                "forecast_precipitation": precipitations[idx] if idx < len(precipitations) else None,
-                "forecast_weather_code": weather_codes[idx] if idx < len(weather_codes) else None,
-                "forecast_cloud_cover": cloud_covers[idx] if idx < len(cloud_covers) else None,
-                "forecast_wind_speed": wind_speeds[idx] if idx < len(wind_speeds) else None,
-                "forecast_wind_direction": wind_directions[idx] if idx < len(wind_directions) else None,
-            })
+            predictions.append(
+                {
+                    "city_id": city["id"],
+                    "predicted_at": forecast_anchor,
+                    "target_time": target_time,
+                    "lead_hours": lead_hours,
+                    "forecast_source": "open-meteo",
+                    "forecast_temp": forecast_temp,
+                    "humidity": humidities[idx] if idx < len(humidities) else None,
+                    "forecast_precipitation": precipitations[idx]
+                    if idx < len(precipitations)
+                    else None,
+                    "forecast_weather_code": weather_codes[idx]
+                    if idx < len(weather_codes)
+                    else None,
+                    "forecast_cloud_cover": cloud_covers[idx]
+                    if idx < len(cloud_covers)
+                    else None,
+                    "forecast_wind_speed": wind_speeds[idx]
+                    if idx < len(wind_speeds)
+                    else None,
+                    "forecast_wind_direction": wind_directions[idx]
+                    if idx < len(wind_directions)
+                    else None,
+                }
+            )
 
     return {"observations": observations, "predictions": predictions}
 
@@ -226,7 +243,9 @@ async def fetch_weather_batch(cities: list[dict], client: httpx.AsyncClient) -> 
                     f"(batch di {len(cities)} città)"
                 )
                 if retry_index == len(BATCH_RETRY_DELAYS) + 1:
-                    raise OpenMeteoRateLimited("Open-Meteo rate limited the batch fetch") from exc
+                    raise OpenMeteoRateLimited(
+                        "Open-Meteo rate limited the batch fetch"
+                    ) from exc
                 continue
             _warn(f"Errore Open-Meteo batch: {exc}")
             return {"observations": [], "predictions": []}
@@ -244,7 +263,7 @@ async def fetch_all_cities_weather(cities: list[dict]) -> dict:
     """
     all_observations: list[dict] = []
     all_predictions: list[dict] = []
-    batches = [cities[i:i + BATCH_SIZE] for i in range(0, len(cities), BATCH_SIZE)]
+    batches = [cities[i : i + BATCH_SIZE] for i in range(0, len(cities), BATCH_SIZE)]
 
     print(f"[API] Scaricando meteo per {len(cities)} città in {len(batches)} batch...")
     async with httpx.AsyncClient() as client:
@@ -264,7 +283,9 @@ async def fetch_all_cities_weather(cities: list[dict]) -> dict:
             if index < len(batches) - 1:
                 await asyncio.sleep(BATCH_DELAY_SECONDS)
 
-    print(f"[OK] Scaricate {len(all_observations)} osservazioni e {len(all_predictions)} previsioni target-based")
+    print(
+        f"[OK] Scaricate {len(all_observations)} osservazioni e {len(all_predictions)} previsioni target-based"
+    )
     return {"observations": all_observations, "predictions": all_predictions}
 
 
@@ -296,7 +317,9 @@ def _response_snippet_from_text(text: str) -> str:
     return " ".join(text.split())[:300]
 
 
-def _validate_single_city_payload(data: object, *, params: dict, attempt_name: str) -> Optional[dict]:
+def _validate_single_city_payload(
+    data: object, *, params: dict, attempt_name: str
+) -> Optional[dict]:
     if not isinstance(data, dict):
         logger.warning(
             "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s: expected dict got %s",
@@ -307,7 +330,9 @@ def _validate_single_city_payload(data: object, *, params: dict, attempt_name: s
         )
         return None
 
-    missing_sections = [section for section in ("current", "hourly", "daily") if section not in data]
+    missing_sections = [
+        section for section in ("current", "hourly", "daily") if section not in data
+    ]
     if missing_sections:
         logger.warning(
             "Open-Meteo single-city schema_mismatch (%s) lat=%s lon=%s missing=%s keys=%s",
@@ -369,7 +394,9 @@ async def _fetch_open_meteo_payload(
     return _validate_single_city_payload(data, params=params, attempt_name=attempt_name)
 
 
-def _fetch_open_meteo_payload_via_urllib(*, params: dict, attempt_name: str) -> Optional[dict]:
+def _fetch_open_meteo_payload_via_urllib(
+    *, params: dict, attempt_name: str
+) -> Optional[dict]:
     url = f"{OPEN_METEO_URL}?{urlencode(params)}"
     try:
         request = Request(url, headers={"User-Agent": METNO_USER_AGENT})
@@ -461,7 +488,9 @@ def _format_local_day(dt: datetime) -> str:
     return dt.astimezone(ROME_TZ).strftime("%Y-%m-%d")
 
 
-def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: float) -> Optional[dict]:
+def _convert_metno_to_open_meteo_payload(
+    payload: dict, *, lat: float, lon: float
+) -> Optional[dict]:
     try:
         timeseries = payload["properties"]["timeseries"]
     except (KeyError, TypeError):
@@ -476,7 +505,11 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         timestamp = parse_utc_timestamp(item["time"])
         details = item["data"]["instant"]["details"]
         next_1 = item["data"].get("next_1_hours", {})
-        summary = next_1.get("summary") or item["data"].get("next_6_hours", {}).get("summary") or {}
+        summary = (
+            next_1.get("summary")
+            or item["data"].get("next_6_hours", {}).get("summary")
+            or {}
+        )
         precipitation = (next_1.get("details") or {}).get("precipitation_amount", 0.0)
         weather_code = _metno_symbol_to_wmo(summary.get("symbol_code"))
 
@@ -516,8 +549,13 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         winds = [entry["wind_speed"] for entry in items]
         pops = [entry["precipitation_probability"] for entry in items]
         precipitations = [entry["precipitation"] for entry in items]
-        preferred = next((entry for entry in items if entry["local_hour"].endswith("12:00")), items[len(items) // 2])
-        common_code = Counter(entry["weather_code"] for entry in items).most_common(1)[0][0]
+        preferred = next(
+            (entry for entry in items if entry["local_hour"].endswith("12:00")),
+            items[len(items) // 2],
+        )
+        common_code = Counter(entry["weather_code"] for entry in items).most_common(1)[
+            0
+        ][0]
         daily["temperature_2m_min"].append(min(temps))
         daily["temperature_2m_max"].append(max(temps))
         daily["weather_code"].append(preferred["weather_code"] or common_code)
@@ -543,15 +581,41 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
             "weather_code": current_hour["weather_code"],
         },
         "hourly": {
-            "time": [entry["local_hour"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "temperature_2m": [entry["temp"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "relative_humidity_2m": [entry["humidity"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "cloud_cover": [entry["cloud_cover"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "wind_speed_10m": [entry["wind_speed"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "wind_direction_10m": [entry["wind_direction"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "precipitation_probability": [entry["precipitation_probability"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "precipitation": [entry["precipitation"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
-            "weather_code": [entry["weather_code"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]],
+            "time": [
+                entry["local_hour"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "temperature_2m": [
+                entry["temp"] for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "relative_humidity_2m": [
+                entry["humidity"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "cloud_cover": [
+                entry["cloud_cover"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "wind_speed_10m": [
+                entry["wind_speed"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "wind_direction_10m": [
+                entry["wind_direction"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "precipitation_probability": [
+                entry["precipitation_probability"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "precipitation": [
+                entry["precipitation"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
+            "weather_code": [
+                entry["weather_code"]
+                for entry in hourly_items[:PUBLIC_HOURLY_FORECAST_HOURS]
+            ],
         },
         "daily": daily,
     }
@@ -562,7 +626,9 @@ async def _fetch_metno_payload(lat: float, lon: float) -> Optional[dict]:
     params = {"lat": lat, "lon": lon}
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(METNO_URL, params=params, headers=headers, timeout=TIMEOUT)
+            response = await client.get(
+                METNO_URL, params=params, headers=headers, timeout=TIMEOUT
+            )
             response.raise_for_status()
             data = response.json()
     except Exception as exc:
@@ -571,7 +637,9 @@ async def _fetch_metno_payload(lat: float, lon: float) -> Optional[dict]:
 
     converted = _convert_metno_to_open_meteo_payload(data, lat=lat, lon=lon)
     if not converted:
-        _warn(f"Fallback met.no ha restituito payload non convertibile lat={lat} lon={lon}")
+        _warn(
+            f"Fallback met.no ha restituito payload non convertibile lat={lat} lon={lon}"
+        )
     return converted
 
 
@@ -591,7 +659,9 @@ async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
 
         for attempt_name, hourly_fields in attempts:
             params = _build_single_city_params(lat, lon, hourly_fields)
-            data = await _fetch_open_meteo_payload(client, params=params, attempt_name=attempt_name)
+            data = await _fetch_open_meteo_payload(
+                client, params=params, attempt_name=attempt_name
+            )
             if data is not None:
                 if attempt_name == "compat":
                     logger.warning(
@@ -603,14 +673,21 @@ async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
                 _set_cached_public_weather(lat, lon, data)
                 return data
 
-    compat_params = _build_single_city_params(lat, lon, SINGLE_CITY_HOURLY_COMPAT_FIELDS)
+    compat_params = _build_single_city_params(
+        lat, lon, SINGLE_CITY_HOURLY_COMPAT_FIELDS
+    )
     data = await asyncio.to_thread(
         _fetch_open_meteo_payload_via_urllib,
         params=compat_params,
         attempt_name="compat-urllib",
     )
     if data is not None:
-        logger.warning("Open-Meteo single-city fallback_succeeded lat=%s lon=%s attempt=%s", lat, lon, "compat-urllib")
+        logger.warning(
+            "Open-Meteo single-city fallback_succeeded lat=%s lon=%s attempt=%s",
+            lat,
+            lon,
+            "compat-urllib",
+        )
         _set_cached_public_weather(lat, lon, data)
         return data
 
@@ -620,14 +697,16 @@ async def fetch_single_city(lat: float, lon: float) -> Optional[dict]:
         _set_cached_public_weather(lat, lon, data)
         return data
 
-    logger.warning("Open-Meteo single-city fetch failed after fallback lat=%s lon=%s", lat, lon)
+    logger.warning(
+        "Open-Meteo single-city fetch failed after fallback lat=%s lon=%s", lat, lon
+    )
     return None
 
 
 WMO_CODES = {
     0: ("Cielo sereno", "01d"),
     1: ("Prevalentemente sereno", "02d"),
-    2: ("Parzialmente nuvoloso", "03d"),
+    2: ("Parzialmente nuvoloso", "02d"),
     3: ("Nuvoloso", "04d"),
     45: ("Nebbia", "50d"),
     48: ("Nebbia con brina", "50d"),
@@ -707,19 +786,35 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
     for i, t in enumerate(hourly_times[:hourly_limit]):
         wmo = hourly.get("weather_code", [0] * hourly_limit)
         desc_h, icon_h = wmo_to_description(wmo[i] if i < len(wmo) else 0)
-        hourly_formatted.append({
-            "dt": t,
-            "lead_hours": i,
-            "temp": round(hourly["temperature_2m"][i], 1) if i < len(hourly.get("temperature_2m", [])) else 0,
-            "humidity": hourly["relative_humidity_2m"][i] if i < len(hourly.get("relative_humidity_2m", [])) else 0,
-            "cloud_cover": hourly["cloud_cover"][i] if i < len(hourly.get("cloud_cover", [])) else 0,
-            "wind_speed": round(hourly["wind_speed_10m"][i], 1) if i < len(hourly.get("wind_speed_10m", [])) else 0,
-            "wind_deg": hourly["wind_direction_10m"][i] if i < len(hourly.get("wind_direction_10m", [])) else 0,
-            "precipitation": hourly["precipitation"][i] if i < len(hourly.get("precipitation", [])) else 0,
-            "pop": (hourly["precipitation_probability"][i] or 0) / 100 if i < len(hourly.get("precipitation_probability", [])) else 0,
-            "weather": [{"description": desc_h, "icon": icon_h}],
-            "weather_code": wmo[i] if i < len(wmo) else 0,
-        })
+        hourly_formatted.append(
+            {
+                "dt": t,
+                "lead_hours": i,
+                "temp": round(hourly["temperature_2m"][i], 1)
+                if i < len(hourly.get("temperature_2m", []))
+                else 0,
+                "humidity": hourly["relative_humidity_2m"][i]
+                if i < len(hourly.get("relative_humidity_2m", []))
+                else 0,
+                "cloud_cover": hourly["cloud_cover"][i]
+                if i < len(hourly.get("cloud_cover", []))
+                else 0,
+                "wind_speed": round(hourly["wind_speed_10m"][i], 1)
+                if i < len(hourly.get("wind_speed_10m", []))
+                else 0,
+                "wind_deg": hourly["wind_direction_10m"][i]
+                if i < len(hourly.get("wind_direction_10m", []))
+                else 0,
+                "precipitation": hourly["precipitation"][i]
+                if i < len(hourly.get("precipitation", []))
+                else 0,
+                "pop": (hourly["precipitation_probability"][i] or 0) / 100
+                if i < len(hourly.get("precipitation_probability", []))
+                else 0,
+                "weather": [{"description": desc_h, "icon": icon_h}],
+                "weather_code": wmo[i] if i < len(wmo) else 0,
+            }
+        )
 
     daily_times = daily.get("time", [])
     daily_formatted = []
@@ -735,22 +830,24 @@ def format_weather_for_frontend(raw_data: dict, city_name: str) -> dict:
         precip_probability = _series_value(daily, "precipitation_probability_max", i, 0)
         precipitation_sum = _series_value(daily, "precipitation_sum", i, 0.0)
         wind_speed = _series_value(daily, "wind_speed_10m_max", i, 0)
-        daily_formatted.append({
-            "dt": t,
-            "temp": {
-                "min": round(temp_min, 1),
-                "max": round(temp_max, 1),
-                "day": round((temp_min + temp_max) / 2, 1),
-            },
-            "humidity": 50,
-            "cloud_cover": _approx_cloud_cover_from_wmo(weather_code),
-            "wind_speed": round(wind_speed, 1),
-            "wind_deg": _series_value(daily, "wind_direction_10m_dominant", i, 0),
-            "pop": precip_probability / 100,
-            "precipitation_sum": round(precipitation_sum, 1),
-            "weather": [{"description": desc_d, "icon": icon_d}],
-            "weather_code": weather_code,
-        })
+        daily_formatted.append(
+            {
+                "dt": t,
+                "temp": {
+                    "min": round(temp_min, 1),
+                    "max": round(temp_max, 1),
+                    "day": round((temp_min + temp_max) / 2, 1),
+                },
+                "humidity": 50,
+                "cloud_cover": _approx_cloud_cover_from_wmo(weather_code),
+                "wind_speed": round(wind_speed, 1),
+                "wind_deg": _series_value(daily, "wind_direction_10m_dominant", i, 0),
+                "pop": precip_probability / 100,
+                "precipitation_sum": round(precipitation_sum, 1),
+                "weather": [{"description": desc_d, "icon": icon_d}],
+                "weather_code": weather_code,
+            }
+        )
 
     return {
         "current": current_formatted,
