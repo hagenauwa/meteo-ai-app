@@ -219,10 +219,12 @@ def check_hourly_rain_adaptive(
             continue
 
         # Calcola lead_hours dall'orario previsto
+        forecast_hour = now.hour
         try:
             forecast_time = datetime.fromisoformat(time_str)
             if forecast_time.tzinfo is None:
                 forecast_time = forecast_time.replace(tzinfo=timezone.utc)
+            forecast_hour = forecast_time.hour
             lead_hours = max(
                 0,
                 int(
@@ -240,7 +242,7 @@ def check_hourly_rain_adaptive(
             city_name=city_name,
             forecast_temp=temperatures[i] if i < len(temperatures) else 20.0,
             humidity=humidities[i] if i < len(humidities) else 50.0,
-            hour=forecast_time.hour if "forecast_time" in dir() else now.hour,
+            hour=forecast_hour,
             month=now.month,
             cloud_cover=cloud_covers[i] if i < len(cloud_covers) else 50.0,
             lead_hours=lead_hours,

@@ -52,8 +52,8 @@ self.addEventListener("push", (event) => {
     const data = event.data?.json() || {};
     const title = data.title || "Le Previsioni";
     const body = data.body || "Aggiornamento meteo disponibile";
-    const icon = data.icon || "./assets/icons/icon-192x192.png";
-    const badge = data.badge || "./assets/icons/icon-72x72.png";
+    const icon = data.icon || "/icons/icon-192.png";
+    const badge = data.badge || "/icons/icon-192.png";
     const isRainAlert = data.data?.type === "rain_alert";
 
     event.waitUntil(
@@ -76,7 +76,7 @@ self.addEventListener("notificationclick", (event) => {
     event.waitUntil(
         clients.matchAll({ type: "window", includeUncontrolled: true }).then(clientList => {
             for (const client of clientList) {
-                if (client.url.includes("leprevisioni.netlify.app") || client.url.includes("localhost")) {
+                if (client.url.includes("leprevisioni.netlify.app") || client.url.includes("localhost") || client.url.includes("pages.dev")) {
                     return client.focus();
                 }
             }

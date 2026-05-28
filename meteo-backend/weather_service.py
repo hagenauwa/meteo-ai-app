@@ -558,7 +558,8 @@ def _convert_metno_to_open_meteo_payload(
         ][0]
         daily["temperature_2m_min"].append(min(temps))
         daily["temperature_2m_max"].append(max(temps))
-        daily["weather_code"].append(preferred["weather_code"] or common_code)
+        preferred_code = preferred["weather_code"]
+        daily["weather_code"].append(preferred_code if preferred_code is not None else common_code)
         daily["precipitation_probability_max"].append(max(pops))
         daily["precipitation_sum"].append(round(sum(precipitations), 2))
         daily["wind_speed_10m_max"].append(max(winds))

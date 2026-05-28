@@ -226,7 +226,7 @@ def test_convert_metno_payload_to_open_meteo_shape():
         "properties": {
             "timeseries": [
                 {
-                    "time": "2026-04-04T10:00:00Z",
+                    "time": "2026-04-04T00:00:00Z",
                     "data": {
                         "instant": {
                             "details": {
@@ -245,7 +245,7 @@ def test_convert_metno_payload_to_open_meteo_shape():
                     },
                 },
                 {
-                    "time": "2026-04-04T11:00:00Z",
+                    "time": "2026-04-04T10:00:00Z",
                     "data": {
                         "instant": {
                             "details": {
@@ -258,8 +258,46 @@ def test_convert_metno_payload_to_open_meteo_shape():
                             }
                         },
                         "next_1_hours": {
+                            "summary": {"symbol_code": "clearsky_day"},
+                            "details": {"precipitation_amount": 0.0},
+                        },
+                    },
+                },
+                {
+                    "time": "2026-04-04T14:00:00Z",
+                    "data": {
+                        "instant": {
+                            "details": {
+                                "air_pressure_at_sea_level": 1016,
+                                "air_temperature": 22.0,
+                                "cloud_area_fraction": 42,
+                                "relative_humidity": 56,
+                                "wind_from_direction": 200,
+                                "wind_speed": 7.0,
+                            }
+                        },
+                        "next_1_hours": {
                             "summary": {"symbol_code": "lightrain_day"},
                             "details": {"precipitation_amount": 0.2},
+                        },
+                    },
+                },
+                {
+                    "time": "2026-04-04T16:00:00Z",
+                    "data": {
+                        "instant": {
+                            "details": {
+                                "air_pressure_at_sea_level": 1015,
+                                "air_temperature": 22.5,
+                                "cloud_area_fraction": 44,
+                                "relative_humidity": 55,
+                                "wind_from_direction": 210,
+                                "wind_speed": 7.5,
+                            }
+                        },
+                        "next_1_hours": {
+                            "summary": {"symbol_code": "lightrain_day"},
+                            "details": {"precipitation_amount": 0.3},
                         },
                     },
                 },
@@ -272,9 +310,10 @@ def test_convert_metno_payload_to_open_meteo_shape():
     assert result is not None
     assert result["current"]["temperature_2m"] == 20.5
     assert result["current"]["weather_code"] == 2
-    assert result["hourly"]["weather_code"][1] == 61
+    assert result["hourly"]["weather_code"][1] == 0
+    assert result["daily"]["weather_code"][0] == 0
     assert result["daily"]["time"]
-    assert result["daily"]["wind_direction_10m_dominant"][0] == 180
+    assert result["daily"]["wind_direction_10m_dominant"][0] == 190
 
 
 def test_convert_metno_payload_limits_daily_horizon_to_nine_days():

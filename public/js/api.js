@@ -10,7 +10,7 @@ const GEOCODING_MAX_COUNT = 50;
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const OPEN_METEO_CURRENT_FIELDS = (
     "temperature_2m,relative_humidity_2m,apparent_temperature,cloud_cover," +
-    "wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code"
+    "wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code,is_day"
 );
 const OPEN_METEO_DAILY_FIELDS = (
     "temperature_2m_max,temperature_2m_min,weather_code," +
@@ -26,7 +26,7 @@ const OPEN_METEO_FORECAST_HOURS = 24;
 const WMO_CODES = {
     0: ["Cielo sereno", "01d"],
     1: ["Prevalentemente sereno", "02d"],
-    2: ["Parzialmente nuvoloso", "03d"],
+    2: ["Parzialmente nuvoloso", "02d"],
     3: ["Nuvoloso", "04d"],
     45: ["Nebbia", "50d"],
     48: ["Nebbia con brina", "50d"],
@@ -245,11 +245,12 @@ function approxCloudCoverFromWmo(code) {
     if (code === 0 || code === 1) return 12;
     if (code === 2) return 45;
     if (code === 3 || code === 45 || code === 48) return 82;
-    return 88;
+    if (code >= 51 && code <= 99) return 88;
+    return 55;
 }
 
 function isRainWmoCode(code) {
-    return [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].includes(Number(code));
+    return [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99].includes(Number(code));
 }
 
 function deriveDailyWmoFromHourly(dailyDate, fallbackCode, hourly = {}) {
@@ -340,10 +341,11 @@ function formatWeatherForFrontend(rawData, cityName) {
     const currentWmo = current.weather_code || 0;
     const hourHasRain = (hourlyWmo && hourlyWmo >= 51) || hourlyPop >= 0.5 || hourlyPrecip > 0;
     const currentHasRain = (current.precipitation || 0) > 0 || currentWmo >= 51;
+    const currentIsNight = Number(current.is_day) === 0;
 
     const effectiveWmo = hourHasRain && !currentHasRain ? (hourlyWmo || 61) : currentWmo;
     const pop = currentHasRain || hourHasRain ? 1 : 0;
-    const [description, icon] = wmoToDescription(effectiveWmo);
+    const [description, icon] = wmoToDescription(effectiveWmo, currentIsNight);
 
     const currentFormatted = {
         temp: Math.round((current.temperature_2m || 0) * 10) / 10,
@@ -365,7 +367,9 @@ function formatWeatherForFrontend(rawData, cityName) {
 
     for (let i = 0; i < hourlyLimit; i++) {
         const wmoCode = (hourly.weather_code || [])[i] || 0;
-        const [hourDesc, hourIcon] = wmoToDescription(wmoCode);
+        const hour = Number(String(hourlyTimes[i] || "").slice(11, 13));
+        const isNight = Number.isFinite(hour) ? (hour < 6 || hour >= 18) : false;
+        const [hourDesc, hourIcon] = wmoToDescription(wmoCode, isNight);
         hourlyFormatted.push({
             dt: hourlyTimes[i],
             lead_hours: i,
