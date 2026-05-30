@@ -9,6 +9,7 @@ Gestisce:
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -92,9 +93,12 @@ async def send_telegram_message(
 
                 # Gestione rate limit Telegram (429)
                 if resp.status_code == 429:
-                    retry_after = (
-                        resp.json().get("parameters", {}).get("retry_after", 5)
-                    )
+                    try:
+                        retry_after = (
+                            resp.json().get("parameters", {}).get("retry_after", 5)
+                        )
+                    except Exception:
+                        retry_after = 5
                     logger.warning(
                         f"Telegram rate limit 429 per {chat_id}, "
                         f"retry dopo {retry_after}s (tentativo {attempt + 1}/{max_retries})"
@@ -313,7 +317,7 @@ async def handle_webhook_update(update: dict[str, Any]) -> None:
                 return
 
             sub_row = cast(Any, sub)
-            city = sub_row.city or "Non impostata"
+            city = html.escape(sub_row.city) if sub_row.city else "Non impostata"
             rain = (
                 "✅ Attive" if sub_row.rain_alerts_enabled is True else "❌ Disattive"
             )
@@ -322,7 +326,7 @@ async def handle_webhook_update(update: dict[str, Any]) -> None:
                 if sub_row.daily_forecast_enabled is True
                 else "❌ Disattive"
             )
-            hour = sub_row.daily_forecast_hour
+            hour = sub_row.daily_forecast_hour if sub_row.daily_forecast_hour is not None else 8
 
             await send_telegram_message(
                 chat_id,

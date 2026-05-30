@@ -1,0 +1,14 @@
+# Normalizzazione fine-riga: testo memorizzato in LF nel repo, checkout nativo.
+* text=auto
+
+# Script Windows: mantenere CRLF
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+
+# File binari (no normalizzazione)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.db    binary

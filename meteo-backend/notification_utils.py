@@ -10,6 +10,7 @@ Modulo fondazione per Telegram e push Web:
 
 from __future__ import annotations
 
+import html
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -179,6 +180,7 @@ def check_hourly_rain_adaptive(
     city_name: str | None = None,
     region: str = "Sconosciuta",
     max_lead_hours: int = MAX_LEAD_HOURS,
+    ml_coverage: bool = True,
 ) -> dict | None:
     """
     Scansiona le previsioni orarie con logica adattiva:
@@ -235,32 +237,44 @@ def check_hourly_rain_adaptive(
         except (ValueError, TypeError):
             lead_hours = i
 
-        # Ottieni ML probability
-        ml_result = get_ml_rain_probability(
-            lat=lat,
-            lon=lon,
-            city_name=city_name,
-            forecast_temp=temperatures[i] if i < len(temperatures) else 20.0,
-            humidity=humidities[i] if i < len(humidities) else 50.0,
-            hour=forecast_hour,
-            month=now.month,
-            cloud_cover=cloud_covers[i] if i < len(cloud_covers) else 50.0,
-            lead_hours=lead_hours,
-            forecast_precipitation=precipitation,
-            forecast_wind_speed=wind_speeds[i] if i < len(wind_speeds) else None,
-            forecast_wind_direction=wind_directions[i]
-            if i < len(wind_directions)
-            else None,
-            forecast_weather_code=weather_code,
-            region=region,
-        )
+        # Ottieni ML probability solo se la città è nell'area coperta dal modello:
+        # fuori area sarebbe un'estrapolazione fuorviante (serving onesto).
+        if ml_coverage:
+            ml_result = get_ml_rain_probability(
+                lat=lat,
+                lon=lon,
+                city_name=city_name,
+                forecast_temp=temperatures[i] if i < len(temperatures) else 20.0,
+                humidity=humidities[i] if i < len(humidities) else 50.0,
+                hour=forecast_hour,
+                month=now.month,
+                cloud_cover=cloud_covers[i] if i < len(cloud_covers) else 50.0,
+                lead_hours=lead_hours,
+                forecast_precipitation=precipitation,
+                forecast_wind_speed=wind_speeds[i] if i < len(wind_speeds) else None,
+                forecast_wind_direction=wind_directions[i]
+                if i < len(wind_directions)
+                else None,
+                forecast_weather_code=weather_code,
+                region=region,
+            )
+        else:
+            ml_result = {
+                "rain_probability": 0.0,
+                "model_ready": False,
+                "will_rain": False,
+                "confidence": "bassa",
+            }
 
         ml_prob = ml_result.get("rain_probability", 0.0)
         ml_ready = ml_result.get("model_ready", False)
+        # will_rain usa la probabilità CALIBRATA e la soglia ottimizzata su F1 del
+        # modello (fallback alla soglia fissa solo per modelli senza will_rain).
+        ml_will_rain = bool(ml_result.get("will_rain", ml_prob >= RAIN_ML_THRESHOLD))
 
         # Trigger adattivo:
         # 1. POP >= 50% AND weather_code pioggia → sempre trigger
-        # 2. POP >= 50% AND ML >= 40% → trigger (ML conferma)
+        # 2. POP >= 50% AND il modello ML prevede pioggia → trigger (ML conferma)
         # 3. POP >= 50% AND precipitazione > 0.1mm → trigger (dati reali)
         trigger = False
         trigger_reason = ""
@@ -268,13 +282,13 @@ def check_hourly_rain_adaptive(
         if meets_pop and meets_wmo:
             trigger = True
             trigger_reason = "wmo_rain"
-        elif meets_pop and ml_ready and ml_prob >= RAIN_ML_THRESHOLD:
+        elif meets_pop and ml_ready and ml_will_rain:
             trigger = True
             trigger_reason = "ml_confirmed"
         elif meets_pop and meets_precip:
             trigger = True
             trigger_reason = "precipitation"
-        elif meets_wmo and ml_ready and ml_prob >= 0.3:
+        elif meets_wmo and ml_ready and ml_will_rain:
             trigger = True
             trigger_reason = "wmo_with_ml_support"
 
@@ -372,21 +386,27 @@ def should_notify_rain(last_alert_at: datetime | None, now: datetime) -> bool:
 
 def should_notify_daily(
     last_daily_at: datetime | None,
-    daily_forecast_hour: int,
+    daily_forecast_hour: int | None,
     now: datetime,
 ) -> bool:
-    """Verifica se è il momento di inviare il promemoria giornaliero."""
-    current_hour = now.astimezone(ZoneInfo("Europe/Rome")).hour
-    if current_hour != daily_forecast_hour:
+    """Verifica se è il momento di inviare il promemoria giornaliero.
+
+    Invia una sola volta per giorno (data locale Europe/Rome), all'ora scelta o
+    subito dopo: così un cron in ritardo a cavallo dell'ora non salta del tutto il
+    promemoria di quel giorno (catch-up). daily_forecast_hour None usa default 8.
+    """
+    target_hour = daily_forecast_hour if daily_forecast_hour is not None else 8
+    now_rome = now.astimezone(ZoneInfo("Europe/Rome"))
+    if now_rome.hour < target_hour:
         return False
 
     if last_daily_at is None:
         return True
 
-    # Evita duplicati nella stessa ora
     if last_daily_at.tzinfo is None:
         last_daily_at = last_daily_at.replace(tzinfo=timezone.utc)
-    return (now - last_daily_at).total_seconds() > 3500  # ~58 minuti
+    # Già inviato oggi (confronto sulla data locale Roma)?
+    return last_daily_at.astimezone(ZoneInfo("Europe/Rome")).date() < now_rome.date()
 
 
 # ─── Formattazione messaggi ──────────────────────────────────────────────────
@@ -406,7 +426,7 @@ def build_rain_message(city_name: str, rain_info: dict) -> str:
     trigger_reason = rain_info.get("trigger_reason", "")
 
     # Header
-    message = f"🌧️ <b>Sta per piovere a {city_name}!</b>\n\n"
+    message = f"🌧️ <b>Sta per piovere a {html.escape(city_name)}!</b>\n\n"
 
     # Descrizione condizioni
     message += f"{description}\n"
@@ -527,6 +547,13 @@ def _derive_daily_weather_code_from_hourly(
     return fallback_code
 
 
+def _series_value(seq: Any, idx: int) -> Any:
+    """Accesso sicuro a una serie giornaliera: None se assente o fuori range."""
+    if isinstance(seq, list) and 0 <= idx < len(seq):
+        return seq[idx]
+    return None
+
+
 def build_daily_message(
     city_name: str,
     daily: dict,
@@ -537,14 +564,14 @@ def build_daily_message(
     Costruisce il messaggio HTML per il promemoria giornaliero.
     Include previsioni sintetiche con emoji e dettagli pioggia.
     """
-    max_temp = daily.get("temperature_2m_max", [None])[today_idx]
-    min_temp = daily.get("temperature_2m_min", [None])[today_idx]
-    daily_weather_code = daily.get("weather_code", [None])[today_idx]
+    max_temp = _series_value(daily.get("temperature_2m_max"), today_idx)
+    min_temp = _series_value(daily.get("temperature_2m_min"), today_idx)
+    daily_weather_code = _series_value(daily.get("weather_code"), today_idx)
     weather_code = _derive_daily_weather_code_from_hourly(
         daily, hourly, today_idx, daily_weather_code
     )
-    precip_prob = daily.get("precipitation_probability_max", [None])[today_idx]
-    precip_sum = daily.get("precipitation_sum", [None])[today_idx]
+    precip_prob = _series_value(daily.get("precipitation_probability_max"), today_idx)
+    precip_sum = _series_value(daily.get("precipitation_sum"), today_idx)
 
     # Descrizione meteo
     if weather_code is not None:
@@ -563,7 +590,7 @@ def build_daily_message(
         emoji = "🌤️"
 
     # Costruzione messaggio
-    message = f"{emoji} <b>Previsioni per {city_name}</b>\n\n"
+    message = f"{emoji} <b>Previsioni per {html.escape(city_name)}</b>\n\n"
 
     if max_temp is not None and min_temp is not None:
         message += f"🌡️ Temperatura: {min_temp:.0f}° - {max_temp:.0f}°\n"
@@ -580,15 +607,10 @@ def build_daily_message(
         avg_wind = sum(wind_speeds[:12]) / min(12, len(wind_speeds))
         message += f"💨 Vento medio: {avg_wind:.0f} km/h\n"
 
-    # Fascie orarie pioggia
+    # Fascie orarie pioggia (find_rain_time_slots limita già a max 3 periodi)
     rain_slots = find_rain_time_slots(hourly)
     if rain_slots:
-        if len(rain_slots) > 3:
-            message += (
-                f"🌧️ Pioggia prevista: {', '.join(rain_slots[:3])}, e altri orari\n"
-            )
-        else:
-            message += f"🌧️ Pioggia prevista: {', '.join(rain_slots)}\n"
+        message += f"🌧️ Pioggia prevista: {', '.join(rain_slots)}\n"
     else:
         message += "☀️ Nessuna pioggia prevista\n"
 

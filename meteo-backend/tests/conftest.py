@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import Iterator
 
 import pytest
 
 
-PYTEST_TEMP_ROOT = Path("C:/Users/Andrea/AppData/Local/Temp/opencode/pytest").resolve()
+# Radice temp portabile: evita path assoluti user-specific che, sotto runner
+# POSIX, verrebbero trattati come relativi e creerebbero una cartella spuria
+# "C:" dentro il repo.
+PYTEST_TEMP_ROOT = Path(tempfile.gettempdir()) / "meteo-ai-pytest"
 PYTEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", str(PYTEST_TEMP_ROOT))
 

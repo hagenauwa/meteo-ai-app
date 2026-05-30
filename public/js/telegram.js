@@ -11,6 +11,17 @@ let consecutiveFailures = 0;
 let isGeneratingLinkCode = false;
 let linkCodeRequestId = 0;
 
+// Escaping HTML per i valori controllati dall'utente (user_name, città, messaggi
+// di errore) inseriti via innerHTML: previene rotture del markup e XSS.
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 export async function initializeTelegram() {
     const btn = document.getElementById("telegramToggle");
     if (!btn) return;
@@ -158,7 +169,7 @@ async function generateLinkCode(event) {
         if (requestId !== linkCodeRequestId) return;
         content.innerHTML = `
             <div class="telegram-error">
-                <p><i class="fas fa-exclamation-triangle"></i> ${err.message}</p>
+                <p><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(err.message)}</p>
                 <button id="telegramRetryBtn" class="btn-secondary">Riprova</button>
             </div>
         `;
@@ -238,7 +249,7 @@ function showTelegramLinked(status) {
                 <i class="fas fa-check-circle telegram-check-icon"></i>
                 <span>Telegram collegato</span>
             </div>
-            ${status.user_name ? `<p class="telegram-username">@${status.user_name}</p>` : ''}
+            ${status.user_name ? `<p class="telegram-username">@${escapeHtml(status.user_name)}</p>` : ''}
 
             <div class="telegram-preferences">
                 <h4>Preferenze notifiche</h4>
@@ -270,7 +281,7 @@ function showTelegramLinked(status) {
 
                 <div class="telegram-pref-item">
                     <label>Città:</label>
-                    <input type="text" id="tgCity" value="${status.city || ''}" placeholder="Es. Roma" class="telegram-city-input">
+                    <input type="text" id="tgCity" value="${escapeHtml(status.city || '')}" placeholder="Es. Roma" class="telegram-city-input">
                 </div>
 
                 <button id="telegramSaveBtn" class="btn-primary btn-sm telegram-save-btn">
@@ -307,7 +318,7 @@ async function savePreferences() {
     const preferences = {
         rain_alerts_enabled: document.getElementById("tgRainAlerts")?.checked || false,
         daily_forecast_enabled: document.getElementById("tgDailyForecast")?.checked || false,
-        daily_forecast_hour: parseInt(document.getElementById("tgForecastHour")?.value || "7", 10),
+        daily_forecast_hour: parseInt(document.getElementById("tgForecastHour")?.value || "8", 10),
         city: document.getElementById("tgCity")?.value?.trim() || null,
     };
 

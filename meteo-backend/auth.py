@@ -1,6 +1,8 @@
 """
 auth.py — dipendenze di autenticazione per endpoint sensibili.
 """
+import secrets
+
 from fastapi import Header, HTTPException
 
 from config import settings
@@ -17,5 +19,6 @@ def require_admin_access(x_admin_token: str | None = Header(default=None)) -> No
             detail="ADMIN_API_TOKEN non configurato sul server",
         )
 
-    if x_admin_token != settings.admin_api_token:
+    # Confronto a tempo costante per evitare timing attack sul token.
+    if not secrets.compare_digest(x_admin_token or "", settings.admin_api_token):
         raise HTTPException(status_code=403, detail="Token amministratore non valido")

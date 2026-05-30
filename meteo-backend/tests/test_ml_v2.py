@@ -197,6 +197,71 @@ def test_predict_rain_probability_supports_legacy_models(monkeypatch):
     assert result["rain_probability"] == 0.2
 
 
+def test_predict_rain_probability_applies_v1_platt_calibration(monkeypatch):
+    """Il ramo v1 deve servire la probabilità CALIBRATA (Platt), non quella grezza."""
+    class FakePipeline:
+        n_features_in_ = 6
+
+        def predict_proba(self, features):
+            # Probabilità grezza gonfiata dal class_weight='balanced'
+            return np.array([[0.1, 0.9]])
+
+    platt = {"coef": 0.5, "intercept": -1.0}
+    monkeypatch.setattr(ml_model, "_rain_pipeline", FakePipeline())
+    monkeypatch.setattr(ml_model, "_rain_pipeline_v2", None)
+    monkeypatch.setattr(ml_model, "_rain_platt_v1", platt)
+    monkeypatch.setattr(ml_model, "_ensure_latest_model_loaded", lambda **kwargs: None)
+
+    result = ml_model.predict_rain_probability(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        lead_hours=6,
+        forecast_precipitation=0.4,
+        forecast_weather_code=61,
+    )
+
+    expected = round(float(ml_model._apply_platt(0.9, platt)), 3)
+    assert result["model_ready"] is True
+    assert result["rain_probability"] == expected
+    # La calibrazione deve ridurre la probabilità gonfiata (de-inflazione)
+    assert result["rain_probability"] < 0.9
+
+
+def test_optimal_f1_threshold_identifies_positives_for_rare_event():
+    # Probabilità calibrate basse (evento raro): a 0.5 non si predice mai pioggia.
+    probs = np.array([0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4])
+    y = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+    threshold, f1 = ml_model._optimal_f1_threshold(probs, y)
+    # A 0.5 nessun positivo verrebbe predetto (tutte le prob <= 0.4): la soglia
+    # ottimale deve essere più bassa e dare F1 > 0.
+    assert 0.0 < threshold <= 0.4
+    assert f1 > 0.0
+
+
+def test_is_city_in_ml_coverage_respects_allowed_provinces(monkeypatch):
+    monkeypatch.setattr(
+        ml_model, "settings",
+        SimpleNamespace(ml_training_allowed_provinces=("Massa-Carrara", "Lucca")),
+    )
+    assert ml_model.is_city_in_ml_coverage("Massa-Carrara") is True
+    assert ml_model.is_city_in_ml_coverage("Lucca") is True
+    assert ml_model.is_city_in_ml_coverage("Milano") is False
+    assert ml_model.is_city_in_ml_coverage(None) is False
+
+
+def test_is_city_in_ml_coverage_global_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(
+        ml_model, "settings",
+        SimpleNamespace(ml_training_allowed_provinces=()),
+    )
+    assert ml_model.is_city_in_ml_coverage("Milano") is True
+
+
 def test_predict_rain_probability_uses_v2_when_v1_is_not_available(monkeypatch):
     class FakeRainV2Pipeline:
         def predict_proba(self, features):

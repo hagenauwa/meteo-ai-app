@@ -1,4 +1,4 @@
-const CACHE_NAME = "le-previsioni-static-v19-ml-impact";
+const CACHE_NAME = "le-previsioni-static-v20-no-push";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
@@ -48,42 +48,7 @@ self.addEventListener("install", event => {
     );
 });
 
-self.addEventListener("push", (event) => {
-    const data = event.data?.json() || {};
-    const title = data.title || "Le Previsioni";
-    const body = data.body || "Aggiornamento meteo disponibile";
-    const icon = data.icon || "/icons/icon-192.png";
-    const badge = data.badge || "/icons/icon-192.png";
-    const isRainAlert = data.data?.type === "rain_alert";
-
-    event.waitUntil(
-        self.registration.showNotification(title, {
-            body,
-            icon,
-            badge,
-            tag: data.tag || (isRainAlert ? "rain-alert" : "meteo-update"),
-            requireInteraction: isRainAlert ? true : false,
-            data: data.data || {},
-        })
-    );
-});
-
-self.addEventListener("notificationclick", (event) => {
-    event.notification.close();
-    const city = event.notification.data?.city;
-    const url = city ? `/?city=${encodeURIComponent(city)}` : "/";
-
-    event.waitUntil(
-        clients.matchAll({ type: "window", includeUncontrolled: true }).then(clientList => {
-            for (const client of clientList) {
-                if (client.url.includes("leprevisioni.netlify.app") || client.url.includes("localhost") || client.url.includes("pages.dev")) {
-                    return client.focus();
-                }
-            }
-            return clients.openWindow(url);
-        })
-    );
-});
+// Le notifiche Web Push sono state rimosse: l'unico canale di notifica è Telegram.
 
 self.addEventListener("activate", event => {
     event.waitUntil(

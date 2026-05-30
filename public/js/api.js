@@ -55,11 +55,22 @@ export async function apiFetch(url, options = {}) {
     return fetch(url, { ...options, headers });
 }
 
+function normalizeErrorDetail(detail) {
+    // FastAPI 422 restituisce `detail` come array di oggetti {loc,msg,type}.
+    if (Array.isArray(detail)) {
+        return detail.map(item => item?.msg || JSON.stringify(item)).join("; ");
+    }
+    if (detail && typeof detail === "object") {
+        return JSON.stringify(detail);
+    }
+    return detail;
+}
+
 async function fetchJson(url, options = {}) {
     const response = await apiFetch(url, options);
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-        throw new Error(body.detail || body.message || `HTTP ${response.status}`);
+        throw new Error(normalizeErrorDetail(body.detail) || body.message || `HTTP ${response.status}`);
     }
     return body;
 }
@@ -136,6 +147,30 @@ function formatGeocodingResults(results, query, limit, scope) {
     return deduped.slice(0, limit).map(({ _population, ...city }) => city);
 }
 
+function formatBackendResults(results, query, limit, scope) {
+    // Il backend /api/cities/search restituisce già la forma {name, region,
+    // province, lat, lon, locality_type} (NON la forma Open-Meteo), quindi qui
+    // non filtriamo per country_code/latitude ma normalizziamo direttamente.
+    const queryLower = normalizeText(query);
+    const normalized = results
+        .filter(item => Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lon)))
+        .map(item => ({
+            name: item.name || "",
+            region: item.region || "",
+            province: item.province || "",
+            lat: item.lat,
+            lon: item.lon,
+            locality_type: item.locality_type || "comune",
+            _population: Number(item.population || 0),
+        }))
+        .filter(city => matchesScope(city, scope));
+
+    const deduped = dedupeGeocodingResults(normalized);
+    deduped.sort((a, b) => rankGeocodingResult(a, b, queryLower));
+
+    return deduped.slice(0, limit).map(({ _population, ...city }) => city);
+}
+
 async function fetchOpenMeteoGeocoding(query, limit, options = {}) {
     const count = Math.min(
         GEOCODING_MAX_COUNT,
@@ -192,7 +227,9 @@ async function fetchBackendCitySearch(query, limit, scope, signal) {
         signal,
     });
     if (!response.ok) return [];
-    const body = await response.json().catch(() => ({}));
+    const body = await response.json().catch(() => ([]));
+    // L'endpoint backend restituisce un ARRAY (response_model=List[CityIndexItem]).
+    if (Array.isArray(body)) return body;
     return Array.isArray(body.results) ? body.results : [];
 }
 
@@ -218,9 +255,11 @@ export async function searchCities(query, limit = 8, scope = "all", options = {}
     }
 
     if (backendRaw.length > 0) {
-        const results = formatGeocodingResults(backendRaw, trimmedQuery, limit, scope);
-        storeCitySearchResult(cacheKey, results);
-        return results;
+        const results = formatBackendResults(backendRaw, trimmedQuery, limit, scope);
+        if (results.length > 0) {
+            storeCitySearchResult(cacheKey, results);
+            return results;
+        }
     }
 
     const rawResults = await fetchOpenMeteoGeocoding(trimmedQuery, limit, options);
@@ -354,7 +393,9 @@ function formatWeatherForFrontend(rawData, cityName) {
         pressure: Math.round(current.surface_pressure || 1013),
         wind_speed: Math.round((current.wind_speed_10m || 0) * 10) / 10,
         wind_deg: current.wind_direction_10m || 0,
-        visibility: 10000,
+        // Open-Meteo non fornisce la visibilità nel blocco "current": usa l'ora
+        // corrente se disponibile fra gli hourly, altrimenti null (mostrato come "--").
+        visibility: currentHourIndex >= 0 ? ((hourly.visibility || [])[currentHourIndex] ?? null) : null,
         clouds: current.cloud_cover || 0,
         precipitation: current.precipitation || 0,
         pop,

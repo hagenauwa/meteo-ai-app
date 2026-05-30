@@ -190,14 +190,16 @@ def test_ml_enrich_uses_europe_rome_14_local_for_daily_representative_time(monke
     monkeypatch.setattr(ml_module, "datetime", _FixedDateTime)
     monkeypatch.setattr(ml_module.ml_model, "build_daily_insight", _capture_daily_insight)
 
+    # Città in copertura ML (Massa-Carrara) così l'enrich non viene disabilitato
+    # dal gate out-of-area e build_daily_insight viene effettivamente chiamato.
     app.dependency_overrides[get_db] = override_get_db([
-        fake_city(name="Roma", region="Lazio", province="RM", lat=41.9, lon=12.5),
+        fake_city(name="Massa", region="Toscana", province="Massa-Carrara", lat=41.9, lon=12.5),
     ])
 
     try:
         response = client.post(
             "/api/ml/enrich",
-            json=_base_payload(name="Roma", lat=41.9, lon=12.5, dt="2026-03-30"),
+            json=_base_payload(name="Massa", lat=41.9, lon=12.5, dt="2026-03-30"),
         )
     finally:
         app.dependency_overrides.pop(get_db, None)

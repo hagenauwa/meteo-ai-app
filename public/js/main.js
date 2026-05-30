@@ -27,8 +27,13 @@ function applyMlEnrichment(payload, enrichment) {
     };
 
     if (Array.isArray(payload.daily) && Array.isArray(enrichment.daily_ml)) {
+        // Allinea per data (dt) quando disponibile, con fallback all'indice: evita
+        // di attribuire l'insight ML al giorno sbagliato se gli array divergono.
+        const mlByDate = new Map(
+            enrichment.daily_ml.filter(item => item && item.dt).map(item => [item.dt, item])
+        );
         merged.daily = payload.daily.map((day, index) => {
-            const dayMl = enrichment.daily_ml[index];
+            const dayMl = mlByDate.get(day.dt) ?? enrichment.daily_ml[index];
             if (!dayMl) return day;
             return {
                 ...day,

@@ -71,6 +71,8 @@ _rain_pipeline: Optional[Pipeline] = None
 _condition_pipeline: Optional[Pipeline] = None
 _rain_pipeline_v2: Optional[Pipeline] = None
 _condition_pipeline_v2: Optional[Pipeline] = None
+_rain_platt_v1: dict | None = None
+_rain_threshold_v1: float | None = None
 _rain_platt_v2: dict | None = None
 _condition_platt_v2: dict | None = None
 _label_encoder: Optional[LabelEncoder] = None
@@ -194,7 +196,7 @@ def _latest_model_record_summary() -> dict | None:
 
 def _reset_loaded_model_state() -> None:
     global _pipeline, _rain_pipeline, _condition_pipeline
-    global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v2, _condition_platt_v2
+    global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v1, _rain_threshold_v1, _rain_platt_v2, _condition_platt_v2
     global _label_encoder, _known_regions, _temperature_feature_variant, _blend_profiles
 
     _pipeline = None
@@ -202,6 +204,8 @@ def _reset_loaded_model_state() -> None:
     _condition_pipeline = None
     _rain_pipeline_v2 = None
     _condition_pipeline_v2 = None
+    _rain_platt_v1 = None
+    _rain_threshold_v1 = None
     _rain_platt_v2 = None
     _condition_platt_v2 = None
     _label_encoder = None
@@ -1150,6 +1154,19 @@ def _allowed_training_provinces() -> set[str]:
     }
 
 
+def is_city_in_ml_coverage(province: str | None) -> bool:
+    """True se la provincia rientra nell'area coperta dal modello ML.
+
+    Il modello è addestrato solo su queste province: servire predizioni fuori
+    area sarebbe un'estrapolazione non validata. Se non è configurata alcuna
+    provincia (lista vuota), la copertura è globale.
+    """
+    allowed = _allowed_training_provinces()
+    if not allowed:
+        return True
+    return _normalise_province(province) in allowed
+
+
 def _prepare_training_rows(
     db: Session,
     *,
@@ -1559,6 +1576,28 @@ def _train_temperature_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> d
     }
 
 
+def _optimal_f1_threshold(probabilities: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """Soglia che massimizza l'F1 della classe pioggia sulla validation.
+
+    Con probabilità calibrate su un evento raro, la soglia 0.5 quasi non predice
+    mai "pioggia": cerchiamo la soglia che massimizza l'F1, fondamentale per usare
+    bene il modello nelle notifiche. Ritorna (soglia, f1).
+    """
+    y_arr = np.asarray(y)
+    probs = np.asarray(probabilities, dtype=float)
+    if len(y_arr) == 0 or len(set(y_arr.tolist())) < 2:
+        return 0.5, 0.0
+
+    candidates = sorted(set(np.round(probs, 3).tolist()) | {0.5})
+    best_threshold, best_f1 = 0.5, -1.0
+    for threshold in candidates:
+        preds = (probs >= threshold).astype(int)
+        score = float(f1_score(y_arr, preds, zero_division=0))
+        if score > best_f1:
+            best_f1, best_threshold = score, float(threshold)
+    return best_threshold, max(0.0, best_f1)
+
+
 def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
     X, y = _build_rain_matrices(rows, encoder)
     if len(X) < 20:
@@ -1577,20 +1616,48 @@ def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
     ])
     pipeline.fit(X_train, y_train)
 
-    acc = float(accuracy_score(y_val, pipeline.predict(X_val)))
-    if acc < baseline_acc:
+    # Calibrazione Platt sulle probabilità di validation. class_weight="balanced"
+    # addestra su un prior ~50/50 mentre la pioggia reale è ~10-15%: le probabilità
+    # grezze risultano gonfiate. Serviamo la versione calibrata + una soglia
+    # ottimizzata su F1 (la 0.5 è inadatta agli eventi rari).
+    raw_val_probs = pipeline.predict_proba(X_val)[:, 1]
+    platt = _fit_platt_scaler(raw_val_probs, y_val)
+    calibrated = np.array([_apply_platt(float(prob), platt) for prob in raw_val_probs], dtype=float)
+    threshold, f1 = _optimal_f1_threshold(calibrated, y_val)
+
+    acc = float(accuracy_score(y_val, (calibrated >= threshold).astype(int)))
+    brier = float(np.mean((calibrated - y_val) ** 2))
+    baseline_prob = float(np.mean(y_train)) if len(y_train) else float(np.mean(y_val))
+    baseline_brier = float(np.mean((baseline_prob - y_val) ** 2))
+    brier_improvement = (baseline_brier - brier) / max(baseline_brier, 1e-6)
+
+    # Gate adatto agli eventi rari: il modello deve identificare la pioggia (F1>0
+    # alla soglia ottimale) E calibrare meglio del baseline costante. L'accuracy
+    # da sola era un no-op (un "mai pioggia" supera ~0.88 con eventi al ~12%).
+    if not (f1 > 0.0 and brier_improvement >= MIN_RAIN_BRIER_IMPROVEMENT_RATIO):
         return {
             "success": False,
-            "message": f"Il modello pioggia non supera il baseline ({acc:.3f} vs {baseline_acc:.3f})",
+            "message": (
+                "Il modello pioggia non batte il baseline "
+                f"(F1 {f1:.3f}, brier {brier:.3f} vs {baseline_brier:.3f})"
+            ),
             "accuracy": acc,
             "baseline_accuracy": baseline_acc,
+            "f1": f1,
+            "brier": brier,
+            "baseline_brier": baseline_brier,
         }
 
     return {
         "success": True,
         "pipeline": pipeline,
+        "platt": platt,
+        "threshold": threshold,
         "accuracy": acc,
         "baseline_accuracy": baseline_acc,
+        "f1": f1,
+        "brier": brier,
+        "baseline_brier": baseline_brier,
         "n_samples": len(X),
         "rain_share": round(float(np.mean(y)), 3),
     }
@@ -1762,6 +1829,7 @@ def _rain_probability_for_row(row: dict, variant: str, pipelines: dict | None = 
     rain_v2 = (pipelines or {}).get("rain_pipeline_v2", _rain_pipeline_v2)
     rain_v1 = (pipelines or {}).get("rain_pipeline", _rain_pipeline)
     rain_platt_v2_local = (pipelines or {}).get("rain_platt_v2", _rain_platt_v2)
+    rain_platt_v1_local = (pipelines or {}).get("rain_platt_v1", _rain_platt_v1)
 
     if variant == "v2":
         if rain_v2 is None:
@@ -1802,7 +1870,7 @@ def _rain_probability_for_row(row: dict, variant: str, pipelines: dict | None = 
         forecast_wind_direction=row.get("forecast_wind_direction"),
         forecast_weather_code=row.get("forecast_weather_code"),
     )
-    return float(rain_v1.predict_proba(features)[0][1])
+    return float(_apply_platt(float(rain_v1.predict_proba(features)[0][1]), rain_platt_v1_local))
 
 
 def _condition_probabilities_for_row(row: dict, variant: str, pipelines: dict | None = None) -> np.ndarray | None:
@@ -2185,7 +2253,7 @@ def train(min_samples: int = 100) -> dict:
     Promuove ogni modello solo se batte un baseline semplice.
     """
     global _pipeline, _rain_pipeline, _condition_pipeline
-    global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v2, _condition_platt_v2
+    global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v1, _rain_threshold_v1, _rain_platt_v2, _condition_platt_v2
     global _latest_summary, _temperature_feature_variant, _blend_profiles
     global _loaded_model_store_id, _loaded_model_trained_at, _last_model_version_check_at
 
@@ -2265,6 +2333,8 @@ def train(min_samples: int = 100) -> dict:
             diagnostics["temperature_promotion"] = temp_diagnostics["temperature_promotion"]
 
         rain_pipeline = rain_result["pipeline"] if rain_result.get("success") else None
+        rain_platt_v1 = rain_result.get("platt") if rain_pipeline is not None else None
+        rain_threshold_v1 = rain_result.get("threshold") if rain_pipeline is not None else None
         condition_pipeline = condition_result["pipeline"] if condition_result.get("success") else None
 
         rain_pipeline_v2 = rain_v2_result["pipeline"] if rain_v2_result.get("success") else None
@@ -2287,6 +2357,7 @@ def train(min_samples: int = 100) -> dict:
             "condition_pipeline": condition_pipeline,
             "rain_pipeline_v2": rain_pipeline_v2,
             "condition_pipeline_v2": condition_pipeline_v2,
+            "rain_platt_v1": rain_platt_v1,
             "rain_platt_v2": rain_platt_v2,
             "condition_platt_v2": condition_platt_v2,
         }
@@ -2358,6 +2429,8 @@ def train(min_samples: int = 100) -> dict:
             "temperature_feature_variant": temperature_feature_variant,
             "rain_pipeline": rain_pipeline,
             "rain_feature_variant": "v1" if rain_pipeline is not None else None,
+            "rain_platt_v1": rain_platt_v1,
+            "rain_threshold_v1": rain_threshold_v1,
             "condition_pipeline": condition_pipeline,
             "condition_feature_variant": "v1" if condition_pipeline is not None else None,
             "rain_pipeline_v2": rain_pipeline_v2,
@@ -2396,6 +2469,8 @@ def train(min_samples: int = 100) -> dict:
         _condition_pipeline = condition_pipeline
         _rain_pipeline_v2 = rain_pipeline_v2
         _condition_pipeline_v2 = condition_pipeline_v2
+        _rain_platt_v1 = rain_platt_v1
+        _rain_threshold_v1 = rain_threshold_v1
         _rain_platt_v2 = rain_platt_v2
         _condition_platt_v2 = condition_platt_v2
         _temperature_feature_variant = temperature_feature_variant
@@ -2466,7 +2541,7 @@ def train(min_samples: int = 100) -> dict:
 def load_latest_model() -> bool:
     """Carica in memoria l'ultimo modello promosso."""
     global _pipeline, _rain_pipeline, _condition_pipeline
-    global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v2, _condition_platt_v2
+    global _rain_pipeline_v2, _condition_pipeline_v2, _rain_platt_v1, _rain_threshold_v1, _rain_platt_v2, _condition_platt_v2
     global _label_encoder, _known_regions, _latest_summary, _temperature_feature_variant, _blend_profiles
     global _loaded_model_store_id, _loaded_model_trained_at, _last_model_version_check_at
 
@@ -2522,6 +2597,8 @@ def load_latest_model() -> bool:
                 _condition_pipeline = data.get("condition_pipeline")
                 _rain_pipeline_v2 = data.get("rain_pipeline_v2")
                 _condition_pipeline_v2 = data.get("condition_pipeline_v2")
+                _rain_platt_v1 = data.get("rain_platt_v1")
+                _rain_threshold_v1 = data.get("rain_threshold_v1")
                 _rain_platt_v2 = data.get("rain_platt_v2")
                 _condition_platt_v2 = data.get("condition_platt_v2")
                 _temperature_feature_variant = _infer_temperature_feature_variant_from_pipeline(
@@ -2767,12 +2844,14 @@ def predict_rain_probability(
             forecast_weather_code=forecast_weather_code,
         )
         proba = _rain_pipeline.predict_proba(features)[0]
-        rain_prob = float(proba[1])
+        rain_prob = float(_apply_platt(float(proba[1]), _rain_platt_v1))
+        threshold = float(_rain_threshold_v1) if _rain_threshold_v1 is not None else 0.5
         confidence = _empirical_confidence(_confidence_from_score(abs(rain_prob - 0.5) * 2), lead_hours)
 
         return {
             "rain_probability": round(rain_prob, 3),
-            "will_rain": rain_prob >= 0.5,
+            "will_rain": rain_prob >= threshold,
+            "rain_threshold": round(threshold, 3),
             "model_ready": True,
             "confidence": confidence,
             "model_variant": active_variant,

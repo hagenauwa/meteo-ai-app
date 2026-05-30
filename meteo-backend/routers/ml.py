@@ -85,6 +85,7 @@ class CityResolution(TypedDict):
     lat: float | None
     lon: float | None
     region: str | None
+    province: str | None
     warning: MlWarning | None
 
 
@@ -123,6 +124,7 @@ def _make_resolution(
     lon: float | None,
     region: str | None,
     warning: MlWarning | None,
+    province: str | None = None,
 ) -> CityResolution:
     return {
         "resolved": resolved,
@@ -131,6 +133,7 @@ def _make_resolution(
         "lat": lat,
         "lon": lon,
         "region": region,
+        "province": province,
         "warning": warning,
     }
 
@@ -173,6 +176,7 @@ def _resolve_city_context(city: str, db: Session) -> CityResolution:
     city_lat = cast(float, cast(object, city_row.lat))
     city_lon = cast(float, cast(object, city_row.lon))
     city_region = cast(str | None, cast(object, city_row.region))
+    city_province = cast(str | None, cast(object, city_row.province))
     return _make_resolution(
         resolved=True,
         ambiguous=False,
@@ -180,6 +184,7 @@ def _resolve_city_context(city: str, db: Session) -> CityResolution:
         lat=city_lat,
         lon=city_lon,
         region=city_region or "Sconosciuta",
+        province=city_province,
         warning=None,
     )
 
@@ -233,6 +238,7 @@ def _resolve_city_for_enrich(payload: EnrichCityPayload, db: Session) -> CityRes
         lat=payload.lat,
         lon=payload.lon,
         region=payload.region or resolution["region"] or "Sconosciuta",
+        province=resolution["province"],
         warning=None,
     )
 
@@ -279,6 +285,14 @@ def _invalid_input_warning(reason: str) -> MlWarning:
         "ML_INVALID_INPUT",
         "ML disabilitato: parametri non validi.",
         reason,
+    )
+
+
+def _out_of_area_warning(city: str | None) -> MlWarning:
+    return _make_warning(
+        "ML_OUT_OF_AREA",
+        "Modello ML non disponibile per questa zona: mostrata la previsione standard.",
+        f"city outside ML coverage area: {city}",
     )
 
 
@@ -436,6 +450,11 @@ async def enrich_forecast(
             warning = _make_warning("ML_CITY_UNRESOLVED", "ML disabilitato.", "missing warning details")
         return _disabled_ml_payload(warning)
 
+    # Serving onesto: il modello è addestrato solo su alcune province. Fuori da
+    # quell'area non estrapoliamo, ma dichiariamo il ML non disponibile.
+    if not ml_model.is_city_in_ml_coverage(resolution["province"]):
+        return _disabled_ml_payload(_out_of_area_warning(resolution["city"]))
+
     region = resolution["region"]
 
     correction = ml_model.predict_correction(
@@ -468,16 +487,19 @@ async def enrich_forecast(
 
     daily_ml: list[dict[str, object]] = []
     for day in payload.daily:
-        daily_ml.append(
-            ml_model.build_daily_insight(
-                day=day.model_dump(mode="python"),
-                lat=resolution["lat"],
-                lon=resolution["lon"],
-                region=region,
-                lead_hours=_representative_daily_lead_hours(now=now, date_text=day.dt),
-                city_name=payload.city.name,
-            )
+        insight = ml_model.build_daily_insight(
+            day=day.model_dump(mode="python"),
+            lat=resolution["lat"],
+            lon=resolution["lon"],
+            region=region,
+            lead_hours=_representative_daily_lead_hours(now=now, date_text=day.dt),
+            city_name=payload.city.name,
         )
+        # Echeggia la data così il frontend può allineare l'insight al giorno
+        # corretto per data (non per indice), evitando disallineamenti.
+        if isinstance(insight, dict):
+            insight = {**insight, "dt": day.dt}
+        daily_ml.append(insight)
 
     return {
         "ml": {

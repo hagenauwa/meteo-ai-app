@@ -150,10 +150,14 @@ function setText(id, value) {
 function renderPlannerHead(payload, selectedDay, selectedIndex) {
     setText("cityName", payload.name || "--");
 
-    const cityMeta = payload.city
-        ? [payload.city.province, payload.city.region].filter(Boolean).join(" • ")
-        : "Italia";
-    setText("cityMeta", cityMeta || "Italia");
+    const cityMetaParts = payload.city
+        ? [payload.city.province, payload.city.region].filter(Boolean)
+        : [];
+    // Serving onesto: avvisa quando il modello AI non copre questa zona.
+    if (payload.ml && payload.ml.enabled === false && payload.ml.warning?.code === "ML_OUT_OF_AREA") {
+        cityMetaParts.push("Modello AI non attivo in questa zona");
+    }
+    setText("cityMeta", cityMetaParts.join(" • ") || "Italia");
     setText("selectedDayLabel", getRelativeDayLabel(selectedIndex, selectedDay.dt));
     setText("selectedDayDate", formatDate(selectedDay.dt));
 
@@ -227,7 +231,12 @@ function renderCurrent(payload) {
     setText("weatherDescription", current.weather?.[0]?.description || "--");
     setText("humidity", `${current.humidity}%`);
     setText("windSpeed", `${Math.round(current.wind_speed)} km/h`);
-    setText("visibility", `${(current.visibility / 1000).toFixed(1)} km`);
+    setText(
+        "visibility",
+        Number.isFinite(Number(current.visibility))
+            ? `${(current.visibility / 1000).toFixed(1)} km`
+            : "--",
+    );
     setText("pressure", `${current.pressure} hPa`);
 
     const icon = document.getElementById("weatherIcon");

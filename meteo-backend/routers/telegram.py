@@ -301,12 +301,19 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
     Riceve gli aggiornamenti dal bot Telegram.
     Telegram invia POST JSON a questo endpoint.
     """
-    # Verifica secret se configurato
+    # Verifica secret. In produzione è OBBLIGATORIO: senza, l'endpoint sarebbe
+    # aperto e chiunque potrebbe iniettare update falsi (linking/unlinking).
     if settings.telegram_webhook_secret:
         # Telegram invia il secret nell'header X-Telegram-Bot-Api-Secret-Token
         secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if secret_header != settings.telegram_webhook_secret:
+        if not secrets.compare_digest(secret_header, settings.telegram_webhook_secret):
             raise HTTPException(status_code=403, detail="Secret non valido")
+    elif settings.is_production:
+        import logging
+        logging.getLogger(__name__).error(
+            "TELEGRAM_WEBHOOK_SECRET non configurato in produzione: webhook rifiutato"
+        )
+        raise HTTPException(status_code=403, detail="Webhook secret non configurato")
 
     try:
         update = await request.json()

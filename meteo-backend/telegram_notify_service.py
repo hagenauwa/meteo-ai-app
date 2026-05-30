@@ -16,9 +16,10 @@ import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from database import TelegramSubscription, SessionLocal
+from database import TelegramSubscription, SessionLocal, City
 from weather_service import fetch_single_city
 from telegram_bot import send_telegram_message
+from ml_model import is_city_in_ml_coverage
 from notification_utils import (
     resolve_city_coords,
     check_hourly_rain_adaptive,
@@ -29,6 +30,26 @@ from notification_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _lookup_city_geo(city_name: str) -> tuple[str | None, str | None]:
+    """Recupera (region, province) reali dal DB per una città, best-effort.
+
+    Serve a passare al modello la regione vista in training (invece di
+    "Sconosciuta") e a decidere se la città è nell'area di copertura ML.
+    """
+    if not city_name:
+        return None, None
+    with SessionLocal() as db:
+        row = (
+            db.query(City.region, City.province)
+            .filter(City.name_lower == city_name.strip().lower())
+            .order_by(City.population.desc())
+            .first()
+        )
+        if row:
+            return row.region, row.province
+    return None, None
 
 
 def _mark_rain_notified(sub_id: int, now: datetime):
@@ -71,13 +92,16 @@ async def _fetch_and_check_rain(sub: TelegramSubscription, now: datetime) -> dic
 
     hourly = data.get("hourly", {})
 
-    # Trigger adattivo con ML
+    # Regione reale (per coerenza con le feature di training) e copertura ML:
+    # fuori dalle province coperte non usiamo il modello per non estrapolare.
+    region, province = await asyncio.to_thread(_lookup_city_geo, city_name)
     rain_info = check_hourly_rain_adaptive(
         hourly,
         lat=lat,
         lon=lon,
         city_name=city_name,
-        region="Sconosciuta",  # Potrebbe essere migliorato con reverse geocoding
+        region=region or "Sconosciuta",
+        ml_coverage=is_city_in_ml_coverage(province),
     )
 
     if not rain_info:

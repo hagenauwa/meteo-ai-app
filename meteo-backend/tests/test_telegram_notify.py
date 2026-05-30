@@ -8,11 +8,66 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import notification_utils
 from notification_utils import (
     build_daily_message,
+    check_hourly_rain_adaptive,
     find_rain_time_slots as _find_rain_time_slots,
 )
 from scripts import run_telegram_checks
+
+
+def _rainy_hourly():
+    """Ore con POP alta ma codice meteo NON di pioggia e niente precipitazione:
+    senza il modello ML non scatta alcun trigger."""
+    return {
+        "time": ["2026-05-22T10:00", "2026-05-22T11:00"],
+        "precipitation_probability": [70, 70],
+        "weather_code": [3, 3],
+        "precipitation": [0.0, 0.0],
+        "temperature_2m": [18.0, 18.0],
+        "relative_humidity_2m": [80.0, 80.0],
+        "cloud_cover": [80.0, 80.0],
+        "wind_speed_10m": [10.0, 10.0],
+        "wind_direction_10m": [180.0, 180.0],
+    }
+
+
+def test_rain_adaptive_skips_ml_when_out_of_coverage(monkeypatch):
+    calls = []
+
+    def fake_ml(**kwargs):
+        calls.append(kwargs)
+        return {"rain_probability": 0.9, "model_ready": True, "will_rain": True, "confidence": "alta"}
+
+    monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
+
+    result = check_hourly_rain_adaptive(
+        _rainy_hourly(), lat=45.4, lon=9.2, city_name="Milano",
+        region="Lombardia", ml_coverage=False,
+    )
+
+    assert calls == []          # ML non interrogato fuori area
+    assert result is None       # nessun trigger (solo POP, niente wmo/precip/ML)
+
+
+def test_rain_adaptive_uses_ml_when_in_coverage(monkeypatch):
+    calls = []
+
+    def fake_ml(**kwargs):
+        calls.append(kwargs)
+        return {"rain_probability": 0.8, "model_ready": True, "will_rain": True, "confidence": "alta"}
+
+    monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
+
+    result = check_hourly_rain_adaptive(
+        _rainy_hourly(), lat=44.0, lon=10.1, city_name="Massa",
+        region="Toscana", ml_coverage=True,
+    )
+
+    assert len(calls) >= 1
+    assert result is not None
+    assert result["trigger_reason"] == "ml_confirmed"
 
 
 def test_no_rain():
