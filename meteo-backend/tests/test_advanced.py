@@ -2,7 +2,6 @@
 import importlib
 from types import SimpleNamespace
 
-import pytest
 from fastapi.testclient import TestClient
 
 import sys

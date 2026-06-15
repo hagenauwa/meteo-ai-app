@@ -1,14 +1,24 @@
-# Normalizzazione fine-riga: testo memorizzato in LF nel repo, checkout nativo.
-* text=auto
+# Fine-riga deterministici: tutto il testo resta LF sia nell'indice sia nel working tree.
+# Questo evita warning CRLF/LF quando si lavora tra Windows, WSL e CI.
+* text=auto eol=lf
 
-# Script Windows: mantenere CRLF
+# Script Windows: mantenere CRLF perché alcuni tool Windows li preferiscono.
 *.bat   text eol=crlf
-*.ps1   text eol=crlf
 *.cmd   text eol=crlf
+*.ps1   text eol=crlf
 
-# File binari (no normalizzazione)
+# File binari: nessuna normalizzazione.
 *.png   binary
 *.jpg   binary
 *.jpeg  binary
+*.gif   binary
+*.webp  binary
 *.ico   binary
+*.pdf   binary
 *.db    binary
+*.sqlite binary
+*.sqlite3 binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary

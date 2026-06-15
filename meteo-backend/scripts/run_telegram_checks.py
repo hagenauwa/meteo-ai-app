@@ -10,9 +10,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from config import settings
-from database import init_db
-from telegram_notify_service import check_telegram_rain_alerts, check_telegram_daily_forecasts
+from config import settings  # noqa: E402
+from database import init_db  # noqa: E402
+from telegram_notify_service import check_telegram_rain_alerts, check_telegram_daily_forecasts  # noqa: E402
 
 
 def _validate_runtime_config() -> None:

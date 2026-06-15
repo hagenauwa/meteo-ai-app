@@ -11,6 +11,7 @@ Regole:
 
 import threading
 import time
+import weakref
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -23,13 +24,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     LIMIT = 60
     WINDOW = 60.0
     CLEANUP_INTERVAL = 60.0
+    _INSTANCES = weakref.WeakSet()
 
     def __init__(self, app):
         super().__init__(app)
         self._requests: dict[str, list[float]] = {}
         self._lock = threading.Lock()
         self._cleanup_timer: threading.Timer | None = None
+        self._INSTANCES.add(self)
         self._start_cleanup()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._requests.clear()
 
     # ------------------------------------------------------------------
     # Cleanup automatico ogni minuto
@@ -86,3 +93,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self._requests[ip] = timestamps
 
         return await call_next(request)
+
+
+def reset_rate_limits() -> None:
+    for instance in list(RateLimitMiddleware._INSTANCES):
+        instance.reset()

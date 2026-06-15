@@ -9,9 +9,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from database import init_db
-import ml_model
-from scheduler import hourly_cycle
+from database import init_db  # noqa: E402
+import ml_model  # noqa: E402
+from scheduler import hourly_cycle  # noqa: E402
 
 
 def main() -> None:

@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from database import TelegramSubscription, SessionLocal, City
 from weather_service import fetch_single_city

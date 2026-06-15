@@ -10,14 +10,11 @@ Eseguire una volta: python cities_loader.py
   --reload       Ricarica comuni da CSV locale
 """
 import csv
-import os
 import sys
 import zipfile
-import io
 from pathlib import Path
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from database import engine, init_db, City
 
 CSV_PATH = Path(__file__).parent / "data" / "comuni_italiani.csv"
@@ -130,7 +127,7 @@ def download_and_load():
     tramite Open-Meteo geocoding API (gratuita), e carica nel DB.
     Operazione una-tantum: richiede ~2-3 minuti per ~7.900 comuni.
     """
-    import json, asyncio
+    import asyncio
     import httpx
 
     GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -251,7 +248,7 @@ def load_geonames() -> int:
     GEONAMES_DIR.mkdir(parents=True, exist_ok=True)
 
     if not txt_path.exists():
-        print(f"[DL] Scaricando GeoNames IT.zip...")
+        print("[DL] Scaricando GeoNames IT.zip...")
         r = httpx.get(GEONAMES_URL, timeout=120, follow_redirects=True)
         r.raise_for_status()
         with open(zip_path, "wb") as f:
@@ -261,9 +258,9 @@ def load_geonames() -> int:
         # 2. Estrai IT.txt
         with zipfile.ZipFile(zip_path) as zf:
             zf.extract("IT.txt", GEONAMES_DIR)
-        print(f"[OK] Estratto IT.txt")
+        print("[OK] Estratto IT.txt")
     else:
-        print(f"[INFO] IT.txt già presente, uso file locale")
+        print("[INFO] IT.txt già presente, uso file locale")
 
     # 3. Carica comuni esistenti per deduplica (nome_lower → set di coordinate)
     with Session(engine) as session:

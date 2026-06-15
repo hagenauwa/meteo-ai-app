@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-from sqlalchemy import text
-
-from database import City, MlPrediction, WeatherObservation
+from database import City, MlPrediction
 
 
 class TestCityResolution:

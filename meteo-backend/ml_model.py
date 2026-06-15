@@ -578,10 +578,13 @@ def _recency_sample_weights(rows: list[dict]) -> np.ndarray:
     if not rows:
         return np.array([], dtype=float)
 
-    reference_time = max(row.get("verified_at") or row["target_time"] for row in rows)
+    normalized_times = [
+        _to_naive_utc(row.get("verified_at") or row["target_time"])
+        for row in rows
+    ]
+    reference_time = max(normalized_times)
     weights = []
-    for row in rows:
-        sample_time = row.get("verified_at") or row["target_time"]
+    for sample_time in normalized_times:
         age_days = max(0.0, (reference_time - sample_time).total_seconds() / 86400.0)
         weights.append(max(0.2, 0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS)))
     return np.array(weights, dtype=float)
@@ -620,11 +623,11 @@ def _resolve_live_model_variant(city_name: str | None = None) -> str:
     return "v2" if _city_rollout_bucket(city_name) < rollout else "v1"
 
 
+
 def _global_model_variant_for_stats() -> str:
     if settings.ml_v2_shadow_only and settings.ml_v2_enabled:
         return "v1"
     return _resolve_live_model_variant(None)
-
 
 def _rain_model_variant_for_stats() -> str:
     serving = _global_model_variant_for_stats()
@@ -1186,6 +1189,15 @@ def _to_naive_utc_optional(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     return _to_naive_utc(value)
+
+
+def _normalize_training_row_datetimes(row: dict) -> dict:
+    normalized = dict(row)
+    if normalized.get("target_time") is not None:
+        normalized["target_time"] = _to_naive_utc(normalized["target_time"])
+    if normalized.get("verified_at") is not None:
+        normalized["verified_at"] = _to_naive_utc(normalized["verified_at"])
+    return normalized
 
 
 def _prepare_training_rows(
@@ -2286,6 +2298,7 @@ def train(min_samples: int = 100) -> dict:
             window_start=window_start,
             limit=settings.ml_training_max_rows,
         )
+        rows = [_normalize_training_row_datetimes(row) for row in rows]
         logger.info(
             "ML training loaded %s verified rows with window_start=%s window_days=%s max_rows=%s",
             len(rows),

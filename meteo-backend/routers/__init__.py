@@ -5,3 +5,13 @@ from .admin   import router as admin
 from .supporters import router as supporters
 from .advanced import router as advanced
 from .telegram import router as telegram
+
+__all__ = [
+    "weather",
+    "cities",
+    "ml",
+    "admin",
+    "supporters",
+    "advanced",
+    "telegram",
+]

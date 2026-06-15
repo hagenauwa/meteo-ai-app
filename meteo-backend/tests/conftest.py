@@ -17,6 +17,7 @@ TEST_DATABASE_URL = f"sqlite:///{_db_file.name}"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 from database import Base  # noqa: E402
+from rate_limiter import reset_rate_limits  # noqa: E402
 
 
 @pytest.fixture(scope="function")
@@ -40,6 +41,13 @@ def db_session(db_engine) -> Generator:
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture(scope="function", autouse=True)
+def _reset_rate_limits() -> Generator:
+    reset_rate_limits()
+    yield
+    reset_rate_limits()
 
 
 @pytest.fixture(scope="function", autouse=True)

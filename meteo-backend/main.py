@@ -102,7 +102,7 @@ async def lifespan(app: FastAPI):
     print("[BYE] Backend fermato")
 
 
-import logging
+import logging  # noqa: E402
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -127,11 +127,11 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-from rate_limiter import RateLimitMiddleware
+from rate_limiter import RateLimitMiddleware  # noqa: E402
 app.add_middleware(RateLimitMiddleware)
 
 # Importa e registra i router
-from routers import weather, cities, ml, admin, supporters, advanced, telegram
+from routers import weather, cities, ml, admin, supporters, advanced, telegram  # noqa: E402
 
 app.include_router(weather, prefix="/api")
 app.include_router(cities,  prefix="/api")

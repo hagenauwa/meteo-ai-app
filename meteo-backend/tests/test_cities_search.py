@@ -1,7 +1,6 @@
 """Test endpoint ricerca città /api/cities/search."""
 import importlib
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
