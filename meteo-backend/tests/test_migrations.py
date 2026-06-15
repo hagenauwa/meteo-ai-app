@@ -1,4 +1,5 @@
 """Smoke test per migrazioni Alembic."""
+
 from pathlib import Path
 
 from alembic import command

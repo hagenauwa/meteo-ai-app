@@ -1,13 +1,5 @@
-import {
-    confirmSupporterSession,
-    createSupporterCheckoutSession,
-    getSupporterStatus,
-} from "./api.js";
-import {
-    clearSupporterToken,
-    getSupporterToken,
-    setSupporterToken,
-} from "./storage.js";
+import { confirmSupporterSession, createSupporterCheckoutSession, getSupporterStatus } from "./api.js";
+import { clearSupporterToken, getSupporterToken, setSupporterToken } from "./storage.js";
 
 function cleanupSupporterParams() {
     const url = new URL(window.location.href);
@@ -66,9 +58,10 @@ function showThankYou(elements, donationCount = 1) {
     elements.prompt?.classList.add("hidden");
     elements.thankYou?.classList.remove("hidden");
     if (!elements.thankYouText) return;
-    elements.thankYouText.textContent = donationCount > 1
-        ? "Bentornato: il tuo supporto continua a fare la differenza."
-        : "Il tuo supporto è stato registrato in questo browser.";
+    elements.thankYouText.textContent =
+        donationCount > 1
+            ? "Bentornato: il tuo supporto continua a fare la differenza."
+            : "Il tuo supporto è stato registrato in questo browser.";
 }
 
 async function restoreSupporterState(elements) {
@@ -118,7 +111,11 @@ async function consumeStripeReturn(elements) {
     } catch (error) {
         clearSupporterToken();
         showPrompt(elements);
-        setMessage(elements, error.message || "La donazione risulta avviata, ma non sono riuscito a confermarla.", "error");
+        setMessage(
+            elements,
+            error.message || "La donazione risulta avviata, ma non sono riuscito a confermarla.",
+            "error",
+        );
     } finally {
         setLoading(elements, false);
         cleanupSupporterParams();
@@ -131,7 +128,7 @@ export function initializeSupporterWidget() {
     const elements = getElements();
     if (!elements.form || !elements.email || !elements.button) return;
 
-    elements.form.addEventListener("submit", async event => {
+    elements.form.addEventListener("submit", async (event) => {
         event.preventDefault();
         clearMessage(elements);
 
@@ -152,7 +149,7 @@ export function initializeSupporterWidget() {
     showPrompt(elements);
 
     consumeStripeReturn(elements)
-        .then(consumed => {
+        .then((consumed) => {
             if (!consumed) {
                 return restoreSupporterState(elements);
             }

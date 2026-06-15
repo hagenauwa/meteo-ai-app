@@ -1,0 +1,23 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.(bat|cmd|ps1)$
+      - id: end-of-file-fixer
+        exclude: \.(bat|cmd|ps1)$
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: \.(bat|cmd|ps1)$
+      - id: check-yaml
+      - id: check-json
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.10
+    hooks:
+      - id: ruff
+        args: [--config=meteo-backend/pyproject.toml]
+        files: ^meteo-backend/.*\.py$
+      - id: ruff-format
+        args: [--config=meteo-backend/pyproject.toml]
+        files: ^meteo-backend/.*\.py$

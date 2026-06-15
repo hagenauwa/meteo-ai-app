@@ -18,9 +18,9 @@ export function getFavorites() {
 
 export function toggleFavorite(city) {
     const favorites = getFavorites();
-    const exists = favorites.some(item => item.name.toLowerCase() === city.name.toLowerCase());
+    const exists = favorites.some((item) => item.name.toLowerCase() === city.name.toLowerCase());
     const next = exists
-        ? favorites.filter(item => item.name.toLowerCase() !== city.name.toLowerCase())
+        ? favorites.filter((item) => item.name.toLowerCase() !== city.name.toLowerCase())
         : [city, ...favorites].slice(0, 8);
     writeJson(FAVORITES_KEY, next);
     return !exists;
@@ -31,15 +31,15 @@ export function getRecents() {
 }
 
 export function pushRecent(city) {
-    const next = [
-        city,
-        ...getRecents().filter(item => item.name.toLowerCase() !== city.name.toLowerCase()),
-    ].slice(0, 8);
+    const next = [city, ...getRecents().filter((item) => item.name.toLowerCase() !== city.name.toLowerCase())].slice(
+        0,
+        8,
+    );
     writeJson(RECENTS_KEY, next);
 }
 
 export function removeRecent(cityName) {
-    const next = getRecents().filter(item => item.name.toLowerCase() !== cityName.toLowerCase());
+    const next = getRecents().filter((item) => item.name.toLowerCase() !== cityName.toLowerCase());
     writeJson(RECENTS_KEY, next);
 }
 

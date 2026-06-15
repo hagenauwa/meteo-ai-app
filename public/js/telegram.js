@@ -217,7 +217,9 @@ function showTelegramPending(code, clientToken) {
         navigator.clipboard.writeText(code).then(() => {
             const btn = document.getElementById("telegramCopyBtn");
             btn.innerHTML = '<i class="fas fa-check"></i>';
-            setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i>'; }, 2000);
+            setTimeout(() => {
+                btn.innerHTML = '<i class="fas fa-copy"></i>';
+            }, 2000);
         });
     });
 
@@ -249,14 +251,14 @@ function showTelegramLinked(status) {
                 <i class="fas fa-check-circle telegram-check-icon"></i>
                 <span>Telegram collegato</span>
             </div>
-            ${status.user_name ? `<p class="telegram-username">@${escapeHtml(status.user_name)}</p>` : ''}
+            ${status.user_name ? `<p class="telegram-username">@${escapeHtml(status.user_name)}</p>` : ""}
 
             <div class="telegram-preferences">
                 <h4>Preferenze notifiche</h4>
 
                 <div class="telegram-pref-item">
                     <label class="telegram-toggle-label">
-                        <input type="checkbox" id="tgRainAlerts" ${status.rain_alerts_enabled ? 'checked' : ''}>
+                        <input type="checkbox" id="tgRainAlerts" ${status.rain_alerts_enabled ? "checked" : ""}>
                         <span class="telegram-toggle-slider"></span>
                         <span>Allerte pioggia</span>
                     </label>
@@ -264,24 +266,26 @@ function showTelegramLinked(status) {
 
                 <div class="telegram-pref-item">
                     <label class="telegram-toggle-label">
-                        <input type="checkbox" id="tgDailyForecast" ${status.daily_forecast_enabled ? 'checked' : ''}>
+                        <input type="checkbox" id="tgDailyForecast" ${status.daily_forecast_enabled ? "checked" : ""}>
                         <span class="telegram-toggle-slider"></span>
                         <span>Promemoria giornaliero</span>
                     </label>
                 </div>
 
-                <div class="telegram-pref-item telegram-hour-picker" id="tgHourPicker" style="${status.daily_forecast_enabled ? '' : 'display:none'}">
+                <div class="telegram-pref-item telegram-hour-picker" id="tgHourPicker" style="${status.daily_forecast_enabled ? "" : "display:none"}">
                     <label>Ora promemoria:</label>
                     <select id="tgForecastHour">
-                        ${Array.from({length: 24}, (_, i) =>
-                            `<option value="${i}" ${i === status.daily_forecast_hour ? 'selected' : ''}>${String(i).padStart(2, '0')}:00</option>`
-                        ).join('')}
+                        ${Array.from(
+                            { length: 24 },
+                            (_, i) =>
+                                `<option value="${i}" ${i === status.daily_forecast_hour ? "selected" : ""}>${String(i).padStart(2, "0")}:00</option>`,
+                        ).join("")}
                     </select>
                 </div>
 
                 <div class="telegram-pref-item">
                     <label>Città:</label>
-                    <input type="text" id="tgCity" value="${escapeHtml(status.city || '')}" placeholder="Es. Roma" class="telegram-city-input">
+                    <input type="text" id="tgCity" value="${escapeHtml(status.city || "")}" placeholder="Es. Roma" class="telegram-city-input">
                 </div>
 
                 <button id="telegramSaveBtn" class="btn-primary btn-sm telegram-save-btn">
@@ -298,7 +302,7 @@ function showTelegramLinked(status) {
 
     document.getElementById("tgDailyForecast")?.addEventListener("change", (e) => {
         const hourPicker = document.getElementById("tgHourPicker");
-        if (hourPicker) hourPicker.style.display = e.target.checked ? '' : 'none';
+        if (hourPicker) hourPicker.style.display = e.target.checked ? "" : "none";
     });
 
     document.getElementById("telegramSaveBtn")?.addEventListener("click", async () => {
@@ -340,13 +344,19 @@ async function savePreferences() {
         if (msg) {
             msg.textContent = "Salvato!";
             msg.classList.add("success");
-            setTimeout(() => { msg.textContent = ""; msg.classList.remove("success"); }, 2000);
+            setTimeout(() => {
+                msg.textContent = "";
+                msg.classList.remove("success");
+            }, 2000);
         }
     } catch (err) {
         if (msg) {
             msg.textContent = err.message;
             msg.classList.add("error");
-            setTimeout(() => { msg.textContent = ""; msg.classList.remove("error"); }, 3000);
+            setTimeout(() => {
+                msg.textContent = "";
+                msg.classList.remove("error");
+            }, 3000);
         }
     }
 }

@@ -1,4 +1,5 @@
 """Test endpoint ML pubblici reali."""
+
 import importlib
 
 import pytest
@@ -40,9 +41,7 @@ def test_rain_prediction_endpoint_supports_legacy_models(monkeypatch):
 
     install_fake_db_override(app, get_db)
     try:
-        response = client.get(
-            "/api/ml/rain-prediction?city=Roma&temp=20&humidity=60&cloud_cover=40&lead_hours=0"
-        )
+        response = client.get("/api/ml/rain-prediction?city=Roma&temp=20&humidity=60&cloud_cover=40&lead_hours=0")
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -249,8 +248,9 @@ def test_train_endpoint_with_admin_token_runs_training_and_reload(monkeypatch):
     monkeypatch.setattr(
         ml_router.ml_model,
         "train",
-        lambda min_samples: calls.append(("train", min_samples))
-        or {"success": True, "trained_samples": 640, "model_ready": True},
+        lambda min_samples: (
+            calls.append(("train", min_samples)) or {"success": True, "trained_samples": 640, "model_ready": True}
+        ),
     )
     monkeypatch.setattr(
         ml_router.ml_model,

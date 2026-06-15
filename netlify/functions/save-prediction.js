@@ -1,9 +1,9 @@
 /**
  * Netlify Function: save-prediction.js
  * Endpoint opzionale per persistenza server-side delle previsioni ML
- * 
+ *
  * Endpoint: /.netlify/functions/save-prediction
- * 
+ *
  * NOTA: Questa funzione è opzionale perché il sistema ML funziona
  * interamente sul client usando localStorage. Utile se in futuro
  * si vuole condividere dati ML tra dispositivi.
@@ -31,7 +31,7 @@ exports.handler = async (event, context) => {
         if (event.httpMethod === 'POST') {
             const body = JSON.parse(event.body);
             const { city, temp, humidity, timestamp } = body;
-            
+
             if (!city || temp === undefined) {
                 return {
                     statusCode: 400,
@@ -95,10 +95,10 @@ exports.handler = async (event, context) => {
 
                 cityPredictions.forEach(pred => {
                     if (pred.verified) return;
-                    
+
                     const predTime = new Date(pred.timestamp);
                     const hoursDiff = (now - predTime) / (1000 * 60 * 60);
-                    
+
                     // Verifica previsioni tra 1 e 12 ore
                     if (hoursDiff >= 1 && hoursDiff <= 12) {
                         pred.actualTemp = parseFloat(actualTemp);
@@ -121,7 +121,7 @@ exports.handler = async (event, context) => {
 
             // Recupera tutte le previsioni della città
             const cityPredictions = predictionsDB.get(city) || [];
-            
+
             return {
                 statusCode: 200,
                 headers,
@@ -141,7 +141,7 @@ exports.handler = async (event, context) => {
 
     } catch (error) {
         console.error('Save prediction error:', error);
-        
+
         return {
             statusCode: 500,
             headers,

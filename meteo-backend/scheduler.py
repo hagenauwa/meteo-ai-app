@@ -1,6 +1,7 @@
 """
 scheduler.py — ciclo orario di raccolta osservazioni, verifica forecast e training ML.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,15 +29,19 @@ scheduler = AsyncIOScheduler(timezone="Europe/Rome")
 
 def _db_get_cities() -> list[dict]:
     with SessionLocal() as db:
-        rows = db.query(
-            City.id,
-            City.name,
-            City.lat,
-            City.lon,
-            City.region,
-            City.province,
-            City.population,
-        ).filter(City.locality_type == "comune").all()
+        rows = (
+            db.query(
+                City.id,
+                City.name,
+                City.lat,
+                City.lon,
+                City.region,
+                City.province,
+                City.population,
+            )
+            .filter(City.locality_type == "comune")
+            .all()
+        )
         cities = [
             {
                 "id": row.id,
@@ -79,11 +84,7 @@ def _filter_training_cities_by_province(cities: list[dict]) -> list[dict]:
     allowed = _allowed_training_provinces()
     if not allowed:
         return cities
-    return [
-        city
-        for city in cities
-        if _normalise_province(city.get("province")) in allowed
-    ]
+    return [city for city in cities if _normalise_province(city.get("province")) in allowed]
 
 
 def _cycle_seed(now: datetime) -> int:
@@ -305,7 +306,9 @@ def _serialize_training_state(state: MlTrainingState) -> dict:
         "last_cycle_predictions": state.last_cycle_predictions,
         "last_cycle_verified": state.last_cycle_verified,
         "last_cycle_avg_error": state.last_cycle_avg_error,
-        "last_successful_train_at": state.last_successful_train_at.isoformat() if state.last_successful_train_at else None,
+        "last_successful_train_at": state.last_successful_train_at.isoformat()
+        if state.last_successful_train_at
+        else None,
         "verified_count_at_last_train": int(state.verified_count_at_last_train or 0),
         "last_model_store_id": state.last_model_store_id,
         "last_model_trained_at": state.last_model_trained_at.isoformat() if state.last_model_trained_at else None,
@@ -347,6 +350,7 @@ def _db_read_training_state() -> dict:
             return _serialize_training_state(state)
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).warning("Failed to read training state from DB: %s", exc)
         return _empty_training_state()
 
@@ -371,12 +375,8 @@ def _db_cleanup(now: datetime) -> dict:
     pred_cutoff = now - timedelta(days=settings.ml_prediction_retention_days)
 
     with SessionLocal() as db:
-        deleted_obs = db.query(WeatherObservation).filter(
-            WeatherObservation.observed_at < obs_cutoff
-        ).delete()
-        deleted_pred = db.query(MlPrediction).filter(
-            MlPrediction.predicted_at < pred_cutoff
-        ).delete()
+        deleted_obs = db.query(WeatherObservation).filter(WeatherObservation.observed_at < obs_cutoff).delete()
+        deleted_pred = db.query(MlPrediction).filter(MlPrediction.predicted_at < pred_cutoff).delete()
 
         model_ids = [
             row.id
@@ -387,8 +387,8 @@ def _db_cleanup(now: datetime) -> dict:
         ]
         deleted_models = 0
         if model_ids:
-            deleted_models = db.query(MlModelStore).filter(MlModelStore.id.in_(model_ids)).delete(
-                synchronize_session=False
+            deleted_models = (
+                db.query(MlModelStore).filter(MlModelStore.id.in_(model_ids)).delete(synchronize_session=False)
             )
 
         db.commit()
@@ -477,10 +477,7 @@ async def hourly_cycle():
         should_retrain = (
             total_verified >= MIN_VERIFIED_FOR_TRAINING
             and (last_training is None or (now - last_training).total_seconds() >= RETRAIN_EVERY_HOURS * 3600)
-            and (
-                not model_ready
-                or new_verified_since_last >= settings.ml_min_new_verified_for_retrain
-            )
+            and (not model_ready or new_verified_since_last >= settings.ml_min_new_verified_for_retrain)
         )
 
         cycle_message = "retrain_skipped"
@@ -539,13 +536,10 @@ async def hourly_cycle():
         shadow_state = await asyncio.to_thread(ml_model.evaluate_shadow_window)
         if shadow_state.get("checked"):
             print(
-                "[SHADOW] checked pass=%s streak=%s rollout_allowed=%s force_v1=%s"
-                % (
-                    shadow_state.get("pass"),
-                    shadow_state.get("consecutive_positive_windows"),
-                    shadow_state.get("rollout_allowed"),
-                    shadow_state.get("runtime_force_v1"),
-                )
+                f"[SHADOW] checked pass={shadow_state.get('pass')} "
+                f"streak={shadow_state.get('consecutive_positive_windows')} "
+                f"rollout_allowed={shadow_state.get('rollout_allowed')} "
+                f"force_v1={shadow_state.get('runtime_force_v1')}"
             )
 
         cleanup = await asyncio.to_thread(_db_cleanup, now)

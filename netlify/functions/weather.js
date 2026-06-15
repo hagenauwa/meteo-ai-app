@@ -2,7 +2,7 @@
  * Netlify Function: weather.js
  * Proxy per OpenWeatherMap API
  * Gestisce sia geocoding che dati meteo
- * 
+ *
  * Endpoint: /.netlify/functions/weather
  */
 
@@ -39,7 +39,7 @@ exports.handler = async (event, context) => {
             })
         };
     }
-    
+
     // Verifica che la key non sia vuota o con solo spazi
     const cleanKey = OPENWEATHER_API_KEY.trim();
     if (cleanKey.length < 10) {
@@ -53,7 +53,7 @@ exports.handler = async (event, context) => {
             })
         };
     }
-    
+
     console.log('Usando API key di lunghezza:', cleanKey.length);
 
     try {
@@ -63,15 +63,15 @@ exports.handler = async (event, context) => {
         // === GEOCODING: Trova coordinate da nome città ===
         if (type === 'geocoding' && city) {
             const geoUrl = `${GEO_URL}/direct?q=${encodeURIComponent(city)},IT&limit=1&appid=${cleanKey}`;
-            
+
             console.log('Geocoding URL:', geoUrl.replace(cleanKey, 'XXX'));
-            
+
             const response = await fetch(geoUrl);
             const data = await response.json();
-            
+
             console.log('Geocoding status:', response.status);
             console.log('Geocoding response:', JSON.stringify(data).substring(0, 200));
-            
+
             if (!response.ok) {
                 console.error('Geocoding error:', data);
                 return {
@@ -84,7 +84,7 @@ exports.handler = async (event, context) => {
                     })
                 };
             }
-            
+
             if (!data || data.length === 0) {
                 return {
                     statusCode: 404,
@@ -110,22 +110,22 @@ exports.handler = async (event, context) => {
         if (lat && lon) {
             // Chiamata 1: Meteo attuale
             const currentUrl = `${BASE_URL}/weather?lat=${lat}&lon=${lon}&units=metric&lang=it&appid=${cleanKey}`;
-            
+
             // Chiamata 2: Previsioni (ogni 3 ore, 5 giorni)
             const forecastUrl = `${BASE_URL}/forecast?lat=${lat}&lon=${lon}&units=metric&lang=it&appid=${cleanKey}`;
-            
+
             console.log('Weather URLs:');
             console.log('Current:', currentUrl.replace(cleanKey, 'XXX'));
             console.log('Forecast:', forecastUrl.replace(cleanKey, 'XXX'));
-            
+
             const [currentRes, forecastRes] = await Promise.all([
                 fetch(currentUrl),
                 fetch(forecastUrl)
             ]);
-            
+
             console.log('Current status:', currentRes.status);
             console.log('Forecast status:', forecastRes.status);
-            
+
             if (!currentRes.ok) {
                 const errorData = await currentRes.json();
                 console.error('Current weather error:', errorData);
@@ -139,7 +139,7 @@ exports.handler = async (event, context) => {
                     })
                 };
             }
-            
+
             if (!forecastRes.ok) {
                 const errorData = await forecastRes.json();
                 console.error('Forecast error:', errorData);
@@ -153,7 +153,7 @@ exports.handler = async (event, context) => {
                     })
                 };
             }
-            
+
             const currentData = await currentRes.json();
             const forecastData = await forecastRes.json();
 
@@ -239,7 +239,7 @@ exports.handler = async (event, context) => {
 
     } catch (error) {
         console.error('Weather function error:', error);
-        
+
         return {
             statusCode: 500,
             headers,

@@ -1,6 +1,7 @@
 """
 routers/supporters.py — checkout e riconoscimento supporter nel browser.
 """
+
 from __future__ import annotations
 
 import stripe
@@ -133,6 +134,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 db.commit()
             except Exception:
                 import logging
+
                 logging.exception("Stripe webhook: errore interno durante register_paid_supporter")
                 db.rollback()
 

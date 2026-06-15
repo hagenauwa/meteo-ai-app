@@ -1,6 +1,7 @@
 """
 routers/weather.py — endpoint meteo pubblico con insight ML compositi.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -124,17 +125,13 @@ async def _resolve_city(
             city_lon = city_row.lon
             city_name = city_row.name
 
-
     if city_lat is None or city_lon is None:
         raise HTTPException(status_code=400, detail="Fornisci 'city' oppure 'lat' e 'lon'")
 
     if not city_row:
         try:
             city_row = (
-                db.query(City)
-                .filter(City.lat == city_lat, City.lon == city_lon)
-                .order_by(City.locality_type)
-                .first()
+                db.query(City).filter(City.lat == city_lat, City.lon == city_lon).order_by(City.locality_type).first()
             )
         except SQLAlchemyError:
             db_available = False

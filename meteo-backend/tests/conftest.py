@@ -1,4 +1,5 @@
 """Pytest fixtures per il backend meteo-ai-app."""
+
 from __future__ import annotations
 
 import os

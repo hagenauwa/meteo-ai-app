@@ -4,6 +4,7 @@ Revision ID: 20260409_0004
 Revises: 20260404_0003
 Create Date: 2026-04-09 11:20:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -28,7 +29,9 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
-    if _has_table(inspector, "ml_predictions") and not _has_index(inspector, "ml_predictions", "idx_pred_verify_lookup"):
+    if _has_table(inspector, "ml_predictions") and not _has_index(
+        inspector, "ml_predictions", "idx_pred_verify_lookup"
+    ):
         op.create_index(
             "idx_pred_verify_lookup",
             "ml_predictions",

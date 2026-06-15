@@ -8,7 +8,7 @@ echo.
 set ALL_OK=1
 
 REM 1. Verifica Node.js
-echo [1/5] Node.js... 
+echo [1/5] Node.js...
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo     ❌ NON INSTALLATO

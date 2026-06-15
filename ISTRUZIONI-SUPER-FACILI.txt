@@ -52,7 +52,7 @@ SE QUALCOSA NON FUNZIONA:
 Problema: "node non riconosciuto"
 → Soluzione: Non hai installato Node.js, torna al PASSO 1
 
-Problema: "npm non riconosciuto"  
+Problema: "npm non riconosciuto"
 → Soluzione: Chiudi e riapri il terminale, poi riprova
 
 Problema: "netlify non riconosciuto"

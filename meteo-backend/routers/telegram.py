@@ -9,6 +9,7 @@ Endpoint:
   • POST /api/telegram/webhook            — riceve aggiornamenti dal bot (Telegram)
   • POST /api/admin/telegram/check        — forza controllo notifiche Telegram (admin)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,6 +29,7 @@ from database import get_db, TelegramSubscription
 # ---------------------------------------------------------------------------
 # Schemi Pydantic
 # ---------------------------------------------------------------------------
+
 
 class LinkCodeResponse(BaseModel):
     linking_code: str
@@ -83,9 +85,7 @@ def _generate_unique_client_token(db: Session, max_attempts: int = 5) -> tuple[s
         token = generate_client_token()
         token_hash = hash_client_token(token)
         existing = (
-            db.query(TelegramSubscription.id)
-            .filter(TelegramSubscription.client_token_hash == token_hash)
-            .first()
+            db.query(TelegramSubscription.id).filter(TelegramSubscription.client_token_hash == token_hash).first()
         )
         if not existing:
             return token, token_hash
@@ -165,6 +165,7 @@ def _build_status_response(sub: TelegramSubscription | None) -> TelegramStatusRe
 # Endpoint pubblici
 # ---------------------------------------------------------------------------
 
+
 @router.post("/telegram/link-code")
 def generate_link_code(db: Session = Depends(get_db)):
     """
@@ -209,11 +210,7 @@ def get_telegram_status(
             return _build_status_response(sub)
 
         if linking_code:
-            sub = (
-                db.query(TelegramSubscription)
-                .filter(TelegramSubscription.linking_code == linking_code)
-                .first()
-            )
+            sub = db.query(TelegramSubscription).filter(TelegramSubscription.linking_code == linking_code).first()
             return _build_status_response(sub)
 
         return TelegramStatusResponse(linked=False, state="not_found")
@@ -295,6 +292,7 @@ def unlink_telegram(
 # Webhook Telegram
 # ---------------------------------------------------------------------------
 
+
 @router.post("/telegram/webhook")
 async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
     """
@@ -310,15 +308,14 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
             raise HTTPException(status_code=403, detail="Secret non valido")
     elif settings.is_production:
         import logging
-        logging.getLogger(__name__).error(
-            "TELEGRAM_WEBHOOK_SECRET non configurato in produzione: webhook rifiutato"
-        )
+
+        logging.getLogger(__name__).error("TELEGRAM_WEBHOOK_SECRET non configurato in produzione: webhook rifiutato")
         raise HTTPException(status_code=403, detail="Webhook secret non configurato")
 
     try:
         update = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="JSON non valido")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="JSON non valido") from exc
 
     from telegram_bot import handle_webhook_update
 
@@ -327,6 +324,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
     except Exception as exc:
         # Non propagare errori a Telegram per evitare retry infiniti
         import logging
+
         logging.getLogger(__name__).error(f"Errore gestione webhook Telegram: {exc}")
 
     return {"ok": True}
@@ -335,6 +333,7 @@ async def telegram_webhook(request: Request, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Endpoint amministrativi
 # ---------------------------------------------------------------------------
+
 
 @router.post("/admin/telegram/check", dependencies=[Depends(require_admin_access)])
 async def admin_telegram_check():

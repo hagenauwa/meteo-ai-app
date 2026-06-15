@@ -43,12 +43,16 @@ def test_rain_adaptive_skips_ml_when_out_of_coverage(monkeypatch):
     monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
 
     result = check_hourly_rain_adaptive(
-        _rainy_hourly(), lat=45.4, lon=9.2, city_name="Milano",
-        region="Lombardia", ml_coverage=False,
+        _rainy_hourly(),
+        lat=45.4,
+        lon=9.2,
+        city_name="Milano",
+        region="Lombardia",
+        ml_coverage=False,
     )
 
-    assert calls == []          # ML non interrogato fuori area
-    assert result is None       # nessun trigger (solo POP, niente wmo/precip/ML)
+    assert calls == []  # ML non interrogato fuori area
+    assert result is None  # nessun trigger (solo POP, niente wmo/precip/ML)
 
 
 def test_rain_adaptive_uses_ml_when_in_coverage(monkeypatch):
@@ -61,8 +65,12 @@ def test_rain_adaptive_uses_ml_when_in_coverage(monkeypatch):
     monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
 
     result = check_hourly_rain_adaptive(
-        _rainy_hourly(), lat=44.0, lon=10.1, city_name="Massa",
-        region="Toscana", ml_coverage=True,
+        _rainy_hourly(),
+        lat=44.0,
+        lon=10.1,
+        city_name="Massa",
+        region="Toscana",
+        ml_coverage=True,
     )
 
     assert len(calls) >= 1

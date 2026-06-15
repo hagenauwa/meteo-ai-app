@@ -1,6 +1,7 @@
 """
 auth.py — dipendenze di autenticazione per endpoint sensibili.
 """
+
 import secrets
 
 from fastapi import Header, HTTPException

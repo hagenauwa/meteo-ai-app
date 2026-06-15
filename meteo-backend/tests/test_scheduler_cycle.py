@@ -279,32 +279,34 @@ def test_count_verified_since_uses_timestamp_not_retention_affected_total(schedu
         last_train_at = datetime(2026, 5, 21, 6, tzinfo=timezone.utc)
         before_target = last_train_at - timedelta(hours=1)
         after_target = last_train_at + timedelta(hours=1)
-        db.add_all([
-            MlPrediction(
-                city_id=10,
-                predicted_at=before_target - timedelta(hours=1),
-                target_time=before_target,
-                lead_hours=1,
-                predicted_temp=18.0,
-                forecast_temp=18.0,
-                verified=True,
-                actual_temp=18.5,
-                error=0.5,
-                verified_at=before_target,
-            ),
-            MlPrediction(
-                city_id=10,
-                predicted_at=after_target - timedelta(hours=1),
-                target_time=after_target,
-                lead_hours=1,
-                predicted_temp=19.0,
-                forecast_temp=19.0,
-                verified=True,
-                actual_temp=20.0,
-                error=1.0,
-                verified_at=after_target,
-            ),
-        ])
+        db.add_all(
+            [
+                MlPrediction(
+                    city_id=10,
+                    predicted_at=before_target - timedelta(hours=1),
+                    target_time=before_target,
+                    lead_hours=1,
+                    predicted_temp=18.0,
+                    forecast_temp=18.0,
+                    verified=True,
+                    actual_temp=18.5,
+                    error=0.5,
+                    verified_at=before_target,
+                ),
+                MlPrediction(
+                    city_id=10,
+                    predicted_at=after_target - timedelta(hours=1),
+                    target_time=after_target,
+                    lead_hours=1,
+                    predicted_temp=19.0,
+                    forecast_temp=19.0,
+                    verified=True,
+                    actual_temp=20.0,
+                    error=1.0,
+                    verified_at=after_target,
+                ),
+            ]
+        )
         db.commit()
 
     assert scheduler._db_count_verified_since(last_train_at) == 1

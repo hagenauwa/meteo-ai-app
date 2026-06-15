@@ -229,10 +229,7 @@ def check_hourly_rain_adaptive(
             forecast_hour = forecast_time.hour
             lead_hours = max(
                 0,
-                int(
-                    (forecast_time - now.replace(tzinfo=timezone.utc)).total_seconds()
-                    / 3600
-                ),
+                int((forecast_time - now.replace(tzinfo=timezone.utc)).total_seconds() / 3600),
             )
         except (ValueError, TypeError):
             lead_hours = i
@@ -252,9 +249,7 @@ def check_hourly_rain_adaptive(
                 lead_hours=lead_hours,
                 forecast_precipitation=precipitation,
                 forecast_wind_speed=wind_speeds[i] if i < len(wind_speeds) else None,
-                forecast_wind_direction=wind_directions[i]
-                if i < len(wind_directions)
-                else None,
+                forecast_wind_direction=wind_directions[i] if i < len(wind_directions) else None,
                 forecast_weather_code=weather_code,
                 region=region,
             )
@@ -299,9 +294,7 @@ def check_hourly_rain_adaptive(
                 "pop": pop_fraction,
                 "weather_code": weather_code,
                 "precipitation": precipitation,
-                "description": _wmo_rain_description(weather_code)
-                if weather_code
-                else "Pioggia prevista",
+                "description": _wmo_rain_description(weather_code) if weather_code else "Pioggia prevista",
                 "ml_probability": ml_prob,
                 "ml_ready": ml_ready,
                 "trigger_reason": trigger_reason,
@@ -325,7 +318,7 @@ def find_rain_time_slots(hourly: dict, threshold: float = 0.40) -> list[str]:
         return []
 
     rainy_indices: list[int] = []
-    for i, time_str in enumerate(times):
+    for i, _time_str in enumerate(times):
         pop = (pops[i] if i < len(pops) else 0) or 0
         weather_code = weather_codes[i] if i < len(weather_codes) else None
         precipitation = precipitations[i] if i < len(precipitations) else 0
@@ -502,10 +495,7 @@ def _derive_daily_weather_code_from_hourly(
     if not relevant:
         return fallback_code
 
-    if any(
-        _is_rain_weather_code(code) or precipitation > 0.1
-        for code, _, _, precipitation in relevant
-    ):
+    if any(_is_rain_weather_code(code) or precipitation > 0.1 for code, _, _, precipitation in relevant):
         return fallback_code
     if any((pop or 0) >= 40 for _, _, pop, _ in relevant):
         return fallback_code
@@ -518,16 +508,8 @@ def _derive_daily_weather_code_from_hourly(
     if 45 in codes_present or 48 in codes_present:
         return fallback_code
 
-    cloudy_fraction = (
-        sum(1 for code in codes_present if code == 3) / len(codes_present)
-        if codes_present
-        else 0
-    )
-    partly_fraction = (
-        sum(1 for code in codes_present if code == 2) / len(codes_present)
-        if codes_present
-        else 0
-    )
+    cloudy_fraction = sum(1 for code in codes_present if code == 3) / len(codes_present) if codes_present else 0
+    partly_fraction = sum(1 for code in codes_present if code == 2) / len(codes_present) if codes_present else 0
 
     if avg_cloud is not None:
         if avg_cloud <= 20 and (max_cloud or 0) <= 35:
@@ -567,9 +549,7 @@ def build_daily_message(
     max_temp = _series_value(daily.get("temperature_2m_max"), today_idx)
     min_temp = _series_value(daily.get("temperature_2m_min"), today_idx)
     daily_weather_code = _series_value(daily.get("weather_code"), today_idx)
-    weather_code = _derive_daily_weather_code_from_hourly(
-        daily, hourly, today_idx, daily_weather_code
-    )
+    weather_code = _derive_daily_weather_code_from_hourly(daily, hourly, today_idx, daily_weather_code)
     precip_prob = _series_value(daily.get("precipitation_probability_max"), today_idx)
     precip_sum = _series_value(daily.get("precipitation_sum"), today_idx)
 

@@ -112,12 +112,16 @@ def reset_ml_runtime(monkeypatch):
     monkeypatch.setattr(ml_model, "_loaded_model_trained_at", None)
     monkeypatch.setattr(ml_model, "_last_model_version_check_at", None)
     monkeypatch.setattr(ml_model, "_stats_cache", None)
-    monkeypatch.setattr(ml_model, "_shadow_state", {
-        "consecutive_positive_windows": 0,
-        "last_check_at": None,
-        "last_pass": None,
-        "last_details": None,
-    })
+    monkeypatch.setattr(
+        ml_model,
+        "_shadow_state",
+        {
+            "consecutive_positive_windows": 0,
+            "last_check_at": None,
+            "last_pass": None,
+            "last_details": None,
+        },
+    )
 
 
 def _valid_payload(*, sklearn_version: str | None = None, model_format_version: int | None = None):

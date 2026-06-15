@@ -1,6 +1,7 @@
 """
 routers/ml.py — endpoint ML pubblici e operativi.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -94,13 +95,9 @@ def _fetch_city_rows(city: str, db: Session, *, limit: int = 2) -> list[City]:
     if not q_lower:
         return []
 
-    query = (
-        db.query(City)
-        .filter(City.name_lower.like(f"{q_lower}%"))
-        .order_by(City.name_lower, City.locality_type)
-    )
+    query = db.query(City).filter(City.name_lower.like(f"{q_lower}%")).order_by(City.name_lower, City.locality_type)
     if hasattr(query, "_rows"):
-        return cast(list[City], getattr(query, "_rows")[:limit])
+        return cast(list[City], query._rows[:limit])
     if not hasattr(query, "limit"):
         first_result = query.first()
         return [first_result] if first_result is not None else []
@@ -230,10 +227,7 @@ def _resolve_city_for_enrich(payload: EnrichCityPayload, db: Session) -> CityRes
             warning=_make_warning(
                 "ML_CITY_UNRESOLVED",
                 "ML disabilitato: coordinate non coerenti con la citta richiesta.",
-                (
-                    f"coordinates differ by more than {CITY_COORDINATE_TOLERANCE:.2f} "
-                    f"for '{payload.name}'"
-                ),
+                (f"coordinates differ by more than {CITY_COORDINATE_TOLERANCE:.2f} for '{payload.name}'"),
             ),
         )
 
@@ -415,21 +409,23 @@ async def get_correction(
             warning = _make_warning("ML_CITY_UNRESOLVED", "ML disabilitato.", "missing warning details")
         return _disabled_prediction_payload(temp=parsed_temp, warning=warning)
 
-    return _normalize_prediction_payload(ml_model.predict_correction(
-        temp=parsed_temp,
-        humidity=parsed_humidity,
-        hour=parsed_hour,
-        month=now.month,
-        lat=resolution["lat"],
-        lon=resolution["lon"],
-        region=resolution["region"],
-        cloud_cover=parsed_cloud_cover,
-        lead_hours=lead_hours,
-        forecast_precipitation=forecast_precipitation,
-        forecast_wind_speed=forecast_wind_speed,
-        forecast_wind_direction=forecast_wind_direction,
-        forecast_weather_code=forecast_weather_code,
-    ))
+    return _normalize_prediction_payload(
+        ml_model.predict_correction(
+            temp=parsed_temp,
+            humidity=parsed_humidity,
+            hour=parsed_hour,
+            month=now.month,
+            lat=resolution["lat"],
+            lon=resolution["lon"],
+            region=resolution["region"],
+            cloud_cover=parsed_cloud_cover,
+            lead_hours=lead_hours,
+            forecast_precipitation=forecast_precipitation,
+            forecast_wind_speed=forecast_wind_speed,
+            forecast_wind_direction=forecast_wind_direction,
+            forecast_weather_code=forecast_weather_code,
+        )
+    )
 
 
 @router.get("/stats")

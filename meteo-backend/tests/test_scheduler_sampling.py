@@ -1,4 +1,5 @@
 """Test campionamento leggero del ciclo ML."""
+
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -32,10 +33,7 @@ def test_select_training_cities_keeps_core_and_balances_rotating_sample(monkeypa
             ml_cycle_every_hours=6,
         ),
     )
-    cities = [
-        _city(city_id, f"Region {city_id % 3}", f"PR{city_id % 6}", 1000 - city_id)
-        for city_id in range(1, 31)
-    ]
+    cities = [_city(city_id, f"Region {city_id % 3}", f"PR{city_id % 6}", 1000 - city_id) for city_id in range(1, 31)]
     now = datetime(2026, 4, 26, 6, tzinfo=timezone.utc)
 
     selected = scheduler._select_training_cities(cities, now)
@@ -57,10 +55,7 @@ def test_select_training_cities_rotates_between_cycle_windows(monkeypatch):
             ml_cycle_every_hours=6,
         ),
     )
-    cities = [
-        _city(city_id, f"Region {city_id % 4}", f"PR{city_id % 8}", 1000 - city_id)
-        for city_id in range(1, 41)
-    ]
+    cities = [_city(city_id, f"Region {city_id % 4}", f"PR{city_id % 8}", 1000 - city_id) for city_id in range(1, 41)]
     first_window = datetime(2026, 4, 26, 6, tzinfo=timezone.utc)
     second_window = first_window + timedelta(hours=6)
 

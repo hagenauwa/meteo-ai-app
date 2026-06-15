@@ -1,10 +1,10 @@
 """
 routers/cities.py — ricerca città e indice compatto versionato.
 """
+
 from __future__ import annotations
 
 import time
-from typing import List
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -80,7 +80,7 @@ def _text_rank(name: str, q_lower: str) -> int:
 # ---------------------------------------------------------------------------
 # Endpoint esistenti (INVARIATI)
 # ---------------------------------------------------------------------------
-@router.get("/cities/index", response_model=List[CityIndexItem])
+@router.get("/cities/index", response_model=list[CityIndexItem])
 def get_cities_index(
     response: Response,
     scope: str = Query("comuni", pattern="^(comuni|localita|all)$"),
@@ -120,7 +120,7 @@ def get_cities_index(
     ]
 
 
-@router.get("/cities", response_model=List[CityResult])
+@router.get("/cities", response_model=list[CityResult])
 def search_cities(
     q: str = Query(..., min_length=1, description="Testo di ricerca"),
     limit: int = Query(8, ge=1, le=20),
@@ -137,8 +137,7 @@ def search_cities(
         base_query = base_query.filter(City.locality_type == "localita")
 
     starts_with = (
-        base_query
-        .filter(City.name_lower.like(f"{q_lower}%"))
+        base_query.filter(City.name_lower.like(f"{q_lower}%"))
         .order_by(type_priority, func.length(City.name_lower))
         .limit(limit)
         .all()
@@ -151,10 +150,7 @@ def search_cities(
         if already_ids:
             contains_query = contains_query.filter(~City.id.in_(already_ids))
         contains = (
-            contains_query
-            .order_by(type_priority, func.length(City.name_lower))
-            .limit(limit - len(results))
-            .all()
+            contains_query.order_by(type_priority, func.length(City.name_lower)).limit(limit - len(results)).all()
         )
         results.extend(contains)
 
@@ -164,7 +160,7 @@ def search_cities(
 # ---------------------------------------------------------------------------
 # Nuovo endpoint: Autocomplete unificato DB + Open-Meteo fallback
 # ---------------------------------------------------------------------------
-@router.get("/cities/search", response_model=List[CityIndexItem])
+@router.get("/cities/search", response_model=list[CityIndexItem])
 def search_cities_autocomplete(
     response: Response,
     q: str = Query(..., min_length=2, description="Testo di ricerca"),
@@ -207,8 +203,7 @@ def search_cities_autocomplete(
 
     # --- Prefix match ---
     prefix_rows = (
-        base_query
-        .filter(City.name_lower.like(f"{q_lower}%"))
+        base_query.filter(City.name_lower.like(f"{q_lower}%"))
         .order_by(type_priority, func.length(City.name_lower))
         .limit(limit)
         .all()
@@ -221,24 +216,25 @@ def search_cities_autocomplete(
         if key in seen_keys:
             continue
         seen_keys.add(key)
-        candidates.append((
-            CityIndexItem(
-                name=r.name,
-                region=r.region,
-                province=r.province,
-                lat=r.lat,
-                lon=r.lon,
-                locality_type=r.locality_type,
-            ),
-            0,  # popolazione non disponibile per i record locali
-        ))
+        candidates.append(
+            (
+                CityIndexItem(
+                    name=r.name,
+                    region=r.region,
+                    province=r.province,
+                    lat=r.lat,
+                    lon=r.lon,
+                    locality_type=r.locality_type,
+                ),
+                0,  # popolazione non disponibile per i record locali
+            )
+        )
 
     # --- Contains match (solo se mancano risultati) ---
     if len(candidates) < limit:
         already_names = {_norm_name(c[0].name) for c in candidates}
         contains_rows = (
-            base_query
-            .filter(City.name_lower.like(f"%{q_lower}%"))
+            base_query.filter(City.name_lower.like(f"%{q_lower}%"))
             .order_by(type_priority, func.length(City.name_lower))
             .limit(limit * 2)  # buffer per filtro dedup in Python
             .all()
@@ -251,17 +247,19 @@ def search_cities_autocomplete(
                 continue
             seen_keys.add(key)
             already_names.add(_norm_name(r.name))
-            candidates.append((
-                CityIndexItem(
-                    name=r.name,
-                    region=r.region,
-                    province=r.province,
-                    lat=r.lat,
-                    lon=r.lon,
-                    locality_type=r.locality_type,
-                ),
-                0,
-            ))
+            candidates.append(
+                (
+                    CityIndexItem(
+                        name=r.name,
+                        region=r.region,
+                        province=r.province,
+                        lat=r.lat,
+                        lon=r.lon,
+                        locality_type=r.locality_type,
+                    ),
+                    0,
+                )
+            )
             if len(candidates) >= limit:
                 break
 
@@ -294,17 +292,19 @@ def search_cities_autocomplete(
                             continue
                         seen_keys.add(key)
                         population = item.get("population") or 0
-                        candidates.append((
-                            CityIndexItem(
-                                name=name,
-                                region=item.get("admin1"),
-                                province=item.get("admin2"),
-                                lat=lat,
-                                lon=lon,
-                                locality_type=None,
-                            ),
-                            population,
-                        ))
+                        candidates.append(
+                            (
+                                CityIndexItem(
+                                    name=name,
+                                    region=item.get("admin1"),
+                                    province=item.get("admin2"),
+                                    lat=lat,
+                                    lon=lon,
+                                    locality_type=None,
+                                ),
+                                population,
+                            )
+                        )
                         if len(candidates) >= limit:
                             break
         except Exception:
@@ -334,10 +334,10 @@ def search_cities_autocomplete(
     response.headers["Cache-Control"] = "public, max-age=300"
     return results
 
+
 @router.get("/cities/{city_id}", response_model=CityResult)
 def get_city(city_id: int, db: Session = Depends(get_db)):
     city = db.query(City).filter(City.id == city_id).first()
     if not city:
         raise HTTPException(status_code=404, detail="Città non trovata")
     return city
-

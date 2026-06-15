@@ -1,4 +1,5 @@
 """Test per il RateLimitMiddleware."""
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -118,14 +119,10 @@ class TestRateLimiter:
         """x-forwarded-for ha priorità su request.client.host."""
         m = fresh_middleware
         for _ in range(60):
-            await self._dispatch(
-                m, "/api/weather", forwarded_for="3.3.3.3", client_host="1.1.1.1"
-            )
+            await self._dispatch(m, "/api/weather", forwarded_for="3.3.3.3", client_host="1.1.1.1")
 
         # La 61a dal forward IP deve essere 429
-        resp = await self._dispatch(
-            m, "/api/weather", forwarded_for="3.3.3.3", client_host="1.1.1.1"
-        )
+        resp = await self._dispatch(m, "/api/weather", forwarded_for="3.3.3.3", client_host="1.1.1.1")
         assert resp.status_code == 429
 
         # Il client_host originale non e toccato

@@ -1,6 +1,7 @@
 """
 routers/admin.py — endpoint amministrativi protetti.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query

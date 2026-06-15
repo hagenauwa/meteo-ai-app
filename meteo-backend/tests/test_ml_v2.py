@@ -1,4 +1,5 @@
 """Unit test mirati per ML v2 (feature engineering, calibrazione, horizon blending)."""
+
 import importlib
 import pickle
 from datetime import datetime, timezone
@@ -199,6 +200,7 @@ def test_predict_rain_probability_supports_legacy_models(monkeypatch):
 
 def test_predict_rain_probability_applies_v1_platt_calibration(monkeypatch):
     """Il ramo v1 deve servire la probabilità CALIBRATA (Platt), non quella grezza."""
+
     class FakePipeline:
         n_features_in_ = 6
 
@@ -245,7 +247,8 @@ def test_optimal_f1_threshold_identifies_positives_for_rare_event():
 
 def test_is_city_in_ml_coverage_respects_allowed_provinces(monkeypatch):
     monkeypatch.setattr(
-        ml_model, "settings",
+        ml_model,
+        "settings",
         SimpleNamespace(ml_training_allowed_provinces=("Massa-Carrara", "Lucca")),
     )
     assert ml_model.is_city_in_ml_coverage("Massa-Carrara") is True
@@ -256,7 +259,8 @@ def test_is_city_in_ml_coverage_respects_allowed_provinces(monkeypatch):
 
 def test_is_city_in_ml_coverage_global_when_unconfigured(monkeypatch):
     monkeypatch.setattr(
-        ml_model, "settings",
+        ml_model,
+        "settings",
         SimpleNamespace(ml_training_allowed_provinces=()),
     )
     assert ml_model.is_city_in_ml_coverage("Milano") is True
@@ -417,7 +421,12 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
     monkeypatch.setattr(
         ml_model,
         "predict_correction",
-        lambda **kwargs: {"model_ready": True, "correction": 0.0, "corrected_temp": kwargs["temp"], "confidence": "alta"},
+        lambda **kwargs: {
+            "model_ready": True,
+            "correction": 0.0,
+            "corrected_temp": kwargs["temp"],
+            "confidence": "alta",
+        },
     )
     monkeypatch.setattr(
         ml_model,
@@ -961,9 +970,15 @@ def test_train_failure_reports_temperature_v1_and_v2_diagnostics(monkeypatch):
             "feature_variant": "v2",
         },
     )
-    monkeypatch.setattr(ml_model, "_train_rain_pipeline", lambda rows, encoder: {"success": False, "message": "rain off"})
-    monkeypatch.setattr(ml_model, "_train_condition_pipeline", lambda rows, encoder: {"success": False, "message": "condition off"})
-    monkeypatch.setattr(ml_model, "_train_rain_pipeline_v2", lambda rows, encoder: {"success": False, "message": "rain v2 off"})
+    monkeypatch.setattr(
+        ml_model, "_train_rain_pipeline", lambda rows, encoder: {"success": False, "message": "rain off"}
+    )
+    monkeypatch.setattr(
+        ml_model, "_train_condition_pipeline", lambda rows, encoder: {"success": False, "message": "condition off"}
+    )
+    monkeypatch.setattr(
+        ml_model, "_train_rain_pipeline_v2", lambda rows, encoder: {"success": False, "message": "rain v2 off"}
+    )
     monkeypatch.setattr(
         ml_model,
         "_train_condition_pipeline_v2",

@@ -1,4 +1,5 @@
 """Test endpoint ricerca città /api/cities/search."""
+
 import importlib
 from types import SimpleNamespace
 
@@ -45,6 +46,7 @@ _reorder_cities_search_route()
 @pytest.fixture(autouse=True)
 def mock_httpx_empty(monkeypatch):
     """Mock httpx.Client per restituire risultati vuoti di default."""
+
     def fake_client(**kwargs):
         class FakeClient:
             def __enter__(self):
@@ -56,8 +58,10 @@ def mock_httpx_empty(monkeypatch):
             def get(self, url, params=None, headers=None, timeout=None):
                 class FakeResp:
                     status_code = 200
+
                     def json(self):
                         return {"results": []}
+
                 return FakeResp()
 
         return FakeClient()
@@ -97,6 +101,7 @@ def _override_db(rows):
                     filtered = [it for it in filtered if getattr(it, "locality_type", None) == "localita"]
             if "name_lower" in s and "LIKE" in s:
                 import re
+
                 m = re.search(r"LIKE '(.+?)'", s)
                 if m:
                     pattern = m.group(1)
@@ -223,8 +228,12 @@ class TestCitiesSearch:
 
         # Inserisci in cache un risultato vecchio con dati diversi
         old_item = cities_module.CityIndexItem(
-            name="VecchiaRoma", region="Antica", province="AN",
-            lat=41.0, lon=12.0, locality_type="comune",
+            name="VecchiaRoma",
+            region="Antica",
+            province="AN",
+            lat=41.0,
+            lon=12.0,
+            locality_type="comune",
         )
         cities_module._SEARCH_CACHE["all:8:roma"] = (0.0, [old_item])
 
@@ -249,6 +258,7 @@ class TestCitiesSearch:
         def fake_httpx_get(url, params=None, headers=None, timeout=None):
             class FakeResp:
                 status_code = 200
+
                 def json(self):
                     return {
                         "results": [
@@ -272,15 +282,21 @@ class TestCitiesSearch:
                             },
                         ]
                     }
+
             return FakeResp()
 
         monkeypatch.setattr(
-            httpx, "Client",
-            lambda **kwargs: type("FakeClient", (), {
-                "__enter__": lambda self: self,
-                "__exit__": lambda *args: None,
-                "get": fake_httpx_get,
-            })()
+            httpx,
+            "Client",
+            lambda **kwargs: type(
+                "FakeClient",
+                (),
+                {
+                    "__enter__": lambda self: self,
+                    "__exit__": lambda *args: None,
+                    "get": fake_httpx_get,
+                },
+            )(),
         )
 
         try:
@@ -301,6 +317,7 @@ class TestCitiesSearch:
         def fake_httpx_get(url, params=None, headers=None, timeout=None):
             class FakeResp:
                 status_code = 200
+
                 def json(self):
                     return {
                         "results": [
@@ -315,15 +332,21 @@ class TestCitiesSearch:
                             },
                         ]
                     }
+
             return FakeResp()
 
         monkeypatch.setattr(
-            httpx, "Client",
-            lambda **kwargs: type("FakeClient", (), {
-                "__enter__": lambda self: self,
-                "__exit__": lambda *args: None,
-                "get": fake_httpx_get,
-            })()
+            httpx,
+            "Client",
+            lambda **kwargs: type(
+                "FakeClient",
+                (),
+                {
+                    "__enter__": lambda self: self,
+                    "__exit__": lambda *args: None,
+                    "get": fake_httpx_get,
+                },
+            )(),
         )
 
         try:
@@ -346,12 +369,17 @@ class TestCitiesSearch:
             raise httpx.ConnectError("Simulated network failure")
 
         monkeypatch.setattr(
-            httpx, "Client",
-            lambda **kwargs: type("FakeClient", (), {
-                "__enter__": lambda self: self,
-                "__exit__": lambda *args: None,
-                "get": fake_httpx_get,
-            })()
+            httpx,
+            "Client",
+            lambda **kwargs: type(
+                "FakeClient",
+                (),
+                {
+                    "__enter__": lambda self: self,
+                    "__exit__": lambda *args: None,
+                    "get": fake_httpx_get,
+                },
+            )(),
         )
 
         try:

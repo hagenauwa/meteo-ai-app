@@ -91,5 +91,7 @@ def downgrade() -> None:
 
     inspector = sa.inspect(bind)
     for column_name in ["linking_code_expires_at", "client_token_hash"]:
-        if _has_table(inspector, "telegram_subscriptions") and _has_column(inspector, "telegram_subscriptions", column_name):
+        if _has_table(inspector, "telegram_subscriptions") and _has_column(
+            inspector, "telegram_subscriptions", column_name
+        ):
             op.drop_column("telegram_subscriptions", column_name)

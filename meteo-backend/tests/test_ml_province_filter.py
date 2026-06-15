@@ -1,4 +1,5 @@
 """Test filtro provinciale per training ML pioggia."""
+
 from __future__ import annotations
 
 import os
@@ -87,14 +88,18 @@ def test_prepare_training_rows_can_be_limited_to_massa_carrara(monkeypatch):
     target_time = datetime(2026, 5, 21, 12, tzinfo=timezone.utc)
 
     with SessionTesting() as db:
-        db.add_all([
-            _city(1, "Massa", "Massa-Carrara"),
-            _city(2, "Lucca", "Lucca"),
-        ])
-        db.add_all([
-            _prediction(1, target_time),
-            _prediction(2, target_time),
-        ])
+        db.add_all(
+            [
+                _city(1, "Massa", "Massa-Carrara"),
+                _city(2, "Lucca", "Lucca"),
+            ]
+        )
+        db.add_all(
+            [
+                _prediction(1, target_time),
+                _prediction(2, target_time),
+            ]
+        )
         db.commit()
 
         rows = ml_model._prepare_training_rows(

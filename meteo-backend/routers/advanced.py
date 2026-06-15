@@ -4,6 +4,7 @@ routers/advanced.py — endpoint meteo avanzato con dati qualità dell'aria.
 Chiama in parallelo il weather_service per i dati base e l'Open-Meteo
 Air Quality API per indici UV, PM10, PM2.5, AQI.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -74,21 +75,11 @@ async def get_weather_advanced(
     if aq_data:
         current_aq = aq_data.get("current", {})
         # Cast espliciti per rispettare il contratto di tipo
-        advanced["uv_index"] = (
-            float(uv) if (uv := current_aq.get("uv_index")) is not None else None
-        )
-        advanced["pm10"] = (
-            float(pm10) if (pm10 := current_aq.get("pm10")) is not None else None
-        )
-        advanced["pm2_5"] = (
-            float(pm25) if (pm25 := current_aq.get("pm2_5")) is not None else None
-        )
-        advanced["european_aqi"] = (
-            int(eaqi) if (eaqi := current_aq.get("european_aqi")) is not None else None
-        )
-        advanced["us_aqi"] = (
-            int(uaqi) if (uaqi := current_aq.get("us_aqi")) is not None else None
-        )
+        advanced["uv_index"] = float(uv) if (uv := current_aq.get("uv_index")) is not None else None
+        advanced["pm10"] = float(pm10) if (pm10 := current_aq.get("pm10")) is not None else None
+        advanced["pm2_5"] = float(pm25) if (pm25 := current_aq.get("pm2_5")) is not None else None
+        advanced["european_aqi"] = int(eaqi) if (eaqi := current_aq.get("european_aqi")) is not None else None
+        advanced["us_aqi"] = int(uaqi) if (uaqi := current_aq.get("us_aqi")) is not None else None
 
     return {
         "current": formatted.get("current"),

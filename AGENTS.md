@@ -50,6 +50,15 @@ App meteo italiana (**leprevisioni**). Frontend Vanilla JS su Netlify, backend F
 
 - Definire la verifica più restrittiva applicabile alla modifica, e partire da quella.
 - I test backend vanno eseguiti da `meteo-backend/` per evitare problemi di path Alembic.
+- Gate canonico da usare prima di segnalare il lavoro come pronto: `npm run check`.
+- Breakdown canonico: `npm run check:py`, `npm run check:js`, `npm run check:backend`.
+- Formattazione manuale: `npm run format`, oppure `npm run format:py` / `npm run format:js`.
+- Pre-commit completo: `npm run precommit`.
+- Analisi qualità aggiuntive ma non bloccanti: `npm run audit:code`, `npm run health:code`, `npm run dead-code`.
+- Documentazione tecnica sintetica in `docs/architecture.md`, `docs/backend.md`, `docs/frontend.md`, `docs/deploy.md`, `docs/quality.md`.
+- Per i controlli Python in locale e in CI usare `ruff` con configurazione in `meteo-backend/pyproject.toml`.
+- Per i controlli JS usare `Biome` su `public/js/`, `scripts/` e `tests/e2e/`.
+- I file del repository devono restare in LF: `gitattributes`, `editorconfig` e pre-commit devono preservare le line endings.
 - Se si modifica service worker, asset statici o file PWA: aggiornare `CACHE_NAME` in `public/service-worker.js`.
 - Se la verifica non è eseguibile, dichiararlo esplicitamente con il rischio residuo.
 

@@ -4,6 +4,7 @@ Revision ID: 20260415_0005
 Revises: 20260409_0004
 Create Date: 2026-04-15 22:00:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -61,7 +62,9 @@ def upgrade() -> None:
         "last_cycle_verified": sa.Column("last_cycle_verified", sa.Integer(), nullable=True),
         "last_cycle_avg_error": sa.Column("last_cycle_avg_error", sa.Float(), nullable=True),
         "last_successful_train_at": sa.Column("last_successful_train_at", sa.DateTime(timezone=True), nullable=True),
-        "verified_count_at_last_train": sa.Column("verified_count_at_last_train", sa.Integer(), nullable=False, server_default="0"),
+        "verified_count_at_last_train": sa.Column(
+            "verified_count_at_last_train", sa.Integer(), nullable=False, server_default="0"
+        ),
         "last_model_store_id": sa.Column("last_model_store_id", sa.Integer(), nullable=True),
         "last_model_trained_at": sa.Column("last_model_trained_at", sa.DateTime(timezone=True), nullable=True),
     }
@@ -70,7 +73,9 @@ def upgrade() -> None:
             op.add_column("ml_training_state", column)
 
     inspector = sa.inspect(bind)
-    if _has_table(inspector, "ml_training_state") and not _has_index(inspector, "ml_training_state", "idx_ml_training_state_last_train"):
+    if _has_table(inspector, "ml_training_state") and not _has_index(
+        inspector, "ml_training_state", "idx_ml_training_state_last_train"
+    ):
         op.create_index(
             "idx_ml_training_state_last_train",
             "ml_training_state",
@@ -83,7 +88,9 @@ def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
-    if _has_table(inspector, "ml_training_state") and _has_index(inspector, "ml_training_state", "idx_ml_training_state_last_train"):
+    if _has_table(inspector, "ml_training_state") and _has_index(
+        inspector, "ml_training_state", "idx_ml_training_state_last_train"
+    ):
         op.drop_index("idx_ml_training_state_last_train", table_name="ml_training_state")
 
     inspector = sa.inspect(bind)

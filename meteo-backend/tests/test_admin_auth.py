@@ -1,4 +1,5 @@
 """Test auth admin endpoint."""
+
 import importlib
 from types import SimpleNamespace
 
@@ -25,13 +26,17 @@ def test_admin_status_requires_token_in_production(monkeypatch):
 
 def test_admin_status_accepts_valid_token_in_production(monkeypatch):
     monkeypatch.setattr(auth, "settings", SimpleNamespace(is_production=True, admin_api_token="secret"))
-    monkeypatch.setattr(admin_module, "SessionLocal", lambda: SimpleNamespace(
-        query=lambda *args, **kwargs: SimpleNamespace(
-            count=lambda: 0,
-            filter=lambda *a, **k: SimpleNamespace(count=lambda: 0),
+    monkeypatch.setattr(
+        admin_module,
+        "SessionLocal",
+        lambda: SimpleNamespace(
+            query=lambda *args, **kwargs: SimpleNamespace(
+                count=lambda: 0,
+                filter=lambda *a, **k: SimpleNamespace(count=lambda: 0),
+            ),
+            close=lambda: None,
         ),
-        close=lambda: None,
-    ))
+    )
     monkeypatch.setattr(importlib.import_module("ml_model"), "get_stats", lambda: {"verified_predictions": 0})
     monkeypatch.setattr(
         importlib.import_module("scheduler"),

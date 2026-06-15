@@ -6,7 +6,7 @@ const CONDITION_TO_ICON_CODE = {
     "Cielo sereno": "01d",
     "Prevalentemente sereno": "02d",
     "Parzialmente nuvoloso": "02d",
-    "Nuvoloso": "04d",
+    Nuvoloso: "04d",
     "Pioggia probabile": "10d",
     "Condizioni variabili": "03d",
 };
@@ -36,10 +36,20 @@ function resolveWeatherVisual({ iconCode, rainProbability = 0, preferRainIcon = 
     if (resolvedIconCode === "02n") {
         return { iconClass, tone: "partly-cloudy-night" };
     }
-    if (resolvedIconCode === "03d" || resolvedIconCode === "03n" || resolvedIconCode === "04d" || resolvedIconCode === "04n") {
+    if (
+        resolvedIconCode === "03d" ||
+        resolvedIconCode === "03n" ||
+        resolvedIconCode === "04d" ||
+        resolvedIconCode === "04n"
+    ) {
         return { iconClass, tone: "cloud" };
     }
-    if (resolvedIconCode === "09d" || resolvedIconCode === "09n" || resolvedIconCode === "10d" || resolvedIconCode === "10n") {
+    if (
+        resolvedIconCode === "09d" ||
+        resolvedIconCode === "09n" ||
+        resolvedIconCode === "10d" ||
+        resolvedIconCode === "10n"
+    ) {
         return { iconClass, tone: "rain" };
     }
     if (resolvedIconCode === "11d" || resolvedIconCode === "11n") {
@@ -129,7 +139,7 @@ function hasMeaningfulMlImpact(payload) {
         return true;
     }
 
-    return (payload.daily || []).some(day => {
+    return (payload.daily || []).some((day) => {
         const ml = day.ml || {};
         if (Math.abs(Number(ml.temperature_delta || 0)) >= 0.1) return true;
         if (Number(ml.rain_blend_weight || 0) > 0) return true;
@@ -150,9 +160,7 @@ function setText(id, value) {
 function renderPlannerHead(payload, selectedDay, selectedIndex) {
     setText("cityName", payload.name || "--");
 
-    const cityMetaParts = payload.city
-        ? [payload.city.province, payload.city.region].filter(Boolean)
-        : [];
+    const cityMetaParts = payload.city ? [payload.city.province, payload.city.region].filter(Boolean) : [];
     // Serving onesto: avvisa quando il modello AI non copre questa zona.
     if (payload.ml && payload.ml.enabled === false && payload.ml.warning?.code === "ML_OUT_OF_AREA") {
         cityMetaParts.push("Modello AI non attivo in questa zona");
@@ -212,7 +220,7 @@ function renderSelectedDay(day) {
 
     const providerIcon = day.weather?.[0]?.icon;
     const mlIconCode = mlDay.display_condition
-        ? (CONDITION_TO_ICON_CODE[mlDay.display_condition] || providerIcon)
+        ? CONDITION_TO_ICON_CODE[mlDay.display_condition] || providerIcon
         : providerIcon;
 
     const icon = document.getElementById("selectedDayIcon");
@@ -233,9 +241,7 @@ function renderCurrent(payload) {
     setText("windSpeed", `${Math.round(current.wind_speed)} km/h`);
     setText(
         "visibility",
-        Number.isFinite(Number(current.visibility))
-            ? `${(current.visibility / 1000).toFixed(1)} km`
-            : "--",
+        Number.isFinite(Number(current.visibility)) ? `${(current.visibility / 1000).toFixed(1)} km` : "--",
     );
     setText("pressure", `${current.pressure} hPa`);
 
@@ -251,7 +257,7 @@ function renderHourlyDetail(selectedDay, hourly) {
     const container = document.getElementById("hourlyForecast");
     const hint = document.getElementById("hourlyHint");
     const section = document.getElementById("hourlySection");
-    const hoursForDay = hourly.filter(hour => String(hour.dt || "").startsWith(selectedDay.dt));
+    const hoursForDay = hourly.filter((hour) => String(hour.dt || "").startsWith(selectedDay.dt));
 
     container.innerHTML = "";
     section.classList.remove("is-empty");
@@ -269,7 +275,7 @@ function renderHourlyDetail(selectedDay, hourly) {
 
     hint.textContent = "Scansione oraria disponibile nel breve termine.";
 
-    hoursForDay.forEach(hour => {
+    hoursForDay.forEach((hour) => {
         const card = document.createElement("article");
         card.className = "hour-card";
         const { iconClass, tone } = resolveWeatherVisual({
@@ -409,7 +415,7 @@ export function renderChipList(targetId, cities, onClick, { onRemove = null } = 
         return;
     }
 
-    cities.forEach(city => {
+    cities.forEach((city) => {
         if (onRemove) {
             const row = document.createElement("div");
             row.className = "city-chip-row";
@@ -425,7 +431,7 @@ export function renderChipList(targetId, cities, onClick, { onRemove = null } = 
             removeButton.type = "button";
             removeButton.setAttribute("aria-label", `Rimuovi ${city.name} dalle recenti`);
             removeButton.innerHTML = '<i class="fas fa-xmark" aria-hidden="true"></i>';
-            removeButton.addEventListener("click", event => {
+            removeButton.addEventListener("click", (event) => {
                 event.stopPropagation();
                 onRemove(city);
             });

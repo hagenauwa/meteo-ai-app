@@ -1,4 +1,5 @@
 """Smoke test minimale per il deploy pubblico del backend Meteo AI."""
+
 from __future__ import annotations
 
 import json

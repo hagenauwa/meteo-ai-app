@@ -1,11 +1,24 @@
 """
 database.py — SQLAlchemy models, connessione DB e bootstrap Alembic.
 """
+
 import os
 from pathlib import Path
 from sqlalchemy import (
-    create_engine, Column, Integer, BigInteger, Text, String, Float,
-    Boolean, DateTime, LargeBinary, ForeignKey, Index, text, func
+    create_engine,
+    Column,
+    Integer,
+    BigInteger,
+    Text,
+    String,
+    Float,
+    Boolean,
+    DateTime,
+    LargeBinary,
+    ForeignKey,
+    Index,
+    text,
+    func,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 from dotenv import load_dotenv
@@ -40,31 +53,32 @@ class Base(DeclarativeBase):
 class City(Base):
     __tablename__ = "cities"
 
-    id         = Column(Integer, primary_key=True)
-    name       = Column(Text, nullable=False)
-    name_lower = Column(Text, nullable=False)   # ricerca case-insensitive
-    region     = Column(Text)
-    province   = Column(Text)
-    lat        = Column(Float, nullable=False)
-    lon        = Column(Float, nullable=False)
-    population    = Column(Integer)
+    id = Column(Integer, primary_key=True)
+    name = Column(Text, nullable=False)
+    name_lower = Column(Text, nullable=False)  # ricerca case-insensitive
+    region = Column(Text)
+    province = Column(Text)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    population = Column(Integer)
     locality_type = Column(Text, default="comune")  # "comune" (ISTAT) o "localita" (GeoNames)
 
     observations = relationship("WeatherObservation", back_populates="city", lazy="dynamic")
-    predictions  = relationship("MlPrediction", back_populates="city", lazy="dynamic")
+    predictions = relationship("MlPrediction", back_populates="city", lazy="dynamic")
 
 
 class WeatherObservation(Base):
     """Osservazione meteo reale raccolta ogni ora dal cron job."""
+
     __tablename__ = "weather_observations"
 
-    id          = Column(BigInteger, primary_key=True)
-    city_id     = Column(Integer, ForeignKey("cities.id"), nullable=False)
+    id = Column(BigInteger, primary_key=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=False)
     observed_at = Column(DateTime(timezone=True), nullable=False)
-    temp        = Column(Float, nullable=False)
-    humidity    = Column(Float)
+    temp = Column(Float, nullable=False)
+    humidity = Column(Float)
     cloud_cover = Column(Float)
-    wind_speed  = Column(Float)
+    wind_speed = Column(Float)
     wind_direction = Column(Float)
     precipitation = Column(Float)
 
@@ -73,51 +87,54 @@ class WeatherObservation(Base):
 
 class MlPrediction(Base):
     """Previsione meteo salvata con target futuro per la verifica successiva."""
+
     __tablename__ = "ml_predictions"
 
-    id             = Column(BigInteger, primary_key=True)
-    city_id        = Column(Integer, ForeignKey("cities.id"), nullable=False)
-    predicted_at   = Column(DateTime(timezone=True), nullable=False)
-    target_time    = Column(DateTime(timezone=True), nullable=True)
-    lead_hours     = Column(Integer, nullable=True)
+    id = Column(BigInteger, primary_key=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=False)
+    predicted_at = Column(DateTime(timezone=True), nullable=False)
+    target_time = Column(DateTime(timezone=True), nullable=True)
+    lead_hours = Column(Integer, nullable=True)
     forecast_source = Column(Text, default="open-meteo")
     predicted_temp = Column(Float, nullable=False)
-    forecast_temp  = Column(Float, nullable=True)
-    humidity       = Column(Float)  # umidità prevista all'orario target
-    hour           = Column(Integer)
-    verified       = Column(Boolean, default=False)
-    actual_temp    = Column(Float)
-    error          = Column(Float)      # actual_temp - predicted_temp
-    verified_at    = Column(DateTime(timezone=True))
-    precipitation  = Column(Float, nullable=True)   # compat legacy / forecast
-    weather_code   = Column(Integer, nullable=True)  # compat legacy / forecast
+    forecast_temp = Column(Float, nullable=True)
+    humidity = Column(Float)  # umidità prevista all'orario target
+    hour = Column(Integer)
+    verified = Column(Boolean, default=False)
+    actual_temp = Column(Float)
+    error = Column(Float)  # actual_temp - predicted_temp
+    verified_at = Column(DateTime(timezone=True))
+    precipitation = Column(Float, nullable=True)  # compat legacy / forecast
+    weather_code = Column(Integer, nullable=True)  # compat legacy / forecast
     forecast_precipitation = Column(Float, nullable=True)
-    forecast_weather_code  = Column(Integer, nullable=True)
-    forecast_cloud_cover   = Column(Float, nullable=True)
-    forecast_wind_speed    = Column(Float, nullable=True)
+    forecast_weather_code = Column(Integer, nullable=True)
+    forecast_cloud_cover = Column(Float, nullable=True)
+    forecast_wind_speed = Column(Float, nullable=True)
     forecast_wind_direction = Column(Float, nullable=True)
-    actual_precipitation   = Column(Float, nullable=True)
-    actual_weather_code    = Column(Integer, nullable=True)
-    actual_cloud_cover     = Column(Float, nullable=True)
-    actual_wind_speed      = Column(Float, nullable=True)
-    actual_wind_direction  = Column(Float, nullable=True)
+    actual_precipitation = Column(Float, nullable=True)
+    actual_weather_code = Column(Integer, nullable=True)
+    actual_cloud_cover = Column(Float, nullable=True)
+    actual_wind_speed = Column(Float, nullable=True)
+    actual_wind_direction = Column(Float, nullable=True)
 
     city = relationship("City", back_populates="predictions")
 
 
 class MlModelStore(Base):
     """Modello scikit-learn serializzato (pickle)."""
+
     __tablename__ = "ml_model_store"
 
-    id          = Column(Integer, primary_key=True)
-    trained_at  = Column(DateTime(timezone=True), nullable=False)
-    model_bytes = Column(LargeBinary)   # pickle del Pipeline scikit-learn
-    mae         = Column(Float)         # Mean Absolute Error sul validation set
-    n_samples   = Column(Integer)
+    id = Column(Integer, primary_key=True)
+    trained_at = Column(DateTime(timezone=True), nullable=False)
+    model_bytes = Column(LargeBinary)  # pickle del Pipeline scikit-learn
+    mae = Column(Float)  # Mean Absolute Error sul validation set
+    n_samples = Column(Integer)
 
 
 class MlTrainingState(Base):
     """Stato persistente dell'ultimo ciclo/training ML."""
+
     __tablename__ = "ml_training_state"
 
     id = Column(Integer, primary_key=True)
@@ -137,13 +154,14 @@ class MlTrainingState(Base):
 
 class Supporter(Base):
     """Supporter che ha completato almeno una donazione."""
+
     __tablename__ = "supporters"
 
-    id          = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True)
     email_encrypted = Column(LargeBinary, nullable=False)
     email_lookup_hash = Column(Text, nullable=False, unique=True)
-    created_at  = Column(DateTime(timezone=True), nullable=False)
-    updated_at  = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
     donation_count = Column(Integer, nullable=False, default=0)
     last_donation_at = Column(DateTime(timezone=True))
     last_amount_cents = Column(Integer)
@@ -157,13 +175,14 @@ class Supporter(Base):
 
 class SupporterToken(Base):
     """Token opaco per riconoscere nello stesso browser un supporter noto."""
+
     __tablename__ = "supporter_tokens"
 
-    id          = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True)
     supporter_id = Column(Integer, ForeignKey("supporters.id"), nullable=False)
-    token_hash  = Column(Text, nullable=False, unique=True)
+    token_hash = Column(Text, nullable=False, unique=True)
     user_agent_hash = Column(Text)
-    created_at  = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
     last_seen_at = Column(DateTime(timezone=True), nullable=False)
 
     supporter = relationship("Supporter", back_populates="tokens")
@@ -171,6 +190,7 @@ class SupporterToken(Base):
 
 class PushSubscription(Base):
     """Sottoscrizione push Web (Web Push API) per notifiche meteo."""
+
     __tablename__ = "push_subscriptions"
 
     id = Column(BigInteger, primary_key=True, index=True)
@@ -185,6 +205,7 @@ class PushSubscription(Base):
 
 class TelegramSubscription(Base):
     """Sottoscrizione Telegram per notifiche meteo."""
+
     __tablename__ = "telegram_subscriptions"
 
     id = Column(BigInteger, primary_key=True, index=True)
@@ -205,13 +226,13 @@ class TelegramSubscription(Base):
 
 
 # Indici per performance (compatibili sia SQLite che PostgreSQL)
-Index("idx_obs_city_time",  WeatherObservation.city_id, WeatherObservation.observed_at)
+Index("idx_obs_city_time", WeatherObservation.city_id, WeatherObservation.observed_at)
 Index("idx_pred_city_time", MlPrediction.city_id, MlPrediction.predicted_at)
 Index("idx_pred_target_time", MlPrediction.city_id, MlPrediction.target_time)
 Index("idx_pred_verify_lookup", MlPrediction.city_id, MlPrediction.target_time, MlPrediction.verified)
-Index("idx_pred_verified",  MlPrediction.verified)
-Index("idx_cities_name",    City.name_lower)
-Index("idx_cities_type",    City.locality_type)
+Index("idx_pred_verified", MlPrediction.verified)
+Index("idx_cities_name", City.name_lower)
+Index("idx_cities_type", City.locality_type)
 Index("idx_ml_training_state_last_train", MlTrainingState.last_successful_train_at)
 Index("idx_supporters_email_lookup_hash", Supporter.email_lookup_hash)
 Index("idx_supporter_tokens_supporter_id", SupporterToken.supporter_id)

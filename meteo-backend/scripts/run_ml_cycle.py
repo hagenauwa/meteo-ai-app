@@ -1,4 +1,5 @@
 """Esegue un singolo ciclo ML per il cron job di produzione."""
+
 from __future__ import annotations
 
 import asyncio

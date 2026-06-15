@@ -3,6 +3,7 @@ main.py — FastAPI app principale
 
 Avvio: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 """
+
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,6 +28,7 @@ def _load_cities_if_empty():
         if count_comuni == 0:
             print("[CITIES] Database vuoto — caricamento comuni italiani in background...")
             from cities_loader import load_cities, download_and_load
+
             csv_path = Path(__file__).parent / "data" / "comuni_italiani.csv"
             if csv_path.exists():
                 load_cities()
@@ -39,6 +41,7 @@ def _load_cities_if_empty():
         if count_localita == 0:
             print("[GEONAMES] Caricamento località GeoNames in background...")
             from cities_loader import load_geonames
+
             load_geonames()
         else:
             print(f"[GEONAMES] {count_localita} località GeoNames presenti nel DB")
@@ -46,6 +49,7 @@ def _load_cities_if_empty():
     except Exception as e:
         print(f"[WARN] Caricamento città fallito: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -65,6 +69,7 @@ def _bootstrap_runtime():
         if settings.telegram_bot_token:
             import asyncio
             from telegram_bot import register_webhook
+
             try:
                 asyncio.run(register_webhook())
             except Exception as exc:
@@ -103,10 +108,9 @@ async def lifespan(app: FastAPI):
 
 
 import logging  # noqa: E402
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
 )
 
 
@@ -114,7 +118,7 @@ app = FastAPI(
     title="Meteo AI Backend",
     description="Backend Python per l'app meteo con auto-learning ML autonomo",
     version="2.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # CORS — permette al frontend Netlify di chiamare questa API
@@ -128,15 +132,16 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 from rate_limiter import RateLimitMiddleware  # noqa: E402
+
 app.add_middleware(RateLimitMiddleware)
 
 # Importa e registra i router
 from routers import weather, cities, ml, admin, supporters, advanced, telegram  # noqa: E402
 
 app.include_router(weather, prefix="/api")
-app.include_router(cities,  prefix="/api")
-app.include_router(ml,      prefix="/api/ml")
-app.include_router(admin,   prefix="/api/admin")
+app.include_router(cities, prefix="/api")
+app.include_router(ml, prefix="/api/ml")
+app.include_router(admin, prefix="/api/admin")
 app.include_router(supporters, prefix="/api/supporters")
 app.include_router(advanced, prefix="/api")
 app.include_router(telegram, prefix="/api")
@@ -144,12 +149,7 @@ app.include_router(telegram, prefix="/api")
 
 @app.get("/")
 def root():
-    return {
-        "service": "Meteo AI Backend",
-        "version": "2.1.0",
-        "status": "running",
-        "docs": "/docs"
-    }
+    return {"service": "Meteo AI Backend", "version": "2.1.0", "status": "running", "docs": "/docs"}
 
 
 @app.get("/health")

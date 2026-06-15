@@ -1,4 +1,5 @@
 """Test endpoint weather composito."""
+
 import importlib
 from types import SimpleNamespace
 
@@ -85,32 +86,44 @@ def test_weather_includes_ml_block(monkeypatch):
         }
 
     monkeypatch.setattr(weather_module, "fetch_single_city", fake_fetch_single_city)
-    monkeypatch.setattr(weather_module.ml_model, "predict_correction", lambda **kwargs: {
-        "model_ready": True,
-        "correction": 0.4,
-        "corrected_temp": 20.4,
-        "confidence": "media",
-    })
-    monkeypatch.setattr(weather_module.ml_model, "predict_rain_probability", lambda **kwargs: {
-        "model_ready": True,
-        "rain_probability": 0.25,
-        "will_rain": False,
-        "confidence": "media",
-    })
-    monkeypatch.setattr(weather_module.ml_model, "build_daily_insight", lambda **kwargs: {
-        "expected_condition": "sereno",
-        "display_condition": "Cielo sereno",
-        "condition_confidence": "alta",
-        "condition_source": "ml",
-        "rain_probability": 0.22,
-        "rain_confidence": "media",
-        "temperature_delta": 0.4,
-        "adjusted_temp_range": {"min": 11.4, "max": 21.4},
-        "summary": "Cielo sereno con basso rischio di pioggia.",
-        "badge": "Scenario stabile",
-        "horizon_support": "full",
-        "model_variant": "v1",
-    })
+    monkeypatch.setattr(
+        weather_module.ml_model,
+        "predict_correction",
+        lambda **kwargs: {
+            "model_ready": True,
+            "correction": 0.4,
+            "corrected_temp": 20.4,
+            "confidence": "media",
+        },
+    )
+    monkeypatch.setattr(
+        weather_module.ml_model,
+        "predict_rain_probability",
+        lambda **kwargs: {
+            "model_ready": True,
+            "rain_probability": 0.25,
+            "will_rain": False,
+            "confidence": "media",
+        },
+    )
+    monkeypatch.setattr(
+        weather_module.ml_model,
+        "build_daily_insight",
+        lambda **kwargs: {
+            "expected_condition": "sereno",
+            "display_condition": "Cielo sereno",
+            "condition_confidence": "alta",
+            "condition_source": "ml",
+            "rain_probability": 0.22,
+            "rain_confidence": "media",
+            "temperature_delta": 0.4,
+            "adjusted_temp_range": {"min": 11.4, "max": 21.4},
+            "summary": "Cielo sereno con basso rischio di pioggia.",
+            "badge": "Scenario stabile",
+            "horizon_support": "full",
+            "model_variant": "v1",
+        },
+    )
     monkeypatch.setattr(weather_module.ml_model, "get_public_summary", lambda: {"model_ready": True})
     monkeypatch.setattr(
         weather_module.ml_model,

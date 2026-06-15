@@ -4,7 +4,7 @@
 [build]
   # Directory dove risiedono i file statici (HTML, CSS, JS)
   publish = "public"
-  
+
   # Comando di build (vuoto perché è un sito statico)
   command = ""
 
@@ -12,7 +12,7 @@
 [functions]
   # Directory contenente le funzioni Netlify
   directory = "netlify/functions"
-  
+
   # Node.js runtime
   node_bundler = "esbuild"
 

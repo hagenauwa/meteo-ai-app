@@ -8,18 +8,15 @@ const GEOCODING_RESULT_MULTIPLIER = 3;
 const GEOCODING_MAX_COUNT = 50;
 
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
-const OPEN_METEO_CURRENT_FIELDS = (
+const OPEN_METEO_CURRENT_FIELDS =
     "temperature_2m,relative_humidity_2m,apparent_temperature,cloud_cover," +
-    "wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code,is_day"
-);
-const OPEN_METEO_DAILY_FIELDS = (
+    "wind_speed_10m,wind_direction_10m,surface_pressure,precipitation,weather_code,is_day";
+const OPEN_METEO_DAILY_FIELDS =
     "temperature_2m_max,temperature_2m_min,weather_code," +
-    "precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant"
-);
-const OPEN_METEO_HOURLY_FIELDS = (
+    "precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant";
+const OPEN_METEO_HOURLY_FIELDS =
     "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m," +
-    "precipitation_probability,precipitation,weather_code"
-);
+    "precipitation_probability,precipitation,weather_code";
 const OPEN_METEO_FORECAST_DAYS = 16;
 const OPEN_METEO_FORECAST_HOURS = 24;
 
@@ -58,7 +55,7 @@ export async function apiFetch(url, options = {}) {
 function normalizeErrorDetail(detail) {
     // FastAPI 422 restituisce `detail` come array di oggetti {loc,msg,type}.
     if (Array.isArray(detail)) {
-        return detail.map(item => item?.msg || JSON.stringify(item)).join("; ");
+        return detail.map((item) => item?.msg || JSON.stringify(item)).join("; ");
     }
     if (detail && typeof detail === "object") {
         return JSON.stringify(detail);
@@ -76,7 +73,9 @@ async function fetchJson(url, options = {}) {
 }
 
 function normalizeText(value) {
-    return String(value || "").trim().toLowerCase();
+    return String(value || "")
+        .trim()
+        .toLowerCase();
 }
 
 function inferLocalityType(raw) {
@@ -136,10 +135,10 @@ function matchesScope(city, scope) {
 function formatGeocodingResults(results, query, limit, scope) {
     const queryLower = normalizeText(query);
     const normalized = results
-        .filter(item => item?.country_code === "IT")
-        .filter(item => Number.isFinite(Number(item?.latitude)) && Number.isFinite(Number(item?.longitude)))
+        .filter((item) => item?.country_code === "IT")
+        .filter((item) => Number.isFinite(Number(item?.latitude)) && Number.isFinite(Number(item?.longitude)))
         .map(normalizeGeocodingResult)
-        .filter(city => matchesScope(city, scope));
+        .filter((city) => matchesScope(city, scope));
 
     const deduped = dedupeGeocodingResults(normalized);
     deduped.sort((a, b) => rankGeocodingResult(a, b, queryLower));
@@ -153,8 +152,8 @@ function formatBackendResults(results, query, limit, scope) {
     // non filtriamo per country_code/latitude ma normalizziamo direttamente.
     const queryLower = normalizeText(query);
     const normalized = results
-        .filter(item => Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lon)))
-        .map(item => ({
+        .filter((item) => Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lon)))
+        .map((item) => ({
             name: item.name || "",
             region: item.region || "",
             province: item.province || "",
@@ -163,7 +162,7 @@ function formatBackendResults(results, query, limit, scope) {
             locality_type: item.locality_type || "comune",
             _population: Number(item.population || 0),
         }))
-        .filter(city => matchesScope(city, scope));
+        .filter((city) => matchesScope(city, scope));
 
     const deduped = dedupeGeocodingResults(normalized);
     deduped.sort((a, b) => rankGeocodingResult(a, b, queryLower));
@@ -172,10 +171,7 @@ function formatBackendResults(results, query, limit, scope) {
 }
 
 async function fetchOpenMeteoGeocoding(query, limit, options = {}) {
-    const count = Math.min(
-        GEOCODING_MAX_COUNT,
-        Math.max(limit, limit * GEOCODING_RESULT_MULTIPLIER)
-    );
+    const count = Math.min(GEOCODING_MAX_COUNT, Math.max(limit, limit * GEOCODING_RESULT_MULTIPLIER));
 
     const params = new URLSearchParams({
         name: query,
@@ -227,7 +223,7 @@ async function fetchBackendCitySearch(query, limit, scope, signal) {
         signal,
     });
     if (!response.ok) return [];
-    const body = await response.json().catch(() => ([]));
+    const body = await response.json().catch(() => []);
     // L'endpoint backend restituisce un ARRAY (response_model=List[CityIndexItem]).
     if (Array.isArray(body)) return body;
     return Array.isArray(body.results) ? body.results : [];
@@ -308,22 +304,20 @@ function deriveDailyWmoFromHourly(dailyDate, fallbackCode, hourly = {}) {
     }
 
     if (!entries.length) return fallbackCode;
-    if (entries.some(entry => isRainWmoCode(entry.code) || entry.precipitation > 0.1 || entry.pop >= 40)) {
+    if (entries.some((entry) => isRainWmoCode(entry.code) || entry.precipitation > 0.1 || entry.pop >= 40)) {
         return fallbackCode;
     }
-    if (entries.some(entry => entry.code === 45 || entry.code === 48)) {
+    if (entries.some((entry) => entry.code === 45 || entry.code === 48)) {
         return fallbackCode;
     }
 
-    const clouds = entries
-        .map(entry => Number(entry.cloud))
-        .filter(value => Number.isFinite(value));
+    const clouds = entries.map((entry) => Number(entry.cloud)).filter((value) => Number.isFinite(value));
     if (!clouds.length) return fallbackCode;
 
     const avgCloud = clouds.reduce((sum, value) => sum + value, 0) / clouds.length;
     const maxCloud = Math.max(...clouds);
-    const cloudyFraction = entries.filter(entry => entry.code === 3).length / entries.length;
-    const partlyFraction = entries.filter(entry => entry.code === 2).length / entries.length;
+    const cloudyFraction = entries.filter((entry) => entry.code === 3).length / entries.length;
+    const partlyFraction = entries.filter((entry) => entry.code === 2).length / entries.length;
 
     if (avgCloud <= 20 && maxCloud <= 35) return 0;
     if (avgCloud <= 35 && cloudyFraction < 0.25) return 1;
@@ -371,18 +365,19 @@ function formatWeatherForFrontend(rawData, cityName) {
     const now = new Date();
     const currentDatePrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const currentHourPrefix = `${currentDatePrefix}T${String(now.getHours()).padStart(2, "0")}`;
-    const currentHourIndex = hourlyTimes.findIndex(t => String(t).startsWith(currentHourPrefix));
+    const currentHourIndex = hourlyTimes.findIndex((t) => String(t).startsWith(currentHourPrefix));
 
     const hourlyWmo = currentHourIndex >= 0 ? (hourly.weather_code || [])[currentHourIndex] : null;
-    const hourlyPop = currentHourIndex >= 0 ? (((hourly.precipitation_probability || [])[currentHourIndex] || 0) / 100) : 0;
-    const hourlyPrecip = currentHourIndex >= 0 ? ((hourly.precipitation || [])[currentHourIndex] || 0) : 0;
+    const hourlyPop =
+        currentHourIndex >= 0 ? ((hourly.precipitation_probability || [])[currentHourIndex] || 0) / 100 : 0;
+    const hourlyPrecip = currentHourIndex >= 0 ? (hourly.precipitation || [])[currentHourIndex] || 0 : 0;
 
     const currentWmo = current.weather_code || 0;
     const hourHasRain = (hourlyWmo && hourlyWmo >= 51) || hourlyPop >= 0.5 || hourlyPrecip > 0;
     const currentHasRain = (current.precipitation || 0) > 0 || currentWmo >= 51;
     const currentIsNight = Number(current.is_day) === 0;
 
-    const effectiveWmo = hourHasRain && !currentHasRain ? (hourlyWmo || 61) : currentWmo;
+    const effectiveWmo = hourHasRain && !currentHasRain ? hourlyWmo || 61 : currentWmo;
     const pop = currentHasRain || hourHasRain ? 1 : 0;
     const [description, icon] = wmoToDescription(effectiveWmo, currentIsNight);
 
@@ -409,18 +404,18 @@ function formatWeatherForFrontend(rawData, cityName) {
     for (let i = 0; i < hourlyLimit; i++) {
         const wmoCode = (hourly.weather_code || [])[i] || 0;
         const hour = Number(String(hourlyTimes[i] || "").slice(11, 13));
-        const isNight = Number.isFinite(hour) ? (hour < 6 || hour >= 18) : false;
+        const isNight = Number.isFinite(hour) ? hour < 6 || hour >= 18 : false;
         const [hourDesc, hourIcon] = wmoToDescription(wmoCode, isNight);
         hourlyFormatted.push({
             dt: hourlyTimes[i],
             lead_hours: i,
-            temp: Math.round((((hourly.temperature_2m || [])[i] || 0) * 10)) / 10,
+            temp: Math.round(((hourly.temperature_2m || [])[i] || 0) * 10) / 10,
             humidity: (hourly.relative_humidity_2m || [])[i] || 0,
             cloud_cover: (hourly.cloud_cover || [])[i] || 0,
-            wind_speed: Math.round((((hourly.wind_speed_10m || [])[i] || 0) * 10)) / 10,
+            wind_speed: Math.round(((hourly.wind_speed_10m || [])[i] || 0) * 10) / 10,
             wind_deg: (hourly.wind_direction_10m || [])[i] || 0,
             precipitation: (hourly.precipitation || [])[i] || 0,
-            pop: (((hourly.precipitation_probability || [])[i] || 0) / 100),
+            pop: ((hourly.precipitation_probability || [])[i] || 0) / 100,
             weather: [{ description: hourDesc, icon: hourIcon }],
             weather_code: wmoCode,
         });
@@ -433,22 +428,22 @@ function formatWeatherForFrontend(rawData, cityName) {
         const rawWmoCode = (daily.weather_code || [])[i] || 0;
         const wmoCode = deriveDailyWmoFromHourly(dailyTimes[i], rawWmoCode, hourly);
         const [dayDesc, dayIcon] = wmoToDescription(wmoCode);
-        const minTemp = ((daily.temperature_2m_min || [])[i] || 0);
-        const maxTemp = ((daily.temperature_2m_max || [])[i] || 0);
+        const minTemp = (daily.temperature_2m_min || [])[i] || 0;
+        const maxTemp = (daily.temperature_2m_max || [])[i] || 0;
 
         dailyFormatted.push({
             dt: dailyTimes[i],
             temp: {
                 min: Math.round(minTemp * 10) / 10,
                 max: Math.round(maxTemp * 10) / 10,
-                day: Math.round((((minTemp + maxTemp) / 2) * 10)) / 10,
+                day: Math.round(((minTemp + maxTemp) / 2) * 10) / 10,
             },
             humidity: 50,
             cloud_cover: approxCloudCoverFromWmo(wmoCode),
-            wind_speed: Math.round((((daily.wind_speed_10m_max || [])[i] || 0) * 10)) / 10,
+            wind_speed: Math.round(((daily.wind_speed_10m_max || [])[i] || 0) * 10) / 10,
             wind_deg: (daily.wind_direction_10m_dominant || [])[i] || 0,
-            pop: (((daily.precipitation_probability_max || [])[i] || 0) / 100),
-            precipitation_sum: Math.round((((daily.precipitation_sum || [])[i] || 0) * 10)) / 10,
+            pop: ((daily.precipitation_probability_max || [])[i] || 0) / 100,
+            precipitation_sum: Math.round(((daily.precipitation_sum || [])[i] || 0) * 10) / 10,
             weather: [{ description: dayDesc, icon: dayIcon }],
             weather_code: wmoCode,
         });
@@ -516,7 +511,7 @@ export async function fetchMlEnrichment(city, weatherPayload) {
                 precipitation: weatherPayload.current?.precipitation,
                 weather_code: weatherPayload.current?.weather_code,
             },
-            daily: weatherPayload.daily.map(day => ({
+            daily: weatherPayload.daily.map((day) => ({
                 dt: day.dt,
                 temp: day.temp,
                 humidity: day.humidity,

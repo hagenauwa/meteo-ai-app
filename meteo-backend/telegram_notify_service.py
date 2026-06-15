@@ -125,9 +125,7 @@ async def _send_daily_forecast(sub: TelegramSubscription, now: datetime) -> dict
     if not sub.daily_forecast_enabled or not sub.chat_id:
         return {"status": "skipped", "reason": "disabled"}
 
-    if not should_notify_daily(
-        sub.last_daily_forecast_at, sub.daily_forecast_hour, now
-    ):
+    if not should_notify_daily(sub.last_daily_forecast_at, sub.daily_forecast_hour, now):
         return {"status": "skipped", "reason": "not_time"}
 
     lat, lon = await resolve_city_coords(city_name)
@@ -171,9 +169,7 @@ async def check_telegram_rain_alerts() -> dict:
     if not subscriptions:
         return {"checked": 0, "sent": 0, "results": []}
 
-    print(
-        f"[TELEGRAM-RAIN] Controllo allerte pioggia per {len(subscriptions)} subscription Telegram..."
-    )
+    print(f"[TELEGRAM-RAIN] Controllo allerte pioggia per {len(subscriptions)} subscription Telegram...")
 
     results = []
     sent_count = 0
@@ -185,9 +181,7 @@ async def check_telegram_rain_alerts() -> dict:
             if result.get("status") == "sent":
                 sent_count += 1
         except Exception as exc:
-            logger.warning(
-                f"Errore controllo rain alert Telegram per {sub.city}: {exc}"
-            )
+            logger.warning(f"Errore controllo rain alert Telegram per {sub.city}: {exc}")
             results.append({"status": "error", "city": sub.city, "error": str(exc)})
 
         await asyncio.sleep(0.5)
@@ -197,9 +191,7 @@ async def check_telegram_rain_alerts() -> dict:
         "sent": sent_count,
         "results": results,
     }
-    print(
-        f"[TELEGRAM-RAIN] Allerte pioggia Telegram: {sent_count} inviate su {len(subscriptions)} controllate"
-    )
+    print(f"[TELEGRAM-RAIN] Allerte pioggia Telegram: {sent_count} inviate su {len(subscriptions)} controllate")
     return summary
 
 
@@ -219,9 +211,7 @@ async def check_telegram_daily_forecasts() -> dict:
     if not subscriptions:
         return {"checked": 0, "sent": 0, "results": []}
 
-    print(
-        f"[TELEGRAM-DAILY] Controllo promemoria giornalieri per {len(subscriptions)} subscription Telegram..."
-    )
+    print(f"[TELEGRAM-DAILY] Controllo promemoria giornalieri per {len(subscriptions)} subscription Telegram...")
 
     results = []
     sent_count = 0
@@ -233,9 +223,7 @@ async def check_telegram_daily_forecasts() -> dict:
             if result.get("status") == "sent":
                 sent_count += 1
         except Exception as exc:
-            logger.warning(
-                f"Errore invio daily forecast Telegram per {sub.city}: {exc}"
-            )
+            logger.warning(f"Errore invio daily forecast Telegram per {sub.city}: {exc}")
             results.append({"status": "error", "city": sub.city, "error": str(exc)})
 
         await asyncio.sleep(0.5)
@@ -245,7 +233,5 @@ async def check_telegram_daily_forecasts() -> dict:
         "sent": sent_count,
         "results": results,
     }
-    print(
-        f"[TELEGRAM-DAILY] Promemoria giornalieri Telegram: {sent_count} inviati su {len(subscriptions)} controllati"
-    )
+    print(f"[TELEGRAM-DAILY] Promemoria giornalieri Telegram: {sent_count} inviati su {len(subscriptions)} controllati")
     return summary

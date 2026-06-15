@@ -9,6 +9,7 @@ Eseguire una volta: python cities_loader.py
   --geonames     Scarica e carica località GeoNames
   --reload       Ricarica comuni da CSV locale
 """
+
 import csv
 import sys
 import zipfile
@@ -21,12 +22,12 @@ CSV_PATH = Path(__file__).parent / "data" / "comuni_italiani.csv"
 
 # Colonne attese nel CSV (case-insensitive)
 COL_ALIASES = {
-    "nome":       ["nome", "name", "denominazione_ita", "comune"],
-    "regione":    ["regione", "region", "nome_regione"],
-    "provincia":  ["provincia", "province", "sigla_provincia", "nome_provincia"],
-    "lat":        ["lat", "latitude", "latitudine"],
-    "lon":        ["lon", "lng", "longitude", "longitudine"],
-    "popolazione":["popolazione", "population", "pop"],
+    "nome": ["nome", "name", "denominazione_ita", "comune"],
+    "regione": ["regione", "region", "nome_regione"],
+    "provincia": ["provincia", "province", "sigla_provincia", "nome_provincia"],
+    "lat": ["lat", "latitude", "latitudine"],
+    "lon": ["lon", "lng", "longitude", "longitudine"],
+    "popolazione": ["popolazione", "population", "pop"],
 }
 
 
@@ -70,12 +71,12 @@ def load_cities(truncate: bool = False) -> int:
             reader = csv.DictReader(f)
             header = reader.fieldnames or []
 
-            col_nome     = _find_col(header, COL_ALIASES["nome"])
-            col_regione  = _find_col(header, COL_ALIASES["regione"])
-            col_prov     = _find_col(header, COL_ALIASES["provincia"])
-            col_lat      = _find_col(header, COL_ALIASES["lat"])
-            col_lon      = _find_col(header, COL_ALIASES["lon"])
-            col_pop      = _find_col(header, COL_ALIASES["popolazione"])
+            col_nome = _find_col(header, COL_ALIASES["nome"])
+            col_regione = _find_col(header, COL_ALIASES["regione"])
+            col_prov = _find_col(header, COL_ALIASES["provincia"])
+            col_lat = _find_col(header, COL_ALIASES["lat"])
+            col_lon = _find_col(header, COL_ALIASES["lon"])
+            col_pop = _find_col(header, COL_ALIASES["popolazione"])
 
             if not col_nome or not col_lat or not col_lon:
                 print(f"[ERROR] Colonne obbligatorie mancanti. Header trovato: {header}")
@@ -95,14 +96,14 @@ def load_cities(truncate: bool = False) -> int:
                     continue
 
                 city = City(
-                    name          = name,
-                    name_lower    = name.lower(),
-                    region        = row.get(col_regione, "").strip() if col_regione else None,
-                    province      = row.get(col_prov, "").strip() if col_prov else None,
-                    lat           = lat,
-                    lon           = lon,
-                    population    = int(row[col_pop]) if col_pop and row.get(col_pop, "").isdigit() else None,
-                    locality_type = "comune"
+                    name=name,
+                    name_lower=name.lower(),
+                    region=row.get(col_regione, "").strip() if col_regione else None,
+                    province=row.get(col_prov, "").strip() if col_prov else None,
+                    lat=lat,
+                    lon=lon,
+                    population=int(row[col_pop]) if col_pop and row.get(col_pop, "").isdigit() else None,
+                    locality_type="comune",
                 )
                 batch.append(city)
                 count += 1
@@ -150,11 +151,17 @@ def download_and_load():
         async def geocode_one(comune_name: str, client: httpx.AsyncClient):
             async with semaphore:
                 try:
-                    r = await client.get(GEO_URL, params={
-                        "name": comune_name, "count": 1,
-                        "language": "it", "format": "json",
-                        "country_code": "IT"
-                    }, timeout=15)
+                    r = await client.get(
+                        GEO_URL,
+                        params={
+                            "name": comune_name,
+                            "count": 1,
+                            "language": "it",
+                            "format": "json",
+                            "country_code": "IT",
+                        },
+                        timeout=15,
+                    )
                     result = r.json().get("results", [])
                     if result:
                         return comune_name, result[0]["latitude"], result[0]["longitude"]
@@ -187,14 +194,17 @@ def download_and_load():
                 nome = comune.get("nome", "")
                 lat, lon = coords_map.get(nome, (None, None))
                 if lat is None:
-                    continue   # Salta comuni senza coordinate
-                writer.writerow([
-                    nome,
-                    comune.get("regione", {}).get("nome", ""),
-                    comune.get("provincia", {}).get("nome", ""),
-                    lat, lon,
-                    comune.get("popolazione", "")
-                ])
+                    continue  # Salta comuni senza coordinate
+                writer.writerow(
+                    [
+                        nome,
+                        comune.get("regione", {}).get("nome", ""),
+                        comune.get("provincia", {}).get("nome", ""),
+                        lat,
+                        lon,
+                        comune.get("popolazione", ""),
+                    ]
+                )
                 written += 1
 
         print(f"[OK] CSV salvato: {CSV_PATH} ({written} comuni con coordinate)")
@@ -210,18 +220,30 @@ GEONAMES_DIR = Path(__file__).parent / "data"
 
 # Mapping GeoNames admin1_code → nome regione italiana
 ADMIN1_TO_REGION = {
-    "01": "Abruzzo",     "02": "Basilicata",   "03": "Calabria",
-    "04": "Campania",    "05": "Emilia-Romagna","06": "Friuli Venezia Giulia",
-    "07": "Lazio",       "08": "Liguria",       "09": "Lombardia",
-    "10": "Marche",      "11": "Molise",        "12": "Piemonte",
-    "13": "Puglia",      "14": "Sardegna",      "15": "Sicilia",
-    "16": "Toscana",     "17": "Trentino-Alto Adige", "18": "Umbria",
-    "19": "Valle d'Aosta", "20": "Veneto",
+    "01": "Abruzzo",
+    "02": "Basilicata",
+    "03": "Calabria",
+    "04": "Campania",
+    "05": "Emilia-Romagna",
+    "06": "Friuli Venezia Giulia",
+    "07": "Lazio",
+    "08": "Liguria",
+    "09": "Lombardia",
+    "10": "Marche",
+    "11": "Molise",
+    "12": "Piemonte",
+    "13": "Puglia",
+    "14": "Sardegna",
+    "15": "Sicilia",
+    "16": "Toscana",
+    "17": "Trentino-Alto Adige",
+    "18": "Umbria",
+    "19": "Valle d'Aosta",
+    "20": "Veneto",
 }
 
 # Feature codes di tipo "populated place" da includere
-POPULATED_FEATURES = {"PPL", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLC",
-                       "PPLF", "PPLL", "PPLQ", "PPLR", "PPLS", "PPLX"}
+POPULATED_FEATURES = {"PPL", "PPLA", "PPLA2", "PPLA3", "PPLA4", "PPLC", "PPLF", "PPLL", "PPLQ", "PPLR", "PPLS", "PPLX"}
 
 
 def load_geonames() -> int:
@@ -309,7 +331,7 @@ def load_geonames() -> int:
             # Deduplica: se esiste un comune ISTAT con stesso nome e coordinate vicine (<5km), skip
             is_dupe = False
             if name_lower in existing_comuni:
-                for (ex_lat, ex_lon) in existing_comuni[name_lower]:
+                for ex_lat, ex_lon in existing_comuni[name_lower]:
                     # Approssimazione: 0.05° ≈ 5km
                     if abs(lat - ex_lat) < 0.05 and abs(lon - ex_lon) < 0.05:
                         is_dupe = True
@@ -318,24 +340,26 @@ def load_geonames() -> int:
                 skipped_dupes += 1
                 continue
 
-            batch.append(City(
-                name          = name,
-                name_lower    = name_lower,
-                region        = region,
-                province      = None,   # GeoNames non ha provincia diretta
-                lat           = lat,
-                lon           = lon,
-                population    = population,
-                locality_type = "localita"
-            ))
+            batch.append(
+                City(
+                    name=name,
+                    name_lower=name_lower,
+                    region=region,
+                    province=None,  # GeoNames non ha provincia diretta
+                    lat=lat,
+                    lon=lon,
+                    population=population,
+                    locality_type="localita",
+                )
+            )
             count += 1
 
     # 5. Inserisci in batch
     with Session(engine) as session:
         for i in range(0, len(batch), 500):
-            session.bulk_save_objects(batch[i:i+500])
+            session.bulk_save_objects(batch[i : i + 500])
             session.commit()
-            print(f"  ... inserite {min(i+500, count)} località", end="\r")
+            print(f"  ... inserite {min(i + 500, count)} località", end="\r")
 
     print(f"\n[OK] Caricate {count} località GeoNames (esclusi {skipped_dupes} duplicati con comuni ISTAT)")
     return count

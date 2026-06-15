@@ -1,4 +1,5 @@
 """Test per il sottosistema ML."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -123,12 +124,8 @@ class TestDataPreparation:
         from config import settings
         from ml_model import _prepare_training_rows
 
-        city_in = City(
-            name="Massa", name_lower="massa", region="Toscana", province="Massa-Carrara", lat=44.0, lon=10.1
-        )
-        city_out = City(
-            name="Milano", name_lower="milano", region="Lombardia", province="Milano", lat=45.5, lon=9.2
-        )
+        city_in = City(name="Massa", name_lower="massa", region="Toscana", province="Massa-Carrara", lat=44.0, lon=10.1)
+        city_out = City(name="Milano", name_lower="milano", region="Lombardia", province="Milano", lat=45.5, lon=9.2)
         db_session.add_all([city_in, city_out])
         db_session.flush()
 

@@ -4,6 +4,7 @@ Revision ID: 20260404_0002
 Revises: 20260404_0001
 Create Date: 2026-04-04 19:20:00
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -32,7 +33,9 @@ def upgrade() -> None:
         "wind_direction": sa.Column("wind_direction", sa.Float(), nullable=True),
     }
     for column_name, column in weather_observation_columns.items():
-        if _has_table(inspector, "weather_observations") and not _has_column(inspector, "weather_observations", column_name):
+        if _has_table(inspector, "weather_observations") and not _has_column(
+            inspector, "weather_observations", column_name
+        ):
             op.add_column("weather_observations", column)
 
     inspector = sa.inspect(bind)
@@ -61,5 +64,7 @@ def downgrade() -> None:
             op.drop_column("ml_predictions", column_name)
 
     inspector = sa.inspect(bind)
-    if _has_table(inspector, "weather_observations") and _has_column(inspector, "weather_observations", "wind_direction"):
+    if _has_table(inspector, "weather_observations") and _has_column(
+        inspector, "weather_observations", "wind_direction"
+    ):
         op.drop_column("weather_observations", "wind_direction")

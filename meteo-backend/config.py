@@ -1,6 +1,7 @@
 """
 config.py — configurazione centralizzata backend.
 """
+
 from __future__ import annotations
 
 import os
@@ -102,16 +103,18 @@ def load_settings() -> Settings:
 
     cors_origins = [frontend_origin, *extra_origins]
     if app_env != "production":
-        cors_origins.extend([
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://localhost:8888",
-            "http://127.0.0.1:8888",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
-        ])
+        cors_origins.extend(
+            [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:8888",
+                "http://127.0.0.1:8888",
+                "http://localhost:8000",
+                "http://127.0.0.1:8000",
+            ]
+        )
 
     seen: set[str] = set()
     ordered_origins = []
@@ -145,16 +148,20 @@ def load_settings() -> Settings:
         ml_city_sample_size=max(1, int(os.getenv("ML_CITY_SAMPLE_SIZE", "300"))),
         ml_city_core_size=max(0, int(os.getenv("ML_CITY_CORE_SIZE", "80"))),
         ml_training_allowed_provinces=tuple(
-            _split_csv(os.getenv(
-                "ML_TRAINING_ALLOWED_PROVINCES",
-                "Massa-Carrara,Lucca,Pisa,Livorno,Pistoia,Prato,Firenze,Arezzo,Siena,Grosseto,La Spezia",
-            ))
+            _split_csv(
+                os.getenv(
+                    "ML_TRAINING_ALLOWED_PROVINCES",
+                    "Massa-Carrara,Lucca,Pisa,Livorno,Pistoia,Prato,Firenze,Arezzo,Siena,Grosseto,La Spezia",
+                )
+            )
         ),
         ml_forecast_leads=tuple(
-            sorted({
-                max(1, min(240, lead))
-                for lead in _as_int_csv(os.getenv("ML_FORECAST_LEADS"), (1, 3, 6, 14, 38, 86, 158))
-            })
+            sorted(
+                {
+                    max(1, min(240, lead))
+                    for lead in _as_int_csv(os.getenv("ML_FORECAST_LEADS"), (1, 3, 6, 14, 38, 86, 158))
+                }
+            )
         ),
         ml_cycle_every_hours=max(1, int(os.getenv("ML_CYCLE_EVERY_HOURS", "1"))),
         ml_observation_retention_days=max(1, int(os.getenv("ML_OBSERVATION_RETENTION_DAYS", "7"))),
@@ -165,7 +172,9 @@ def load_settings() -> Settings:
         supporter_email_hash_key=os.getenv("SUPPORTER_EMAIL_HASH_KEY", "").strip(),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip(),
-        telegram_webhook_url=os.getenv("TELEGRAM_WEBHOOK_URL", "https://meteo-ai-backend.onrender.com/api/telegram/webhook").strip(),
+        telegram_webhook_url=os.getenv(
+            "TELEGRAM_WEBHOOK_URL", "https://meteo-ai-backend.onrender.com/api/telegram/webhook"
+        ).strip(),
     )
 
 

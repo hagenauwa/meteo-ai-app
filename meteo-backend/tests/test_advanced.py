@@ -1,4 +1,5 @@
 """Test endpoint meteo avanzato /api/weather/advanced."""
+
 import importlib
 from types import SimpleNamespace
 

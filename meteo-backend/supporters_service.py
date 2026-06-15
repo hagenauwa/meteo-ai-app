@@ -1,6 +1,7 @@
 """
 supporters_service.py — supporto a checkout, cifratura email e token browser.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -149,8 +150,8 @@ def register_paid_supporter(db, session) -> Supporter:
 
     if supporter:
         is_duplicate = bool(
-            (details["session_id"] and supporter.last_checkout_session_id == details["session_id"]) or
-            (details["payment_intent"] and supporter.stripe_payment_intent_id == details["payment_intent"])
+            (details["session_id"] and supporter.last_checkout_session_id == details["session_id"])
+            or (details["payment_intent"] and supporter.stripe_payment_intent_id == details["payment_intent"])
         )
     else:
         supporter = Supporter(

@@ -1,4 +1,5 @@
 """Esegue check notifiche Telegram (rain alerts + daily forecast) per il cron job."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,10 +27,7 @@ def _validate_runtime_config() -> None:
         missing.append("TELEGRAM_BOT_TOKEN")
 
     if missing:
-        raise RuntimeError(
-            "Configurazione cron Telegram incompleta: "
-            + ", ".join(missing)
-        )
+        raise RuntimeError("Configurazione cron Telegram incompleta: " + ", ".join(missing))
 
 
 async def main() -> None:

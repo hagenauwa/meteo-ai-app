@@ -1,4 +1,5 @@
 """TDD contract tests for ML city warnings and daily representative time."""
+
 import importlib
 import os
 import sys
@@ -56,32 +57,44 @@ def _base_payload(*, name: str = "Roma", lat: float = 41.9, lon: float = 12.5, d
 
 
 def _stub_ml(monkeypatch):
-    monkeypatch.setattr(ml_module.ml_model, "predict_correction", lambda **kwargs: {
-        "model_ready": True,
-        "correction": 0.3,
-        "corrected_temp": 15.4,
-        "confidence": "media",
-    })
-    monkeypatch.setattr(ml_module.ml_model, "predict_rain_probability", lambda **kwargs: {
-        "model_ready": True,
-        "rain_probability": 0.2,
-        "will_rain": False,
-        "confidence": "media",
-    })
-    monkeypatch.setattr(ml_module.ml_model, "build_daily_insight", lambda **kwargs: {
-        "expected_condition": "sereno",
-        "display_condition": "Cielo sereno",
-        "condition_confidence": "alta",
-        "condition_source": "ml",
-        "rain_probability": 0.2,
-        "rain_confidence": "media",
-        "temperature_delta": 0.3,
-        "adjusted_temp_range": {"min": 10.3, "max": 20.3},
-        "summary": "Scenario stabile",
-        "badge": "Scenario stabile",
-        "horizon_support": "full",
-        "model_variant": "v1",
-    })
+    monkeypatch.setattr(
+        ml_module.ml_model,
+        "predict_correction",
+        lambda **kwargs: {
+            "model_ready": True,
+            "correction": 0.3,
+            "corrected_temp": 15.4,
+            "confidence": "media",
+        },
+    )
+    monkeypatch.setattr(
+        ml_module.ml_model,
+        "predict_rain_probability",
+        lambda **kwargs: {
+            "model_ready": True,
+            "rain_probability": 0.2,
+            "will_rain": False,
+            "confidence": "media",
+        },
+    )
+    monkeypatch.setattr(
+        ml_module.ml_model,
+        "build_daily_insight",
+        lambda **kwargs: {
+            "expected_condition": "sereno",
+            "display_condition": "Cielo sereno",
+            "condition_confidence": "alta",
+            "condition_source": "ml",
+            "rain_probability": 0.2,
+            "rain_confidence": "media",
+            "temperature_delta": 0.3,
+            "adjusted_temp_range": {"min": 10.3, "max": 20.3},
+            "summary": "Scenario stabile",
+            "badge": "Scenario stabile",
+            "horizon_support": "full",
+            "model_variant": "v1",
+        },
+    )
     monkeypatch.setattr(ml_module.ml_model, "get_public_summary", lambda: {"model_ready": True})
 
 
@@ -114,10 +127,12 @@ def test_ml_enrich_unknown_city_returns_warning_contract(monkeypatch):
 
 def test_ml_enrich_ambiguous_city_returns_warning_contract(monkeypatch):
     _stub_ml(monkeypatch)
-    app.dependency_overrides[get_db] = override_get_db([
-        fake_city(id=1, name="Castro", region="Puglia", province="LE", lat=40.0, lon=18.4),
-        fake_city(id=2, name="Castro", region="Lombardia", province="BG", lat=45.8, lon=9.9),
-    ])
+    app.dependency_overrides[get_db] = override_get_db(
+        [
+            fake_city(id=1, name="Castro", region="Puglia", province="LE", lat=40.0, lon=18.4),
+            fake_city(id=2, name="Castro", region="Lombardia", province="BG", lat=45.8, lon=9.9),
+        ]
+    )
 
     try:
         response = client.post(
@@ -137,9 +152,11 @@ def test_ml_enrich_ambiguous_city_returns_warning_contract(monkeypatch):
 
 def test_ml_enrich_coordinate_mismatch_returns_warning_contract(monkeypatch):
     _stub_ml(monkeypatch)
-    app.dependency_overrides[get_db] = override_get_db([
-        fake_city(name="Roma", region="Lazio", province="RM", lat=41.9, lon=12.5),
-    ])
+    app.dependency_overrides[get_db] = override_get_db(
+        [
+            fake_city(name="Roma", region="Lazio", province="RM", lat=41.9, lon=12.5),
+        ]
+    )
 
     try:
         response = client.post(
@@ -192,9 +209,11 @@ def test_ml_enrich_uses_europe_rome_14_local_for_daily_representative_time(monke
 
     # Città in copertura ML (Massa-Carrara) così l'enrich non viene disabilitato
     # dal gate out-of-area e build_daily_insight viene effettivamente chiamato.
-    app.dependency_overrides[get_db] = override_get_db([
-        fake_city(name="Massa", region="Toscana", province="Massa-Carrara", lat=41.9, lon=12.5),
-    ])
+    app.dependency_overrides[get_db] = override_get_db(
+        [
+            fake_city(name="Massa", region="Toscana", province="Massa-Carrara", lat=41.9, lon=12.5),
+        ]
+    )
 
     try:
         response = client.post(

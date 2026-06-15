@@ -70,7 +70,9 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
     }
 
     function setActive(items) {
-        [...items].forEach(item => item.classList.remove("active"));
+        [...items].forEach((item) => {
+            item.classList.remove("active");
+        });
         if (!items.length) return;
         if (currentFocus >= items.length) currentFocus = 0;
         if (currentFocus < 0) currentFocus = items.length - 1;
@@ -120,7 +122,7 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
         }, 250);
     });
 
-    input.addEventListener("keydown", event => {
+    input.addEventListener("keydown", (event) => {
         const items = list.querySelectorAll('.autocomplete-item[data-selectable="true"]');
         if (event.key === "ArrowDown") {
             currentFocus++;
@@ -140,7 +142,7 @@ export function createAutocomplete({ input, list, getSuggestions, onSelect }) {
         }
     });
 
-    document.addEventListener("click", event => {
+    document.addEventListener("click", (event) => {
         if (event.target !== input && event.target !== list) {
             closeAllLists();
         }

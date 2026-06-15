@@ -1,4 +1,5 @@
 """Test configurazione backend."""
+
 import os
 import sys
 

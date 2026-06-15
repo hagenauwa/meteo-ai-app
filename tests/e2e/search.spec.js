@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 test("ricerca città e visualizzazione meteo", async ({ page }) => {
     await page.goto("/");

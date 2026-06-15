@@ -1,4 +1,5 @@
 """Test endpoint ML enrich per forecast frontend."""
+
 import importlib
 
 from fastapi.testclient import TestClient
@@ -29,18 +30,26 @@ ml_module = importlib.import_module("routers.ml")
 def test_ml_enrich_returns_current_and_daily_blocks(monkeypatch):
     lead_hours_calls = []
 
-    monkeypatch.setattr(ml_module.ml_model, "predict_correction", lambda **kwargs: {
-        "model_ready": True,
-        "correction": 0.3,
-        "corrected_temp": 15.4,
-        "confidence": "media",
-    })
-    monkeypatch.setattr(ml_module.ml_model, "predict_rain_probability", lambda **kwargs: {
-        "model_ready": True,
-        "rain_probability": 0.2,
-        "will_rain": False,
-        "confidence": "media",
-    })
+    monkeypatch.setattr(
+        ml_module.ml_model,
+        "predict_correction",
+        lambda **kwargs: {
+            "model_ready": True,
+            "correction": 0.3,
+            "corrected_temp": 15.4,
+            "confidence": "media",
+        },
+    )
+    monkeypatch.setattr(
+        ml_module.ml_model,
+        "predict_rain_probability",
+        lambda **kwargs: {
+            "model_ready": True,
+            "rain_probability": 0.2,
+            "will_rain": False,
+            "confidence": "media",
+        },
+    )
 
     def fake_daily_insight(**kwargs):
         lead_hours_calls.append(kwargs["lead_hours"])
@@ -203,11 +212,15 @@ def test_ml_enrich_keeps_200_for_known_city_when_models_are_not_ready(monkeypatc
 
 
 def test_ml_enrich_unknown_city_returns_warning_contract(monkeypatch):
-    monkeypatch.setattr(ml_module.ml_model, "get_public_summary", lambda: {
-        "model_ready": False,
-        "model_status": "disabled",
-        "model_load_warning": MODEL_STATUS_MISSING_ROW,
-    })
+    monkeypatch.setattr(
+        ml_module.ml_model,
+        "get_public_summary",
+        lambda: {
+            "model_ready": False,
+            "model_status": "disabled",
+            "model_load_warning": MODEL_STATUS_MISSING_ROW,
+        },
+    )
 
     install_fake_db_override(app, get_db, [])
     try:
@@ -261,7 +274,8 @@ def test_ml_enrich_out_of_area_city_disables_ml(monkeypatch):
     monkeypatch.setattr(ml_module.ml_model, "get_public_summary", lambda: {"model_ready": True})
 
     install_fake_db_override(
-        app, get_db,
+        app,
+        get_db,
         [fake_city(name="Milano", region="Lombardia", province="MI", lat=45.46, lon=9.19)],
     )
     try:

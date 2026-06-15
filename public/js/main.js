@@ -1,16 +1,9 @@
-import {
-    fetchWeatherByCity,
-    fetchMlEnrichment,
-    fetchWeatherAdvanced,
-    searchCities,
-    warmCitiesSearch,
-} from "./api.js";
+import { fetchMlEnrichment, fetchWeatherAdvanced, fetchWeatherByCity, searchCities, warmCitiesSearch } from "./api.js";
 import { createAutocomplete } from "./autocomplete.js";
 import { hideError, renderChipList, renderWeather, showError, showLoading } from "./render.js";
-
+import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggleFavorite } from "./storage.js";
 import { initializeSupporterWidget } from "./supporter.js";
 import { initializeTelegram } from "./telegram.js";
-import { clearRecents, getFavorites, getRecents, pushRecent, removeRecent, toggleFavorite } from "./storage.js";
 
 let currentCity = null;
 let currentPayload = null;
@@ -29,9 +22,7 @@ function applyMlEnrichment(payload, enrichment) {
     if (Array.isArray(payload.daily) && Array.isArray(enrichment.daily_ml)) {
         // Allinea per data (dt) quando disponibile, con fallback all'indice: evita
         // di attribuire l'insight ML al giorno sbagliato se gli array divergono.
-        const mlByDate = new Map(
-            enrichment.daily_ml.filter(item => item && item.dt).map(item => [item.dt, item])
-        );
+        const mlByDate = new Map(enrichment.daily_ml.filter((item) => item?.dt).map((item) => [item.dt, item]));
         merged.daily = payload.daily.map((day, index) => {
             const dayMl = mlByDate.get(day.dt) ?? enrichment.daily_ml[index];
             if (!dayMl) return day;
@@ -47,7 +38,7 @@ function applyMlEnrichment(payload, enrichment) {
 
 function isFavoriteCity(city) {
     if (!city) return false;
-    return getFavorites().some(item => item.name.toLowerCase() === city.name.toLowerCase());
+    return getFavorites().some((item) => item.name.toLowerCase() === city.name.toLowerCase());
 }
 
 function updateFavoriteButtonState() {
@@ -66,7 +57,7 @@ function renderCurrentView() {
 
     renderWeather(currentPayload, {
         selectedDayIndex,
-        onDaySelect: nextIndex => {
+        onDaySelect: (nextIndex) => {
             selectedDayIndex = nextIndex;
             renderCurrentView();
         },
@@ -98,7 +89,7 @@ async function executeSearch(city) {
         renderCurrentView();
 
         fetchMlEnrichment(currentCity, payload)
-            .then(enrichment => {
+            .then((enrichment) => {
                 if (!enrichment) return;
                 if (searchToken !== latestSearchToken) return;
                 currentPayload = applyMlEnrichment(currentPayload, enrichment);
@@ -109,7 +100,7 @@ async function executeSearch(city) {
             });
 
         fetchWeatherAdvanced(currentCity)
-            .then(advancedPayload => {
+            .then((advancedPayload) => {
                 if (!advancedPayload) return;
                 if (searchToken !== latestSearchToken) return;
                 currentPayload = { ...currentPayload, advanced: advancedPayload.advanced };
@@ -148,7 +139,7 @@ function renderSavedCities() {
 
     renderChipList("favoritesList", getFavorites(), executeSearch);
     renderChipList("recentList", recents, executeSearch, {
-        onRemove: city => {
+        onRemove: (city) => {
             removeRecent(city.name);
             renderSavedCities();
         },
@@ -208,7 +199,7 @@ function initLeafletMap(lat, lon, name) {
 }
 
 function openMap() {
-    if (!currentCity || !currentCity.lat || !currentCity.lon) return;
+    if (!currentCity?.lat || !currentCity?.lon) return;
 
     document.getElementById("mapCityName").textContent = currentCity.name;
     document.getElementById("mapSection").classList.add("open");
@@ -264,7 +255,7 @@ function registerPwa() {
     if (isLocalDevelopment) {
         navigator.serviceWorker
             .getRegistrations()
-            .then(registrations => Promise.all(registrations.map(registration => registration.unregister())))
+            .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
             .catch(() => {});
         return;
     }
@@ -278,12 +269,12 @@ function registerPwa() {
         window.location.reload();
     };
 
-    const activateWaitingWorker = worker => {
+    const activateWaitingWorker = (worker) => {
         if (!worker) return;
         worker.postMessage({ type: "SKIP_WAITING" });
     };
 
-    const trackInstallingWorker = worker => {
+    const trackInstallingWorker = (worker) => {
         if (!worker) return;
         worker.addEventListener("statechange", () => {
             if (worker.state === "installed" && navigator.serviceWorker.controller) {
@@ -296,7 +287,7 @@ function registerPwa() {
 
     navigator.serviceWorker
         .register("/service-worker.js", { updateViaCache: "none" })
-        .then(registration => {
+        .then((registration) => {
             registrationRef = registration;
             trackInstallingWorker(registration.installing);
             activateWaitingWorker(registration.waiting);
@@ -375,7 +366,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     registerCityInputWakeUp(input);
 
     searchBtn.addEventListener("click", searchFromInput);
-    input.addEventListener("keypress", event => {
+    input.addEventListener("keypress", (event) => {
         if (event.key === "Enter") searchFromInput();
     });
 

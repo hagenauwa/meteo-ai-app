@@ -1,4 +1,5 @@
 """Test endpoint supporter donations."""
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
@@ -120,15 +121,19 @@ def test_checkout_session_returns_stripe_url(monkeypatch):
 def test_confirm_session_creates_supporter_token(monkeypatch):
     fake_db = FakeDb()
     monkeypatch.setattr(supporters_service, "settings", fake_settings())
-    monkeypatch.setattr(stripe.checkout.Session, "retrieve", lambda session_id: {
-        "id": session_id,
-        "payment_status": "paid",
-        "customer_email": "supporter@example.com",
-        "amount_total": 100,
-        "currency": "eur",
-        "payment_intent": "pi_123",
-        "customer": "cus_123",
-    })
+    monkeypatch.setattr(
+        stripe.checkout.Session,
+        "retrieve",
+        lambda session_id: {
+            "id": session_id,
+            "payment_status": "paid",
+            "customer_email": "supporter@example.com",
+            "amount_total": 100,
+            "currency": "eur",
+            "payment_intent": "pi_123",
+            "customer": "cus_123",
+        },
+    )
     app.dependency_overrides[get_db] = override_db(fake_db)
 
     try:
@@ -176,7 +181,9 @@ def test_status_recognizes_existing_supporter(monkeypatch):
     app.dependency_overrides[get_db] = override_db(fake_db)
 
     try:
-        response = client.get("/api/supporters/status", headers={"x-supporter-token": token_value, "user-agent": "pytest-browser"})
+        response = client.get(
+            "/api/supporters/status", headers={"x-supporter-token": token_value, "user-agent": "pytest-browser"}
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
 
