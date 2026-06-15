@@ -156,7 +156,13 @@ def _resolve_city_context(city: str, db: Session) -> CityResolution:
             ),
         )
 
-    if len(matches) > 1:
+    # Se c'e' un exact match, usa quello anche se il prefix match e' ambiguo
+    # (es. "Roma" vs "Romano di Lombardia").
+    q_lower = requested_city.lower()
+    exact_matches = [m for m in matches if cast(str, cast(object, m.name_lower)) == q_lower]
+    if len(exact_matches) == 1:
+        matches = exact_matches
+    elif len(matches) > 1:
         return _make_resolution(
             resolved=False,
             ambiguous=True,

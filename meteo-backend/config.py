@@ -39,7 +39,7 @@ def _as_int_csv(value: str | None, default: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(parsed) or default
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class Settings:
     app_env: str = "development"
     frontend_origin: str = "https://leprevisioni.netlify.app"
@@ -51,8 +51,8 @@ class Settings:
     cities_index_cache_seconds: int = 3600
     max_model_store_records: int = 5
     ml_v2_enabled: bool = True
-    ml_v2_shadow_only: bool = True
-    ml_v2_rollout_percent: int = 0
+    ml_v2_shadow_only: bool = False
+    ml_v2_rollout_percent: int = 100
     ml_kpi_window_days: int = 14
     ml_training_window_days: int = 30
     ml_training_max_rows: int = 60000
@@ -136,8 +136,8 @@ def load_settings() -> Settings:
         cities_index_cache_seconds=int(os.getenv("CITIES_INDEX_CACHE_SECONDS", "3600")),
         max_model_store_records=int(os.getenv("MAX_MODEL_STORE_RECORDS", "5")),
         ml_v2_enabled=_as_bool(os.getenv("ML_V2_ENABLED"), default=True),
-        ml_v2_shadow_only=_as_bool(os.getenv("ML_V2_SHADOW_ONLY"), default=True),
-        ml_v2_rollout_percent=max(0, min(100, int(os.getenv("ML_V2_ROLLOUT_PERCENT", "0")))),
+        ml_v2_shadow_only=_as_bool(os.getenv("ML_V2_SHADOW_ONLY"), default=False),
+        ml_v2_rollout_percent=max(0, min(100, int(os.getenv("ML_V2_ROLLOUT_PERCENT", "100")))),
         ml_kpi_window_days=max(3, int(os.getenv("ML_KPI_WINDOW_DAYS", "14"))),
         ml_training_window_days=max(3, int(os.getenv("ML_TRAINING_WINDOW_DAYS", "30"))),
         ml_training_max_rows=max(1000, int(os.getenv("ML_TRAINING_MAX_ROWS", "60000"))),

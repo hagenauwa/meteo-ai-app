@@ -223,37 +223,33 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
     with SessionLocal() as db:
         for obs in observations:
             observed_at = obs["observed_at"].replace(minute=0, second=0, microsecond=0)
-            result = db.execute(
-                text("""
-                    UPDATE ml_predictions
-                    SET actual_temp = :actual_temp,
-                        actual_precipitation = :actual_precipitation,
-                        actual_weather_code = :actual_weather_code,
-                        actual_cloud_cover = :actual_cloud_cover,
-                        actual_wind_speed = :actual_wind_speed,
-                        actual_wind_direction = :actual_wind_direction,
-                        error = :actual_temp - COALESCE(forecast_temp, predicted_temp),
-                        verified = :v_true,
-                        verified_at = :verified_at
-                    WHERE city_id = :city_id
-                      AND verified = :v_false
-                      AND target_time = :target_time
-                """),
-                {
-                    "actual_temp": obs["temp"],
-                    "actual_precipitation": obs.get("precipitation"),
-                    "actual_weather_code": obs.get("weather_code"),
-                    "actual_cloud_cover": obs.get("cloud_cover"),
-                    "actual_wind_speed": obs.get("wind_speed"),
-                    "actual_wind_direction": obs.get("wind_direction"),
-                    "verified_at": obs["observed_at"],
-                    "city_id": obs["city_id"],
-                    "target_time": observed_at,
-                    "v_true": True,
-                    "v_false": False,
-                },
+            # Normalizza a UTC naive per confronto con target_time salvato nel DB.
+            # SQLAlchemy ORM gestisce DateTime in modo omogeneo tra SQLite e PostgreSQL.
+            if observed_at.tzinfo is not None:
+                observed_at = observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+            pred = (
+                db.query(MlPrediction)
+                .filter(
+                    MlPrediction.city_id == obs["city_id"],
+                    MlPrediction.verified.is_(False),
+                    MlPrediction.target_time == observed_at,
+                )
+                .first()
             )
-            verified_count += result.rowcount
+            if pred is None:
+                continue
+
+            pred.actual_temp = obs["temp"]
+            pred.actual_precipitation = obs.get("precipitation")
+            pred.actual_weather_code = obs.get("weather_code")
+            pred.actual_cloud_cover = obs.get("cloud_cover")
+            pred.actual_wind_speed = obs.get("wind_speed")
+            pred.actual_wind_direction = obs.get("wind_direction")
+            pred.error = obs["temp"] - (pred.forecast_temp if pred.forecast_temp is not None else pred.predicted_temp)
+            pred.verified = True
+            pred.verified_at = obs["observed_at"]
+            verified_count += 1
 
         db.commit()
         avg_error = db.execute(
@@ -470,9 +466,11 @@ async def hourly_cycle():
         training_state = await asyncio.to_thread(_db_read_training_state)
         last_training_iso = training_state.get("last_successful_train_at")
         last_training = datetime.fromisoformat(last_training_iso) if last_training_iso else None
-        verified_at_last_train = int(training_state.get("verified_count_at_last_train") or 0)
+        # Non usare verified_count_at_last_train per il gate: le predizioni verificate
+        # vengono cancellate dalla retention, quindi total_verified puo' diminuire.
+        # Contare i verificati dall'ultimo training e' robusto alla retention.
         if last_training is None:
-            new_verified_since_last = max(0, total_verified - verified_at_last_train)
+            new_verified_since_last = total_verified
         else:
             new_verified_since_last = await asyncio.to_thread(_db_count_verified_since, last_training)
         model_ready = bool(ml_model.get_public_summary().get("model_ready"))

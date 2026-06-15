@@ -39,7 +39,7 @@ RAIN_WEATHER_CODES = {
 STATS_CACHE_TTL_SECONDS = 45
 MODEL_VERSION_CHECK_TTL_SECONDS = 90
 MAX_KPI_EVAL_ROWS = 2500
-SHADOW_REQUIRED_STREAK = 3
+SHADOW_REQUIRED_STREAK = 1  # ridotto per permettere il rollout di v2 appena passa un gate
 RECENCY_HALF_LIFE_DAYS = 21
 MIN_TEMPERATURE_MAE_IMPROVEMENT_C = 0.05
 MIN_TEMPERATURE_MAE_IMPROVEMENT_RATIO = 0.03
@@ -606,7 +606,11 @@ def _can_use_v2_live() -> bool:
 
 
 def _resolve_live_model_variant(city_name: str | None = None) -> str:
-    if not _can_use_v2_live():
+    # Non bloccare v2 per runtime_force_v1: la scelta di usare v2 o meno e'
+    # demandata alle singole funzioni di predict in base ai modelli caricati.
+    if not settings.ml_v2_enabled:
+        return "v1"
+    if settings.ml_v2_shadow_only:
         return "v1"
 
     rollout = max(0, min(100, settings.ml_v2_rollout_percent))
@@ -1167,6 +1171,23 @@ def is_city_in_ml_coverage(province: str | None) -> bool:
     return _normalise_province(province) in allowed
 
 
+def _to_naive_utc(value: datetime) -> datetime:
+    """Normalizza un datetime a UTC naive per coerenza con SQLite/PostgreSQL.
+
+    SQLite non conserva l'offset; PostgreSQL si. Uniformiamo a UTC naive
+    prima di salvare/confrontare per evitare mismatch.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _to_naive_utc_optional(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return _to_naive_utc(value)
+
+
 def _prepare_training_rows(
     db: Session,
     *,
@@ -1208,7 +1229,7 @@ def _prepare_training_rows(
     if window_start is not None:
         query = query.filter(
             MlPrediction.verified_at.isnot(None),
-            MlPrediction.verified_at >= window_start,
+            MlPrediction.verified_at >= _to_naive_utc(window_start),
         )
 
     if allowed_provinces:
@@ -1231,8 +1252,8 @@ def _prepare_training_rows(
 
         forecast_temp = row.forecast_temp if row.forecast_temp is not None else row.predicted_temp
         prepared.append({
-            "target_time": target_time,
-            "verified_at": row.verified_at,
+            "target_time": _to_naive_utc(target_time),
+            "verified_at": _to_naive_utc_optional(row.verified_at),
             "forecast_temp": forecast_temp,
             "humidity": row.humidity,
             "hour": target_time.hour,
@@ -2362,7 +2383,7 @@ def train(min_samples: int = 100) -> dict:
             "condition_platt_v2": condition_platt_v2,
         }
         window_start = datetime.now(timezone.utc) - timedelta(days=settings.ml_kpi_window_days)
-        backtest_rows = [row for row in rows if row["target_time"] >= window_start][-MAX_KPI_EVAL_ROWS:]
+        backtest_rows = [row for row in rows if row["target_time"] >= _to_naive_utc(window_start)][-MAX_KPI_EVAL_ROWS:]
         if len(backtest_rows) >= 200:
             if rain_pipeline is not None:
                 blend_profile_v1 = _compute_blend_profile(backtest_rows, "v1", backtest_pipelines)
@@ -3197,7 +3218,7 @@ def get_stats() -> dict:
             .all()
         )
 
-        window_start = now - timedelta(days=settings.ml_kpi_window_days)
+        window_start = _to_naive_utc(now - timedelta(days=settings.ml_kpi_window_days))
         temp_mae_window_rows = (
             db.query(
                 MlPrediction.lead_hours,

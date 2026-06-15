@@ -1,47 +1,50 @@
-"""Shared pytest test-suite setup for backend tests."""
-
+"""Pytest fixtures per il backend meteo-ai-app."""
 from __future__ import annotations
 
 import os
 import tempfile
-from pathlib import Path
-from typing import Iterator
+from collections.abc import Generator
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+# Usa un file temporaneo condiviso invece di :memory: perche' il codice del
+# backend crea nuove SessionLocal() in molti punti e :memory: e' isolato per
+# connessione.
+_db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+TEST_DATABASE_URL = f"sqlite:///{_db_file.name}"
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+
+from database import Base  # noqa: E402
 
 
-# Radice temp portabile: evita path assoluti user-specific che, sotto runner
-# POSIX, verrebbero trattati come relativi e creerebbero una cartella spuria
-# "C:" dentro il repo.
-PYTEST_TEMP_ROOT = Path(tempfile.gettempdir()) / "meteo-ai-pytest"
-PYTEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
-os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", str(PYTEST_TEMP_ROOT))
+@pytest.fixture(scope="function")
+def db_engine() -> Generator:
+    """Engine SQLite temporaneo fresco per ogni test."""
+    from database import DATABASE_URL
+
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
+    yield engine
+    Base.metadata.drop_all(engine)
+    engine.dispose()
 
 
-def _find_rate_limit_middleware():
-    from main import app
-    from rate_limiter import RateLimitMiddleware
-
-    if app.middleware_stack is None:
-        app.middleware_stack = app.build_middleware_stack()
-
-    current = app.middleware_stack
-    while current is not None:
-        if isinstance(current, RateLimitMiddleware):
-            return current
-        current = getattr(current, "app", None)
-    return None
+@pytest.fixture(scope="function")
+def db_session(db_engine) -> Generator:
+    """Sessione DB legata a un engine temporaneo."""
+    Session = sessionmaker(bind=db_engine)
+    session = Session()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
-@pytest.fixture(autouse=True)
-def reset_rate_limiter_state() -> Iterator[None]:
-    middleware = _find_rate_limit_middleware()
-    if middleware is not None:
-        with middleware._lock:
-            middleware._requests.clear()
-
+@pytest.fixture(scope="function", autouse=True)
+def _cleanup_db_file() -> Generator:
     yield
-
-    if middleware is not None:
-        with middleware._lock:
-            middleware._requests.clear()
+    # Tronca il file DB tra i test per evitare interferenze.
+    _db_file.seek(0)
+    _db_file.truncate()
