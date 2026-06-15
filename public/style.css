@@ -627,8 +627,9 @@ body {
     background: linear-gradient(180deg, rgba(245, 158, 11, 0.12), rgba(255, 255, 255, 0.72));
 }
 
-.selected-day-visual i {
-    font-size: 3.8rem;
+.selected-day-visual .weather-icon {
+    width: 86px;
+    height: 86px;
 }
 
 .selected-day-copy {
@@ -716,8 +717,10 @@ body {
     text-align: center;
 }
 
-.snapshot-icon-wrap i {
-    font-size: 3rem;
+.snapshot-icon-wrap .weather-icon {
+    width: 76px;
+    height: 76px;
+    margin: 0 auto;
 }
 
 .snapshot-icon-wrap p {
@@ -759,54 +762,32 @@ body {
     font-size: 0.9rem;
 }
 
-.hour-card i {
-    margin: 12px 0;
-    font-size: 1.6rem;
+.hour-card .weather-icon {
+    width: 42px;
+    height: 42px;
+    margin: 10px auto;
 }
 
-.weather-icon--sun {
-    color: var(--sun);
+.weather-icon {
+    display: inline-block;
+    width: 1.6em;
+    height: 1.6em;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    vertical-align: middle;
+    filter: drop-shadow(0 10px 14px rgba(15, 23, 42, 0.14));
 }
 
-.weather-icon--night {
-    color: var(--weather-night);
-}
-
-.weather-icon--partly-cloudy {
-    background: linear-gradient(45deg, var(--weather-cloud) 45%, var(--sun) 65%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
-.weather-icon--partly-cloudy-night {
-    background: linear-gradient(45deg, var(--weather-cloud) 45%, var(--weather-night) 65%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
-.weather-icon--cloud {
-    color: var(--weather-cloud);
-}
-
-.weather-icon--rain {
-    background: linear-gradient(to bottom, var(--weather-cloud) 48%, var(--weather-rain) 58%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
+.weather-icon--night,
 .weather-icon--storm {
-    color: var(--weather-storm);
+    filter: drop-shadow(0 10px 16px rgba(15, 23, 42, 0.22));
 }
 
-.weather-icon--snow {
-    color: var(--weather-snow);
-}
-
+.weather-icon--rain,
+.weather-icon--snow,
 .weather-icon--fog {
-    color: var(--weather-fog);
+    filter: drop-shadow(0 8px 12px rgba(14, 116, 144, 0.16));
 }
 
 .hour-card .temp {

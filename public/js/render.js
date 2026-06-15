@@ -1,4 +1,4 @@
-import { WEATHER_ICONS } from "./config.js";
+import { WEATHER_ICON_ASSETS } from "./config.js";
 
 const CLOUDY_ICON_CODES = new Set(["02d", "02n", "03d", "03n", "04d", "04n"]);
 
@@ -22,19 +22,19 @@ function resolveWeatherVisual({ iconCode, rainProbability = 0, preferRainIcon = 
         resolvedIconCode = isNightIcon(resolvedIconCode) ? "10n" : "10d";
     }
 
-    const iconClass = WEATHER_ICONS[resolvedIconCode] || "fa-cloud";
+    const iconPath = WEATHER_ICON_ASSETS[resolvedIconCode] || WEATHER_ICON_ASSETS.unknown;
 
     if (resolvedIconCode === "01d") {
-        return { iconClass, tone: "sun" };
+        return { iconPath, tone: "sun" };
     }
     if (resolvedIconCode === "01n") {
-        return { iconClass, tone: "night" };
+        return { iconPath, tone: "night" };
     }
     if (resolvedIconCode === "02d") {
-        return { iconClass, tone: "partly-cloudy" };
+        return { iconPath, tone: "partly-cloudy" };
     }
     if (resolvedIconCode === "02n") {
-        return { iconClass, tone: "partly-cloudy-night" };
+        return { iconPath, tone: "partly-cloudy-night" };
     }
     if (
         resolvedIconCode === "03d" ||
@@ -42,7 +42,7 @@ function resolveWeatherVisual({ iconCode, rainProbability = 0, preferRainIcon = 
         resolvedIconCode === "04d" ||
         resolvedIconCode === "04n"
     ) {
-        return { iconClass, tone: "cloud" };
+        return { iconPath, tone: "cloud" };
     }
     if (
         resolvedIconCode === "09d" ||
@@ -50,19 +50,19 @@ function resolveWeatherVisual({ iconCode, rainProbability = 0, preferRainIcon = 
         resolvedIconCode === "10d" ||
         resolvedIconCode === "10n"
     ) {
-        return { iconClass, tone: "rain" };
+        return { iconPath, tone: "rain" };
     }
     if (resolvedIconCode === "11d" || resolvedIconCode === "11n") {
-        return { iconClass, tone: "storm" };
+        return { iconPath, tone: "storm" };
     }
     if (resolvedIconCode === "13d" || resolvedIconCode === "13n") {
-        return { iconClass, tone: "snow" };
+        return { iconPath, tone: "snow" };
     }
     if (resolvedIconCode === "50d" || resolvedIconCode === "50n") {
-        return { iconClass, tone: "fog" };
+        return { iconPath, tone: "fog" };
     }
 
-    return { iconClass, tone: "cloud" };
+    return { iconPath, tone: "cloud" };
 }
 
 function formatDate(date, options = {}) {
@@ -96,8 +96,11 @@ function formatShortDate(date) {
 
 function applyWeatherVisual(node, options) {
     if (!node) return;
-    const { iconClass, tone } = resolveWeatherVisual(options);
-    node.className = `fas weather-icon weather-icon--${tone} ${iconClass}`;
+    const { iconPath, tone } = resolveWeatherVisual(options);
+    node.className = `weather-icon weather-icon--${tone}`;
+    node.style.backgroundImage = `url("${iconPath}")`;
+    node.setAttribute("role", "img");
+    node.setAttribute("aria-label", "Icona condizione meteo");
 }
 
 function getRelativeDayLabel(index, date) {
@@ -278,7 +281,7 @@ function renderHourlyDetail(selectedDay, hourly) {
     hoursForDay.forEach((hour) => {
         const card = document.createElement("article");
         card.className = "hour-card";
-        const { iconClass, tone } = resolveWeatherVisual({
+        const { iconPath, tone } = resolveWeatherVisual({
             iconCode: hour.weather?.[0]?.icon,
             rainProbability: hour.pop || 0,
             preferRainIcon: true,
@@ -287,8 +290,11 @@ function renderHourlyDetail(selectedDay, hourly) {
         timeSpan.className = "time";
         timeSpan.textContent = formatTime(hour.dt);
 
-        const weatherIcon = document.createElement("i");
-        weatherIcon.className = `fas weather-icon weather-icon--${tone} ${iconClass}`;
+        const weatherIcon = document.createElement("span");
+        weatherIcon.className = `weather-icon weather-icon--${tone}`;
+        weatherIcon.style.backgroundImage = `url("${iconPath}")`;
+        weatherIcon.setAttribute("role", "img");
+        weatherIcon.setAttribute("aria-label", hour.weather?.[0]?.description || "Icona condizione meteo");
 
         const tempStrong = document.createElement("strong");
         tempStrong.className = "temp";

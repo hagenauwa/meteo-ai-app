@@ -1,4 +1,4 @@
-const CACHE_NAME = "le-previsioni-static-v20-no-push";
+const CACHE_NAME = "le-previsioni-static-v21-weather-icons";
 const STATIC_ASSETS = [
     "/",
     "/index.html",
@@ -16,6 +16,20 @@ const STATIC_ASSETS = [
     "/icons/favicon-32.png",
     "/icons/icon-192.png",
     "/icons/icon-512.png",
+    "/icons/weather/clear-day.svg",
+    "/icons/weather/clear-night.svg",
+    "/icons/weather/partly-cloudy-day.svg",
+    "/icons/weather/partly-cloudy-night.svg",
+    "/icons/weather/cloudy.svg",
+    "/icons/weather/overcast.svg",
+    "/icons/weather/fog.svg",
+    "/icons/weather/drizzle.svg",
+    "/icons/weather/rain.svg",
+    "/icons/weather/heavy-rain.svg",
+    "/icons/weather/thunderstorm.svg",
+    "/icons/weather/snow.svg",
+    "/icons/weather/sleet.svg",
+    "/icons/weather/unknown.svg",
 ];
 
 async function updateCache(request, response) {
