@@ -522,6 +522,10 @@ async def get_rain_prediction(
     hour: int | None = Query(None),
     cloud_cover: float = Query(50.0),
     lead_hours: int = Query(0, ge=0, le=240),
+    forecast_precipitation: float | None = Query(None),
+    forecast_wind_speed: float | None = Query(None),
+    forecast_wind_direction: float | None = Query(None),
+    forecast_weather_code: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
     now = _rome_now()
@@ -545,6 +549,10 @@ async def get_rain_prediction(
         region=resolution["region"],
         cloud_cover=cloud_cover,
         lead_hours=lead_hours,
+        forecast_precipitation=forecast_precipitation,
+        forecast_wind_speed=forecast_wind_speed,
+        forecast_wind_direction=forecast_wind_direction,
+        forecast_weather_code=forecast_weather_code,
         city_name=city,
     )
 

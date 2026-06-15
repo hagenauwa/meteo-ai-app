@@ -249,7 +249,7 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
             pred.actual_wind_direction = obs.get("wind_direction")
             pred.error = obs["temp"] - (pred.forecast_temp if pred.forecast_temp is not None else pred.predicted_temp)
             pred.verified = True
-            pred.verified_at = obs["observed_at"]
+            pred.verified_at = observed_at
             verified_count += 1
 
         db.commit()
@@ -273,6 +273,8 @@ def _db_count_verified() -> int:
 def _db_count_verified_since(since: datetime | None) -> int:
     if since is None:
         return _db_count_verified()
+    if since.tzinfo is not None:
+        since = since.astimezone(timezone.utc).replace(tzinfo=None)
     with SessionLocal() as db:
         return (
             db.query(MlPrediction)
@@ -294,6 +296,33 @@ def _db_get_or_create_training_state(db) -> MlTrainingState:
         db.add(state)
         db.flush()
     return state
+
+
+def _should_retrain(
+    *,
+    total_verified: int,
+    new_verified_since_last: int,
+    last_training: datetime | None,
+    now: datetime,
+    model_ready: bool,
+) -> bool:
+    """Decide se avviare il training, senza farsi bloccare dalla retention.
+
+    La retention può cancellare righe verificate vecchie e far scendere
+    ``total_verified`` sotto la soglia storica. In quel caso il segnale robusto
+    è il numero di nuove verifiche dall'ultimo training.
+    """
+    has_enough_samples = (
+        total_verified >= MIN_VERIFIED_FOR_TRAINING
+        or new_verified_since_last >= settings.ml_min_new_verified_for_retrain
+    )
+    if not has_enough_samples:
+        return False
+
+    if last_training is not None and (now - last_training).total_seconds() < RETRAIN_EVERY_HOURS * 3600:
+        return False
+
+    return (not model_ready) or new_verified_since_last >= settings.ml_min_new_verified_for_retrain
 
 
 def _serialize_training_state(state: MlTrainingState) -> dict:
@@ -474,10 +503,12 @@ async def hourly_cycle():
         else:
             new_verified_since_last = await asyncio.to_thread(_db_count_verified_since, last_training)
         model_ready = bool(ml_model.get_public_summary().get("model_ready"))
-        should_retrain = (
-            total_verified >= MIN_VERIFIED_FOR_TRAINING
-            and (last_training is None or (now - last_training).total_seconds() >= RETRAIN_EVERY_HOURS * 3600)
-            and (not model_ready or new_verified_since_last >= settings.ml_min_new_verified_for_retrain)
+        should_retrain = _should_retrain(
+            total_verified=total_verified,
+            new_verified_since_last=new_verified_since_last,
+            last_training=last_training,
+            now=now,
+            model_ready=model_ready,
         )
 
         cycle_message = "retrain_skipped"
