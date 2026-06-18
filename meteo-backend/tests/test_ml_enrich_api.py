@@ -306,3 +306,39 @@ def test_ml_enrich_out_of_area_city_disables_ml(monkeypatch):
     assert payload["ml"]["enabled"] is False
     assert payload["ml"]["warning"]["code"] == "ML_OUT_OF_AREA"
     assert payload["daily_ml"] == []
+
+
+def test_ml_enrich_rejects_non_iso_dt_with_422(monkeypatch):
+    """Il field_validator su EnrichDayPayload.dt rifiuta formati non-ISO al
+    boundary (422) invece di far esplodere build_daily_insight nel serving."""
+    install_fake_db_override(app, get_db, [fake_city(name="Massa", **_COVERED)])
+    try:
+        response = client.post(
+            "/api/ml/enrich",
+            json={
+                "city": {
+                    "name": "Massa",
+                    "lat": 41.9,
+                    "lon": 12.5,
+                    "region": "Toscana",
+                    "province": "Massa-Carrara",
+                },
+                "current": {"temp": 15.1, "humidity": 86, "clouds": 42},
+                "daily": [
+                    {
+                        "dt": "10/04/2026",  # non-ISO -> deve essere rifiutato
+                        "temp": {"min": 10.0, "max": 20.0, "day": 15.0},
+                        "humidity": 60,
+                        "cloud_cover": 40,
+                        "wind_speed": 12,
+                        "wind_deg": 180,
+                        "pop": 0.2,
+                        "weather_code": 1,
+                    }
+                ],
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 422

@@ -134,3 +134,90 @@ async def test_rain_prediction_endpoint_passes_forecast_features_to_model(monkey
     assert captured["forecast_wind_direction"] == 210.0
     assert captured["forecast_weather_code"] == 61
     assert captured["city_name"] == "Massa"
+
+
+def test_db_verify_predictions_bulk_multi_city_dedup(tmp_path, monkeypatch):
+    """Bulk lookup: 2 citta x 2 target_times + 1 obs duplicata.
+
+    Verifica che (a) il bulk lookup matchi tutte le predizioni non verificate,
+    (b) un'osservazione duplicata su (city_id, target_time) non verifichi due
+    volte la stessa predizione (fix del double-count latente del .first() loop).
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'ml-bulk.db'}")
+    TestingSessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(scheduler, "SessionLocal", TestingSessionLocal)
+
+    t1 = datetime(2026, 6, 16, 10, 0, 0)
+    t2 = datetime(2026, 6, 16, 11, 0, 0)
+
+    with TestingSessionLocal() as db:
+        db.add(
+            City(
+                id=1,
+                name="Massa",
+                name_lower="massa",
+                region="Toscana",
+                province="Massa-Carrara",
+                lat=44.0,
+                lon=10.1,
+                locality_type="comune",
+            )
+        )
+        db.add(
+            City(
+                id=2,
+                name="Lucca",
+                name_lower="lucca",
+                region="Toscana",
+                province="Lucca",
+                lat=43.8,
+                lon=10.5,
+                locality_type="comune",
+            )
+        )
+        # 4 predizioni non verificate: 2 citta x 2 target_time
+        pred_id = 1
+        for cid in (1, 2):
+            for target in (t1, t2):
+                db.add(
+                    MlPrediction(
+                        id=pred_id,
+                        city_id=cid,
+                        predicted_at=target - timedelta(hours=1),
+                        target_time=target,
+                        lead_hours=1,
+                        predicted_temp=19.0,
+                        forecast_temp=20.0,
+                        humidity=80.0,
+                        verified=False,
+                    )
+                )
+                pred_id += 1
+        db.commit()
+
+    # 5 osservazioni: 4 univoche + 1 duplicata su (city_id=1, target_time=t1)
+    observations = []
+    for cid, target in [(1, t1), (1, t2), (2, t1), (2, t2), (1, t1)]:
+        observations.append(
+            {
+                "city_id": cid,
+                "observed_at": target.replace(tzinfo=timezone.utc, minute=23, second=45),
+                "temp": 21.5,
+                "precipitation": 1.2,
+                "weather_code": 61,
+                "cloud_cover": 90.0,
+                "wind_speed": 12.0,
+                "wind_direction": 180.0,
+            }
+        )
+
+    verified_count, _ = scheduler._db_verify_predictions(observations)
+
+    # 4 predizioni verificate, non 5: l'obs duplicata non deve contare due volte
+    assert verified_count == 4
+    with TestingSessionLocal() as db:
+        verified = db.query(MlPrediction).filter(MlPrediction.verified.is_(True)).all()
+        assert len(verified) == 4
+        # Nessuna predizione verificata due volte (verified_at impostato una sola volta)
+        assert all(p.verified_at is not None for p in verified)

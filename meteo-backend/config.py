@@ -49,6 +49,7 @@ class Settings:
     enable_scheduler: bool = True
     auto_load_cities: bool = True
     admin_api_token: str = ""
+    model_signing_key: str = ""
     cities_index_cache_seconds: int = 3600
     max_model_store_records: int = 5
     ml_v2_enabled: bool = True
@@ -136,6 +137,7 @@ def load_settings() -> Settings:
         enable_scheduler=_as_bool(os.getenv("ENABLE_SCHEDULER"), default=app_env == "production"),
         auto_load_cities=_as_bool(os.getenv("AUTO_LOAD_CITIES"), default=app_env == "production"),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", "").strip(),
+        model_signing_key=os.getenv("MODEL_SIGNING_KEY", "").strip(),
         cities_index_cache_seconds=int(os.getenv("CITIES_INDEX_CACHE_SECONDS", "3600")),
         max_model_store_records=int(os.getenv("MAX_MODEL_STORE_RECORDS", "5")),
         ml_v2_enabled=_as_bool(os.getenv("ML_V2_ENABLED"), default=True),

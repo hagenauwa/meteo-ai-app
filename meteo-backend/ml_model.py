@@ -52,7 +52,7 @@ RAIN_WEATHER_CODES = {
 STATS_CACHE_TTL_SECONDS = 45
 MODEL_VERSION_CHECK_TTL_SECONDS = 90
 MAX_KPI_EVAL_ROWS = 2500
-SHADOW_REQUIRED_STREAK = 1  # ridotto per permettere il rollout di v2 appena passa un gate
+SHADOW_REQUIRED_STREAK = 2  # richiede 2 finestre positive consecutive prima del rollout v2 live
 RECENCY_HALF_LIFE_DAYS = 21
 MIN_TEMPERATURE_MAE_IMPROVEMENT_C = 0.05
 MIN_TEMPERATURE_MAE_IMPROVEMENT_RATIO = 0.03
@@ -87,6 +87,7 @@ _condition_pipeline_v2: Optional[Pipeline] = None
 _rain_platt_v1: dict | None = None
 _rain_threshold_v1: float | None = None
 _rain_platt_v2: dict | None = None
+_rain_threshold_v2: float | None = None
 _condition_platt_v2: dict | None = None
 _label_encoder: Optional[LabelEncoder] = None
 _known_regions: list[str] = []
@@ -217,6 +218,7 @@ def _reset_loaded_model_state() -> None:
         _rain_platt_v1, \
         _rain_threshold_v1, \
         _rain_platt_v2, \
+        _rain_threshold_v2, \
         _condition_platt_v2
     global _label_encoder, _known_regions, _temperature_feature_variant, _blend_profiles
 
@@ -228,6 +230,7 @@ def _reset_loaded_model_state() -> None:
     _rain_platt_v1 = None
     _rain_threshold_v1 = None
     _rain_platt_v2 = None
+    _rain_threshold_v2 = None
     _condition_platt_v2 = None
     _label_encoder = None
     _known_regions = []
@@ -236,9 +239,14 @@ def _reset_loaded_model_state() -> None:
 
 
 def _signing_key() -> bytes | None:
-    token = getattr(settings, "admin_api_token", None)
-    if token:
-        return token.encode("utf-8")
+    # Chiave dedicata per la firma dei modelli ML, separata dall'admin_api_token
+    # per ridurre la superficie d'attacco (RCE via pickle firmato). Fallback a
+    # admin_api_token per backward-compat con modelli gia' firmati con quella.
+    # Nota: impostare MODEL_SIGNING_KEY ruota la chiave -> i modelli vecchi
+    # firmati con admin_api_token non validano piu' e vanno riaddestrati.
+    signing_key = getattr(settings, "model_signing_key", None) or getattr(settings, "admin_api_token", None)
+    if signing_key:
+        return signing_key.encode("utf-8")
     return None
 
 
@@ -266,6 +274,12 @@ def _decode_model_payload(blob: bytes) -> tuple[dict | None, bytes | None]:
     metadata = json.loads(header[len(MODEL_METADATA_PREFIX) :].decode("ascii"))
     sig = metadata.get("signature")
     key = _signing_key()
+    # In produzione la firma HMAC e' obbligatoria: pickle.loads su blob non
+    # verificati e' un vettore di RCE (un attaccante con accesso al DB potrebbe
+    # inserire un modello malevolo). In sviluppo restiamo permissivi per non
+    # obbligare a configurare token nei test locali.
+    if getattr(settings, "is_production", False) and (not key or not sig):
+        raise ValueError("unsigned_model_in_production")
     if key and sig:
         expected = hmac.new(key, payload, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, sig):
@@ -288,6 +302,8 @@ def _model_load_failure_status(exc: Exception) -> str:
     message = str(exc)
     if message == "invalid_model_signature":
         return "invalid_model_signature"
+    if message == "unsigned_model_in_production":
+        return "unsigned_model_in_production"
     return "corrupt_model_blob"
 
 
@@ -797,7 +813,7 @@ def _pipeline_feature_count(pipeline: Pipeline | None) -> int | None:
         if count is not None:
             return int(count)
 
-        scaler = getattr(pipeline, "named_steps", {}).get("scaler") if hasattr(pipeline, "named_steps") else None
+        scaler = getattr(pipeline, "named_steps", {}).get("scaler")
         if scaler is not None and getattr(scaler, "n_features_in_", None) is not None:
             return int(scaler.n_features_in_)
     except Exception:
@@ -1791,8 +1807,9 @@ def _train_rain_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
     platt = _fit_platt_scaler(raw_probs, y_val)
     calibrated = np.array([_apply_platt(float(prob), platt) for prob in raw_probs], dtype=float)
 
-    preds = (calibrated >= 0.5).astype(int)
-    f1 = float(f1_score(y_val, preds, zero_division=0))
+    # Soglia ottimale su F1 (coerente con v1): la 0.5 è inadatta agli eventi rari
+    # e renderebbe il confronto v1/v2 asimmetrico nel gate di promozione.
+    threshold, f1 = _optimal_f1_threshold(calibrated, y_val)
     brier = float(np.mean((calibrated - y_val) ** 2))
 
     baseline_prob = float(np.mean(y_train)) if len(y_train) else 0.5
@@ -1818,6 +1835,7 @@ def _train_rain_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
         "success": True,
         "pipeline": pipeline,
         "platt": platt,
+        "threshold": threshold,
         "brier": brier,
         "baseline_brier": baseline_brier,
         "f1": f1,
@@ -2376,6 +2394,7 @@ def train(min_samples: int = 100) -> dict:
         _rain_platt_v1, \
         _rain_threshold_v1, \
         _rain_platt_v2, \
+        _rain_threshold_v2, \
         _condition_platt_v2
     global _latest_summary, _temperature_feature_variant, _blend_profiles
     global _loaded_model_store_id, _loaded_model_trained_at, _last_model_version_check_at
@@ -2463,6 +2482,7 @@ def train(min_samples: int = 100) -> dict:
         rain_pipeline_v2 = rain_v2_result["pipeline"] if rain_v2_result.get("success") else None
         condition_pipeline_v2 = condition_v2_result["pipeline"] if condition_v2_result.get("success") else None
         rain_platt_v2 = rain_v2_result.get("platt") if rain_pipeline_v2 is not None else None
+        rain_threshold_v2 = rain_v2_result.get("threshold") if rain_pipeline_v2 is not None else None
         condition_platt_v2 = condition_v2_result.get("platt") if condition_pipeline_v2 is not None else None
 
         # Backtest automatico rolling sugli ultimi N giorni prima della promozione v2.
@@ -2577,6 +2597,7 @@ def train(min_samples: int = 100) -> dict:
             "rain_pipeline_v2": rain_pipeline_v2,
             "condition_pipeline_v2": condition_pipeline_v2,
             "rain_platt_v2": rain_platt_v2,
+            "rain_threshold_v2": rain_threshold_v2,
             "condition_platt_v2": condition_platt_v2,
             "blend_profiles": {
                 "v1": blend_profile_v1,
@@ -2613,6 +2634,7 @@ def train(min_samples: int = 100) -> dict:
         _rain_platt_v1 = rain_platt_v1
         _rain_threshold_v1 = rain_threshold_v1
         _rain_platt_v2 = rain_platt_v2
+        _rain_threshold_v2 = rain_threshold_v2
         _condition_platt_v2 = condition_platt_v2
         _temperature_feature_variant = temperature_feature_variant
         _blend_profiles = {
@@ -2688,6 +2710,7 @@ def load_latest_model() -> bool:
         _rain_platt_v1, \
         _rain_threshold_v1, \
         _rain_platt_v2, \
+        _rain_threshold_v2, \
         _condition_platt_v2
     global _label_encoder, _known_regions, _latest_summary, _temperature_feature_variant, _blend_profiles
     global _loaded_model_store_id, _loaded_model_trained_at, _last_model_version_check_at
@@ -2749,6 +2772,7 @@ def load_latest_model() -> bool:
                 _rain_platt_v1 = data.get("rain_platt_v1")
                 _rain_threshold_v1 = data.get("rain_threshold_v1")
                 _rain_platt_v2 = data.get("rain_platt_v2")
+                _rain_threshold_v2 = data.get("rain_threshold_v2")
                 _condition_platt_v2 = data.get("condition_platt_v2")
                 _temperature_feature_variant = _infer_temperature_feature_variant_from_pipeline(
                     data.get("temperature_feature_variant", "v1")
@@ -2955,11 +2979,13 @@ def predict_rain_probability(
             )
             raw_prob = float(_rain_pipeline_v2.predict_proba(features)[0][1])
             rain_prob = float(_apply_platt(raw_prob, _rain_platt_v2))
+            threshold = float(_rain_threshold_v2) if _rain_threshold_v2 is not None else 0.5
             confidence = _empirical_confidence(_confidence_from_score(abs(rain_prob - 0.5) * 2), lead_hours)
 
             return {
                 "rain_probability": round(rain_prob, 3),
-                "will_rain": rain_prob >= 0.5,
+                "will_rain": rain_prob >= threshold,
+                "rain_threshold": round(threshold, 3),
                 "model_ready": True,
                 "confidence": confidence,
                 "model_variant": "v2",

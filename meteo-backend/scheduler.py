@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.base import SchedulerAlreadyRunningError, SchedulerNotRunningError
@@ -17,6 +18,8 @@ from config import settings
 from database import City, MlModelStore, MlPrediction, MlTrainingState, SessionLocal, WeatherObservation
 from weather_service import fetch_all_cities_weather
 import ml_model
+
+logger = logging.getLogger(__name__)
 
 MIN_VERIFIED_FOR_TRAINING = 500
 RETRAIN_EVERY_HOURS = 6
@@ -220,37 +223,63 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
     if not observations:
         return 0, 0.0
 
+    # Pre-normalizza observed_at a UTC naive per il match con target_time nel DB.
+    # SQLAlchemy ORM gestisce DateTime in modo omogeneo tra SQLite e PostgreSQL.
+    normalized: list[tuple[dict, datetime]] = []
+    for obs in observations:
+        observed_at = obs["observed_at"].replace(minute=0, second=0, microsecond=0)
+        if observed_at.tzinfo is not None:
+            observed_at = observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+        normalized.append((obs, observed_at))
+
+    city_ids = sorted({int(obs["city_id"]) for obs, _ in normalized})
+    target_times = sorted({at for _, at in normalized})
+
     verified_count = 0
     with SessionLocal() as db:
-        for obs in observations:
-            observed_at = obs["observed_at"].replace(minute=0, second=0, microsecond=0)
-            # Normalizza a UTC naive per confronto con target_time salvato nel DB.
-            # SQLAlchemy ORM gestisce DateTime in modo omogeneo tra SQLite e PostgreSQL.
-            if observed_at.tzinfo is not None:
-                observed_at = observed_at.astimezone(timezone.utc).replace(tzinfo=None)
-
-            pred = (
-                db.query(MlPrediction)
-                .filter(
-                    MlPrediction.city_id == obs["city_id"],
-                    MlPrediction.verified.is_(False),
-                    MlPrediction.target_time == observed_at,
-                )
-                .first()
+        # Bulk lookup: una sola query invece di N (pattern N+1 -> 1).
+        candidates = (
+            db.query(MlPrediction)
+            .filter(
+                MlPrediction.city_id.in_(city_ids),
+                MlPrediction.target_time.in_(target_times),
+                MlPrediction.verified.is_(False),
             )
+            .all()
+        )
+        # Primo match per (city_id, target_time) replicando la semantica .first()
+        index: dict[tuple[int, datetime], MlPrediction] = {}
+        for pred in sorted(candidates, key=lambda p: int(p.id)):
+            index.setdefault((int(pred.city_id), pred.target_time), pred)
+
+        for obs, observed_at in normalized:
+            key = (int(obs["city_id"]), observed_at)
+            pred = index.get(key)
             if pred is None:
                 continue
-
-            pred.actual_temp = obs["temp"]
-            pred.actual_precipitation = obs.get("precipitation")
-            pred.actual_weather_code = obs.get("weather_code")
-            pred.actual_cloud_cover = obs.get("cloud_cover")
-            pred.actual_wind_speed = obs.get("wind_speed")
-            pred.actual_wind_direction = obs.get("wind_direction")
-            pred.error = obs["temp"] - (pred.forecast_temp if pred.forecast_temp is not None else pred.predicted_temp)
-            pred.verified = True
-            pred.verified_at = observed_at
-            verified_count += 1
+            try:
+                pred.actual_temp = obs["temp"]
+                pred.actual_precipitation = obs.get("precipitation")
+                pred.actual_weather_code = obs.get("weather_code")
+                pred.actual_cloud_cover = obs.get("cloud_cover")
+                pred.actual_wind_speed = obs.get("wind_speed")
+                pred.actual_wind_direction = obs.get("wind_direction")
+                pred.error = obs["temp"] - (
+                    pred.forecast_temp if pred.forecast_temp is not None else pred.predicted_temp
+                )
+                pred.verified = True
+                pred.verified_at = observed_at
+                verified_count += 1
+                # Evita che un secondo obs con la stessa key verifichi di nuovo
+                del index[key]
+            except Exception as exc:
+                logger.warning(
+                    "verify_pred_failed city_id=%s target_time=%s err=%s",
+                    obs["city_id"],
+                    observed_at,
+                    exc,
+                )
+                continue
 
         db.commit()
         avg_error = db.execute(
@@ -378,9 +407,7 @@ def _db_read_training_state() -> dict:
             db.commit()
             return _serialize_training_state(state)
     except Exception as exc:
-        import logging
-
-        logging.getLogger(__name__).warning("Failed to read training state from DB: %s", exc)
+        logger.warning("Failed to read training state from DB: %s", exc)
         return _empty_training_state()
 
 

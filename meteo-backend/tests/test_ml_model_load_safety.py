@@ -316,3 +316,91 @@ def test_valid_model_fixture_keeps_public_ml_ready_without_disabled_status(isola
     assert rain["warning_status"] is None
     assert condition["warning_status"] is None
     assert stats_payload["model_status"] == "loaded"
+
+
+def test_signing_key_prefers_model_signing_key_over_admin_api_token(monkeypatch):
+    """_signing_key() deve preferire model_signing_key con fallback a admin_api_token."""
+    # Caso 1: solo model_signing_key impostata
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="dedicated-key", admin_api_token="admin-key"),
+    )
+    assert ml_model._signing_key() == b"dedicated-key"
+
+    # Caso 2: model_signing_key vuota -> fallback a admin_api_token
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="", admin_api_token="admin-key"),
+    )
+    assert ml_model._signing_key() == b"admin-key"
+
+    # Caso 3: entrambe vuote -> None (pickle non firmato, vettore preesistente)
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="", admin_api_token=""),
+    )
+    assert ml_model._signing_key() is None
+
+
+def test_model_signing_key_rotation_invalidates_models_signed_with_admin_token(isolated_model_store, monkeypatch):
+    """Impostare MODEL_SIGNING_KEY ruota la chiave: un modello firmato con
+    admin_api_token non valida piu' (breaking change documentato in render.yaml)."""
+    # Firma con admin_api_token
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="", admin_api_token="admin-key"),
+    )
+    monkeypatch.setattr(ml_model.sklearn, "__version__", "1.6.1")
+    encoded_with_admin = ml_model._encode_model_payload(_valid_payload(sklearn_version="1.6.1"))
+    _insert_model_record(isolated_model_store, encoded_with_admin)
+
+    # Ruota a MODEL_SIGNING_KEY dedicata
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="dedicated-key", admin_api_token="admin-key"),
+    )
+
+    loaded = ml_model.load_latest_model()
+
+    # Il modello firmato con admin-key non valida con dedicated-key -> load fallisce
+    assert loaded is False
+    summary = ml_model.get_public_summary()
+    assert summary["model_status"] == "disabled"
+    assert summary["model_load_warning"] == "invalid_model_signature"
+
+
+def test_decode_model_payload_rejects_unsigned_blob_in_production(monkeypatch):
+    """In produzione, un blob senza signature deve essere rifiutato (RCE prevention).
+    Copre il fix del vettore preesistente: pickle.loads su blob non verificati."""
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="", admin_api_token="", is_production=True),
+    )
+    # _signing_key() ritorna None (entrambe le chiavi vuote) -> encode non firma
+    monkeypatch.setattr(ml_model, "_signing_key", lambda: None)
+    encoded = ml_model._encode_model_payload(_valid_payload(sklearn_version="1.6.1"))
+
+    with pytest.raises(ValueError, match="unsigned_model_in_production"):
+        ml_model._decode_model_payload(encoded)
+
+
+def test_decode_model_payload_allows_unsigned_blob_in_development(monkeypatch):
+    """In sviluppo, i blob senza signature restano permessi (backward-compat per
+    test locali senza token configurati)."""
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="", admin_api_token="", is_production=False),
+    )
+    monkeypatch.setattr(ml_model, "_signing_key", lambda: None)
+    encoded = ml_model._encode_model_payload(_valid_payload(sklearn_version="1.6.1"))
+
+    metadata, payload_bytes = ml_model._decode_model_payload(encoded)
+    assert metadata is not None
+    assert payload_bytes is not None

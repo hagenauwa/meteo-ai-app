@@ -12,6 +12,14 @@ services:
         sync: false        # imposta manualmente su Render dashboard
       - key: ADMIN_API_TOKEN
         sync: false        # richiesto per /api/admin/* e /api/ml/train
+      - key: MODEL_SIGNING_KEY
+        sync: false        # chiave dedicata firma modelli ML (HMAC su pickle).
+                           # ATTENZIONE: impostandola si ruota la chiave di firma ->
+                           # i modelli esistenti firmati con ADMIN_API_TOKEN non
+                           # validano piu' e il ML si disabilita fino al riaddestramento.
+                           # Al primo deploy con questa var impostata, lanciare un
+                           # /api/ml/train subito dopo. Se non impostata, fallback a
+                           # ADMIN_API_TOKEN (backward-compat).
       - key: FRONTEND_ORIGIN
         value: "https://leprevisioni.netlify.app"
       - key: APP_ENV

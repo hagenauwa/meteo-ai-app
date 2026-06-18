@@ -298,6 +298,76 @@ def test_predict_rain_probability_uses_v2_when_v1_is_not_available(monkeypatch):
     assert result["rain_probability"] == 0.7
 
 
+def test_predict_rain_probability_v2_uses_optimal_threshold(monkeypatch):
+    """La soglia v2 ottimizzata (non 0.5 fissa) deve guidare will_rain ed essere
+    esposta in response. Copre il fix dell'asimmetria v1/v2."""
+
+    class FakeRainV2Pipeline:
+        def predict_proba(self, features):
+            return np.array([[0.3, 0.7]])
+
+    monkeypatch.setattr(ml_model, "_rain_pipeline", None)
+    monkeypatch.setattr(ml_model, "_rain_pipeline_v2", FakeRainV2Pipeline())
+    monkeypatch.setattr(ml_model, "_rain_platt_v2", None)
+    monkeypatch.setattr(ml_model, "_rain_threshold_v2", 0.35)
+    monkeypatch.setattr(ml_model, "_ensure_latest_model_loaded", lambda **kwargs: None)
+
+    result = ml_model.predict_rain_probability(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        cloud_cover=45.0,
+        lead_hours=72,
+        forecast_precipitation=0.4,
+        forecast_wind_speed=18.0,
+        forecast_wind_direction=180.0,
+        forecast_weather_code=61,
+    )
+
+    assert result["model_ready"] is True
+    assert result["model_variant"] == "v2"
+    assert result["rain_probability"] == 0.7
+    assert result["rain_threshold"] == 0.35
+    # 0.7 >= 0.35 -> will_rain True (con 0.5 fissa sarebbe comunque True, ma la
+    # soglia esposta deve essere quella calibrata)
+    assert result["will_rain"] is True
+
+
+def test_predict_rain_probability_v2_falls_back_to_0_5_when_threshold_missing(monkeypatch):
+    """Modelli legacy senza rain_threshold_v2 -> fallback 0.5 (backward-compat)."""
+
+    class FakeRainV2Pipeline:
+        def predict_proba(self, features):
+            return np.array([[0.6, 0.4]])
+
+    monkeypatch.setattr(ml_model, "_rain_pipeline", None)
+    monkeypatch.setattr(ml_model, "_rain_pipeline_v2", FakeRainV2Pipeline())
+    monkeypatch.setattr(ml_model, "_rain_platt_v2", None)
+    monkeypatch.setattr(ml_model, "_rain_threshold_v2", None)
+    monkeypatch.setattr(ml_model, "_ensure_latest_model_loaded", lambda **kwargs: None)
+
+    result = ml_model.predict_rain_probability(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        cloud_cover=45.0,
+        lead_hours=72,
+    )
+
+    assert result["model_ready"] is True
+    assert result["rain_threshold"] == 0.5
+    # prob 0.4 < 0.5 -> will_rain False
+    assert result["will_rain"] is False
+
+
 def test_predict_condition_outlook_supports_legacy_models(monkeypatch):
     class FakePipeline:
         def __init__(self):

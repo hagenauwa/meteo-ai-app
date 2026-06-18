@@ -4,12 +4,13 @@ routers/ml.py — endpoint ML pubblici e operativi.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from auth import require_admin_access
@@ -66,6 +67,14 @@ class EnrichDayPayload(BaseModel):
     precipitation_sum: float | None = 0.0
     weather_code: int | None = None
 
+    @field_validator("dt")
+    @classmethod
+    def _validate_dt_is_iso(cls, value: str) -> str:
+        # Valida al boundary: un dt non ISO farebbe esplodere build_daily_insight
+        # con ValueError nel path di serving. Rifiutiamo presto con 422.
+        datetime.fromisoformat(value)
+        return value
+
 
 class EnrichRequest(BaseModel):
     city: EnrichCityPayload
@@ -96,8 +105,6 @@ def _fetch_city_rows(city: str, db: Session, *, limit: int = 2) -> list[City]:
         return []
 
     query = db.query(City).filter(City.name_lower.like(f"{q_lower}%")).order_by(City.name_lower, City.locality_type)
-    if hasattr(query, "_rows"):
-        return cast(list[City], query._rows[:limit])
     if not hasattr(query, "limit"):
         first_result = query.first()
         return [first_result] if first_result is not None else []
@@ -243,14 +250,14 @@ def _resolve_city_for_enrich(payload: EnrichCityPayload, db: Session) -> CityRes
     )
 
 
-def _disabled_ml_payload(warning: MlWarning) -> dict[str, object]:
+async def _disabled_ml_payload(warning: MlWarning) -> dict[str, object]:
     return {
         "ml": {
             "enabled": False,
             "warning": warning,
             "correction": None,
             "rain_prediction": None,
-            "summary": ml_model.get_public_summary(),
+            "summary": await asyncio.to_thread(ml_model.get_public_summary),
         },
         "daily_ml": [],
     }
@@ -410,7 +417,8 @@ async def get_correction(
         return _disabled_prediction_payload(temp=parsed_temp, warning=warning)
 
     return _normalize_prediction_payload(
-        ml_model.predict_correction(
+        await asyncio.to_thread(
+            ml_model.predict_correction,
             temp=parsed_temp,
             humidity=parsed_humidity,
             hour=parsed_hour,
@@ -439,6 +447,34 @@ def get_stats():
     return stats
 
 
+def _compute_daily_insights(
+    *,
+    daily: list[EnrichDayPayload],
+    lat: float,
+    lon: float,
+    region: str,
+    now: datetime,
+    city_name: str,
+) -> list[dict[str, object]]:
+    """Costruisce gli insight giornalieri in modo sync (CPU-bound: predict sklearn)."""
+    daily_ml: list[dict[str, object]] = []
+    for day in daily:
+        insight = ml_model.build_daily_insight(
+            day=day.model_dump(mode="python"),
+            lat=lat,
+            lon=lon,
+            region=region,
+            lead_hours=_representative_daily_lead_hours(now=now, date_text=day.dt),
+            city_name=city_name,
+        )
+        # Echeggia la data così il frontend può allineare l'insight al giorno
+        # corretto per data (non per indice), evitando disallineamenti.
+        if isinstance(insight, dict):
+            insight = {**insight, "dt": day.dt}
+        daily_ml.append(insight)
+    return daily_ml
+
+
 @router.post("/enrich")
 async def enrich_forecast(
     payload: EnrichRequest,
@@ -450,16 +486,17 @@ async def enrich_forecast(
         warning = resolution["warning"]
         if warning is None:
             warning = _make_warning("ML_CITY_UNRESOLVED", "ML disabilitato.", "missing warning details")
-        return _disabled_ml_payload(warning)
+        return await _disabled_ml_payload(warning)
 
     # Serving onesto: il modello è addestrato solo su alcune province. Fuori da
     # quell'area non estrapoliamo, ma dichiariamo il ML non disponibile.
     if not ml_model.is_city_in_ml_coverage(resolution["province"]):
-        return _disabled_ml_payload(_out_of_area_warning(resolution["city"]))
+        return await _disabled_ml_payload(_out_of_area_warning(resolution["city"]))
 
     region = resolution["region"]
 
-    correction = ml_model.predict_correction(
+    correction = await asyncio.to_thread(
+        ml_model.predict_correction,
         temp=payload.current.temp,
         humidity=payload.current.humidity or 50.0,
         hour=now.hour,
@@ -474,7 +511,8 @@ async def enrich_forecast(
         forecast_wind_direction=payload.current.wind_deg,
         forecast_weather_code=payload.current.weather_code,
     )
-    rain = ml_model.predict_rain_probability(
+    rain = await asyncio.to_thread(
+        ml_model.predict_rain_probability,
         forecast_temp=payload.current.temp,
         humidity=payload.current.humidity or 50.0,
         hour=now.hour,
@@ -487,28 +525,22 @@ async def enrich_forecast(
         city_name=payload.city.name,
     )
 
-    daily_ml: list[dict[str, object]] = []
-    for day in payload.daily:
-        insight = ml_model.build_daily_insight(
-            day=day.model_dump(mode="python"),
-            lat=resolution["lat"],
-            lon=resolution["lon"],
-            region=region,
-            lead_hours=_representative_daily_lead_hours(now=now, date_text=day.dt),
-            city_name=payload.city.name,
-        )
-        # Echeggia la data così il frontend può allineare l'insight al giorno
-        # corretto per data (non per indice), evitando disallineamenti.
-        if isinstance(insight, dict):
-            insight = {**insight, "dt": day.dt}
-        daily_ml.append(insight)
+    daily_ml = await asyncio.to_thread(
+        _compute_daily_insights,
+        daily=payload.daily,
+        lat=resolution["lat"],
+        lon=resolution["lon"],
+        region=region,
+        now=now,
+        city_name=payload.city.name,
+    )
 
     return {
         "ml": {
             "enabled": True,
             "correction": correction,
             "rain_prediction": rain,
-            "summary": ml_model.get_public_summary(),
+            "summary": await asyncio.to_thread(ml_model.get_public_summary),
         },
         "daily_ml": daily_ml,
     }
@@ -539,7 +571,8 @@ async def get_rain_prediction(
             warning = _make_warning("ML_CITY_UNRESOLVED", "ML disabilitato.", "missing warning details")
         return _disabled_prediction_payload(warning=warning)
 
-    return ml_model.predict_rain_probability(
+    return await asyncio.to_thread(
+        ml_model.predict_rain_probability,
         forecast_temp=temp,
         humidity=humidity,
         hour=hour,
@@ -562,7 +595,7 @@ async def force_train(
     min_samples: int = Query(100),
     _: None = Depends(require_admin_access),
 ):
-    result = await __import__("asyncio").to_thread(ml_model.train, min_samples)
+    result = await asyncio.to_thread(ml_model.train, min_samples)
     if result["success"]:
-        await __import__("asyncio").to_thread(ml_model.load_latest_model)
+        await asyncio.to_thread(ml_model.load_latest_model)
     return result
