@@ -496,6 +496,17 @@ def _derive_daily_weather_code_from_hourly(
         return fallback_code
 
     if any(_is_rain_weather_code(code) or precipitation > 0.1 for code, _, _, precipitation in relevant):
+        # Deriva il codice dalle ore effettive invece del daily code di Open-Meteo
+        # che può essere troppo pessimistico (es. "Temporali" per pioggia normale).
+        rain_codes_in_hourly = [code for code, _, _, _ in relevant if code is not None and _is_rain_weather_code(code)]
+        if rain_codes_in_hourly:
+            # Temporali reali nelle ore → usa il più severo
+            if any(code >= 95 for code in rain_codes_in_hourly):
+                return max(rain_codes_in_hourly)
+            # Solo pioggia normale → usa il codice orario più rappresentativo
+            # (evita falsi "Temporali" dal daily aggregation di Open-Meteo)
+            return max(rain_codes_in_hourly)
+        # Codice pioggia non rilevato ma precipitazione > 0.1: caso raro
         return fallback_code
     if any((pop or 0) >= 40 for _, _, pop, _ in relevant):
         return fallback_code
