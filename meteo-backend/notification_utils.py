@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 RAIN_POP_THRESHOLD = 0.50  # Soglia POP ridotta da 60% a 50%
 RAIN_ML_THRESHOLD = 0.40  # Soglia ML per trigger combinato
-MAX_LEAD_HOURS = 6  # Finestra previsione ore
+MAX_LEAD_HOURS = 1  # Notifica solo pioggia entro 1 ora (issue #notifiche-troppo-anticipo)
 RAIN_ALERT_COOLDOWN_HOURS = 2  # Cooldown ridotto da 6 a 2 ore
 
 # Cache geocoding: {city_name: (lat, lon, timestamp)}
