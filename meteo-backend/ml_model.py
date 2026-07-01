@@ -16,10 +16,12 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import sklearn
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.utils.class_weight import compute_sample_weight
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -1717,6 +1719,32 @@ def _optimal_f1_threshold(probabilities: np.ndarray, y: np.ndarray) -> tuple[flo
     return best_threshold, max(0.0, best_f1)
 
 
+def _build_rain_classifier() -> HistGradientBoostingClassifier:
+    """Classificatore pioggia a gradient boosting (sostituisce la LogisticRegression lineare).
+
+    La pioggia dipende da interazioni non-lineari e a soglia tra umidità, nuvolosità,
+    precipitazione prevista e weather_code, che un modello lineare non cattura. Un
+    gradient boosting su alberi le modella nativamente restando leggero (nessuna nuova
+    dipendenza: già in scikit-learn). Gli iperparametri sono volutamente conservativi
+    (alberi bassi, foglie con almeno 20 campioni, L2 e early stopping) per non
+    overfittare quando i campioni sono pochi e la pioggia è rara. Il bilanciamento
+    delle classi viene passato dai chiamanti via ``sample_weight`` (compute_sample_weight),
+    combinabile con il peso di recency, quindi qui non serve ``class_weight``.
+    """
+    return HistGradientBoostingClassifier(
+        loss="log_loss",
+        learning_rate=0.05,
+        max_iter=300,
+        max_leaf_nodes=15,
+        min_samples_leaf=20,
+        l2_regularization=1.0,
+        early_stopping=True,
+        validation_fraction=0.15,
+        n_iter_no_change=20,
+        random_state=42,
+    )
+
+
 def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
     X, y = _build_rain_matrices(rows, encoder)
     if len(X) < 20:
@@ -1732,12 +1760,12 @@ def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
     pipeline = Pipeline(
         [
             ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(class_weight="balanced", max_iter=1000)),
+            ("clf", _build_rain_classifier()),
         ]
     )
-    pipeline.fit(X_train, y_train)
+    pipeline.fit(X_train, y_train, clf__sample_weight=compute_sample_weight("balanced", y_train))
 
-    # Calibrazione Platt sulle probabilità di validation. class_weight="balanced"
+    # Calibrazione Platt sulle probabilità di validation. Il bilanciamento "balanced"
     # addestra su un prior ~50/50 mentre la pioggia reale è ~10-15%: le probabilità
     # grezze risultano gonfiate. Serviamo la versione calibrata + una soglia
     # ottimizzata su F1 (la 0.5 è inadatta agli eventi rari).
@@ -1794,11 +1822,14 @@ def _train_rain_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
 
     X_train, X_val, y_train, y_val = split
     train_rows = [row for row in rows if row["actual_precipitation"] is not None][: len(X_train)]
-    sample_weights = _recency_sample_weights(train_rows)
+    # Peso finale = recency (half-life) × bilanciamento classi. Con il gradient
+    # boosting il bilanciamento viaggia via sample_weight invece di class_weight,
+    # così i due effetti si combinano moltiplicandosi.
+    sample_weights = _recency_sample_weights(train_rows) * compute_sample_weight("balanced", y_train)
     pipeline = Pipeline(
         [
             ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(class_weight="balanced", max_iter=2000)),
+            ("clf", _build_rain_classifier()),
         ]
     )
     pipeline.fit(X_train, y_train, clf__sample_weight=sample_weights)

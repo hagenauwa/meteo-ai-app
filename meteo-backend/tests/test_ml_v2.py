@@ -2,10 +2,11 @@
 
 import importlib
 import pickle
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import numpy as np
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 import sys
 import os
@@ -243,6 +244,74 @@ def test_optimal_f1_threshold_identifies_positives_for_rare_event():
     # ottimale deve essere più bassa e dare F1 > 0.
     assert 0.0 < threshold <= 0.4
     assert f1 > 0.0
+
+
+def _synthetic_rain_rows(n=240, seed=0):
+    """Righe verificate sintetiche con una regola di pioggia NON-lineare.
+
+    La pioggia dipende da un'interazione (umidità alta E nuvole alte) combinata in
+    XOR con un weather_code piovoso: un modello lineare non la separa, un gradient
+    boosting sì. Serve per esercitare il training della pipeline pioggia end-to-end.
+    """
+    rng = np.random.default_rng(seed)
+    base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    rows = []
+    for i in range(n):
+        humidity = float(rng.uniform(30, 100))
+        cloud = float(rng.uniform(0, 100))
+        wcode = int(rng.choice([0, 1, 2, 3, 61, 80]))
+        wet_core = humidity > 75 and cloud > 65
+        code_wet = wcode in (61, 80)
+        prob = 0.9 if (wet_core ^ code_wet) else 0.06
+        actual = float(rng.uniform(0.3, 5.0)) if rng.random() < prob else 0.0
+        rows.append(
+            {
+                "target_time": base + timedelta(hours=i),
+                "verified_at": base + timedelta(hours=i),
+                "forecast_temp": float(rng.uniform(5, 30)),
+                "humidity": humidity,
+                "hour": i % 24,
+                "month": 6,
+                "lat": 43.9,
+                "lon": 10.2,
+                "cloud_cover": cloud,
+                "lead_hours": int(rng.choice([1, 3, 6, 14, 38])),
+                "region": "Toscana",
+                "province": "Massa-Carrara",
+                "forecast_precipitation": float(max(0.0, rng.normal(0.2, 0.5))),
+                "forecast_weather_code": wcode,
+                "forecast_wind_speed": float(rng.uniform(0, 30)),
+                "forecast_wind_direction": float(rng.uniform(0, 360)),
+                "actual_precipitation": actual,
+                "actual_weather_code": wcode,
+                "actual_cloud_cover": cloud,
+                "actual_wind_speed": None,
+                "actual_wind_direction": None,
+            }
+        )
+    return rows
+
+
+def test_rain_pipeline_v2_uses_gradient_boosting_and_beats_baseline():
+    """Il modello pioggia v2 deve essere un gradient boosting che batte il baseline.
+
+    Blocca il contratto della migrazione da LogisticRegression a
+    HistGradientBoostingClassifier: su un pattern non-lineare deve promuovere e
+    calibrare meglio del predittore a probabilità costante.
+    """
+    rows = _synthetic_rain_rows()
+    encoder = ml_model._encode_regions(rows)
+
+    result = ml_model._train_rain_pipeline_v2(rows, encoder)
+
+    assert result["success"] is True, result.get("message")
+    clf = result["pipeline"].named_steps["clf"]
+    assert isinstance(clf, HistGradientBoostingClassifier)
+    assert result["brier"] < result["baseline_brier"]
+    assert result["f1"] > 0.5
+    # La pipeline addestrata deve restare servibile via predict_proba.
+    proba = result["pipeline"].predict_proba(np.zeros((1, 26)))
+    assert proba.shape == (1, 2)
 
 
 def test_is_city_in_ml_coverage_respects_allowed_provinces(monkeypatch):
