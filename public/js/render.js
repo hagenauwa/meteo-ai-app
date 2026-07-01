@@ -271,7 +271,7 @@ function renderHourlyDetail(selectedDay, hourly) {
 
         const empty = document.createElement("div");
         empty.className = "empty-forecast";
-        empty.textContent = "Il dettaglio ora per ora arriverà quando il backend esporrà un orizzonte più ampio.";
+        empty.textContent = "Il dettaglio ora per ora è disponibile solo per i prossimi giorni.";
         container.appendChild(empty);
         return;
     }

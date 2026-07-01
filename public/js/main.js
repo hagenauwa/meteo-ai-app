@@ -11,6 +11,16 @@ let selectedDayIndex = 0;
 let latestSearchToken = 0;
 const isLocalDevelopment = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
+// Escape per i valori inseriti come HTML (es. popup Leaflet, che renderizza HTML).
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 function applyMlEnrichment(payload, enrichment) {
     if (!payload || !enrichment) return payload;
 
@@ -186,7 +196,7 @@ function initLeafletMap(lat, lon, name) {
         maxZoom: 19,
     }).addTo(mapInstance);
 
-    let popupHtml = `<b>${name}</b>`;
+    let popupHtml = `<b>${escapeHtml(name)}</b>`;
     if (currentPayload?.current) {
         const c = currentPayload.current;
         if (c.temp != null) popupHtml += `<br>🌡️ ${c.temp.toFixed(1)}°C`;

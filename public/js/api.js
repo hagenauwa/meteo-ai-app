@@ -18,7 +18,11 @@ const OPEN_METEO_HOURLY_FIELDS =
     "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m," +
     "precipitation_probability,precipitation,weather_code";
 const OPEN_METEO_FORECAST_DAYS = 16;
-const OPEN_METEO_FORECAST_HOURS = 24;
+// Ore di dettaglio orario richieste a Open-Meteo: 7 giorni, così anche i giorni
+// successivi a oggi hanno la scansione ora-per-ora (prima erano 24h → la card
+// oraria era vuota già da "Domani"). Oltre ~7gg il valore orario non è
+// significativo e resta il solo riepilogo giornaliero.
+const OPEN_METEO_FORECAST_HOURS = 168;
 
 const WMO_CODES = {
     0: ["Cielo sereno", "01d"],
@@ -288,6 +292,10 @@ function isRainWmoCode(code) {
     return [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99].includes(Number(code));
 }
 
+// Deriva il codice meteo giornaliero dalle ore effettive. Allineato al backend
+// notification_utils._derive_daily_weather_code_from_hourly: quando le ore hanno
+// pioggia si usa il codice orario più severo REALMENTE presente, invece del
+// codice giornaliero aggregato di Open-Meteo che può segnare falsi "Temporali".
 function deriveDailyWmoFromHourly(dailyDate, fallbackCode, hourly = {}) {
     const times = hourly.time || [];
     if (!dailyDate || !times.length) return fallbackCode;
@@ -304,25 +312,44 @@ function deriveDailyWmoFromHourly(dailyDate, fallbackCode, hourly = {}) {
     }
 
     if (!entries.length) return fallbackCode;
-    if (entries.some((entry) => isRainWmoCode(entry.code) || entry.precipitation > 0.1 || entry.pop >= 40)) {
+
+    if (entries.some((entry) => isRainWmoCode(entry.code) || entry.precipitation > 0.1)) {
+        const rainCodes = entries
+            .map((entry) => entry.code)
+            .filter((code) => code != null && isRainWmoCode(code))
+            .map(Number);
+        // Solo pioggia normale nelle ore → codice orario più rappresentativo,
+        // evitando i falsi "Temporali" del daily aggregato di Open-Meteo.
+        if (rainCodes.length) return Math.max(...rainCodes);
         return fallbackCode;
     }
-    if (entries.some((entry) => entry.code === 45 || entry.code === 48)) {
-        return fallbackCode;
-    }
+
+    if (entries.some((entry) => (entry.pop || 0) >= 40)) return fallbackCode;
+
+    const codesPresent = entries.map((entry) => entry.code).filter((code) => code != null);
+    if (codesPresent.includes(45) || codesPresent.includes(48)) return fallbackCode;
+
+    const cloudyFraction = codesPresent.length
+        ? codesPresent.filter((code) => code === 3).length / codesPresent.length
+        : 0;
+    const partlyFraction = codesPresent.length
+        ? codesPresent.filter((code) => code === 2).length / codesPresent.length
+        : 0;
 
     const clouds = entries.map((entry) => Number(entry.cloud)).filter((value) => Number.isFinite(value));
-    if (!clouds.length) return fallbackCode;
+    if (clouds.length) {
+        const avgCloud = clouds.reduce((sum, value) => sum + value, 0) / clouds.length;
+        const maxCloud = Math.max(...clouds);
+        if (avgCloud <= 20 && maxCloud <= 35) return 0;
+        if (avgCloud <= 35 && cloudyFraction < 0.25) return 1;
+        if (avgCloud <= 65 || partlyFraction >= 0.35) return 2;
+        return 3;
+    }
 
-    const avgCloud = clouds.reduce((sum, value) => sum + value, 0) / clouds.length;
-    const maxCloud = Math.max(...clouds);
-    const cloudyFraction = entries.filter((entry) => entry.code === 3).length / entries.length;
-    const partlyFraction = entries.filter((entry) => entry.code === 2).length / entries.length;
-
-    if (avgCloud <= 20 && maxCloud <= 35) return 0;
-    if (avgCloud <= 35 && cloudyFraction < 0.25) return 1;
-    if (avgCloud <= 65 || partlyFraction >= 0.35) return 2;
-    return 3;
+    if (cloudyFraction >= 0.5) return 3;
+    if (partlyFraction >= 0.35) return 2;
+    if (codesPresent.length) return codesPresent.includes(1) ? 1 : 0;
+    return fallbackCode;
 }
 
 function buildOpenMeteoUrl(lat, lon) {
