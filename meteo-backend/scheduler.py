@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 MIN_VERIFIED_FOR_TRAINING = 500
 RETRAIN_EVERY_HOURS = 6
+# Cadenza del job notifiche Telegram. Deve restare <= 60 min: con MAX_LEAD_HOURS=1
+# in notification_utils gli avvisi pioggia coprono solo l'ora successiva, quindi un
+# controllo troppo diradato perderebbe la finestra utile.
+TELEGRAM_CHECK_EVERY_MINUTES = 30
 OBSERVATION_RETENTION_DAYS = settings.ml_observation_retention_days
 PREDICTION_RETENTION_DAYS = settings.ml_prediction_retention_days
 TRAINING_STATE_ID = 1
@@ -611,8 +615,9 @@ async def hourly_cycle():
                 f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
             )
 
-        # Le notifiche pioggia vengono inviate solo via Telegram (cron dedicato
-        # run_telegram_checks.py). Il canale Web Push è stato rimosso.
+        # Le notifiche Telegram (allerte pioggia + promemoria giornalieri) girano
+        # in un job APScheduler dedicato (telegram_notifications_cycle), separato da
+        # questo ciclo ML pesante. Il canale Web Push è stato rimosso.
 
         state = await asyncio.to_thread(
             _db_update_training_state,
@@ -641,6 +646,24 @@ async def hourly_cycle():
         return state
 
 
+async def telegram_notifications_cycle() -> dict:
+    """Job dedicato: invia allerte pioggia e promemoria giornalieri via Telegram.
+
+    Separato da ``hourly_cycle`` perché il ciclo ML è pesante (``max_instances=1``)
+    e non deve ritardare gli avvisi pioggia, che con ``MAX_LEAD_HOURS=1`` sono
+    tempo-critici. Le due funzioni gestiscono internamente cooldown e gate orario.
+    """
+    from telegram_notify_service import check_telegram_rain_alerts, check_telegram_daily_forecasts
+
+    try:
+        rain_result = await check_telegram_rain_alerts()
+        daily_result = await check_telegram_daily_forecasts()
+        return {"rain_alerts": rain_result, "daily_forecasts": daily_result}
+    except Exception as exc:
+        logger.warning("Ciclo notifiche Telegram fallito: %s", exc)
+        return {"error": str(exc)}
+
+
 def start_scheduler():
     scheduler.add_job(
         hourly_cycle,
@@ -650,6 +673,17 @@ def start_scheduler():
         replace_existing=True,
         max_instances=1,
     )
+
+    telegram_enabled = bool(getattr(settings, "telegram_bot_token", ""))
+    if telegram_enabled:
+        scheduler.add_job(
+            telegram_notifications_cycle,
+            trigger=IntervalTrigger(minutes=TELEGRAM_CHECK_EVERY_MINUTES),
+            id="telegram_notifications",
+            name="Allerte pioggia + promemoria giornalieri Telegram",
+            replace_existing=True,
+            max_instances=1,
+        )
 
     if scheduler.running:
         print("[SCHED] Scheduler gia avviato — configurazione confermata")
@@ -661,6 +695,10 @@ def start_scheduler():
         pass
 
     print(f"[SCHED] Scheduler avviato — ciclo ogni {settings.ml_cycle_every_hours} ore attivo")
+    if telegram_enabled:
+        print(f"[SCHED] Notifiche Telegram attive — controllo ogni {TELEGRAM_CHECK_EVERY_MINUTES} min")
+    else:
+        print("[SCHED] Notifiche Telegram disattivate (TELEGRAM_BOT_TOKEN non configurato)")
 
 
 def stop_scheduler():

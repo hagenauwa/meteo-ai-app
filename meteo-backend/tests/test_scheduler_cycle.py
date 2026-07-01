@@ -364,6 +364,97 @@ def test_count_verified_since_uses_timestamp_not_retention_affected_total(schedu
     assert scheduler._db_count_verified_since(last_train_at) == 1
 
 
+def test_telegram_notifications_cycle_runs_both_checks(monkeypatch):
+    calls = []
+
+    async def fake_rain():
+        calls.append("rain")
+        return {"sent": 1}
+
+    async def fake_daily():
+        calls.append("daily")
+        return {"sent": 2}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "telegram_notify_service",
+        SimpleNamespace(
+            check_telegram_rain_alerts=fake_rain,
+            check_telegram_daily_forecasts=fake_daily,
+        ),
+    )
+
+    result = asyncio.run(scheduler.telegram_notifications_cycle())
+
+    assert calls == ["rain", "daily"]
+    assert result == {"rain_alerts": {"sent": 1}, "daily_forecasts": {"sent": 2}}
+
+
+def test_telegram_notifications_cycle_swallows_errors(monkeypatch):
+    async def boom():
+        raise RuntimeError("telegram down")
+
+    async def fake_daily():
+        return {"sent": 0}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "telegram_notify_service",
+        SimpleNamespace(
+            check_telegram_rain_alerts=boom,
+            check_telegram_daily_forecasts=fake_daily,
+        ),
+    )
+
+    result = asyncio.run(scheduler.telegram_notifications_cycle())
+
+    assert result == {"error": "telegram down"}
+
+
+class _FakeScheduler:
+    """Registra le add_job senza avviare un vero AsyncIOScheduler."""
+
+    running = True  # fa uscire start_scheduler prima di scheduler.start()
+
+    def __init__(self):
+        self.jobs = []
+
+    def add_job(self, func, **kwargs):
+        self.jobs.append((kwargs.get("id"), func))
+
+
+def test_start_scheduler_registers_telegram_job_when_token_set(monkeypatch):
+    fake = _FakeScheduler()
+    monkeypatch.setattr(scheduler, "scheduler", fake)
+    monkeypatch.setattr(
+        scheduler,
+        "settings",
+        SimpleNamespace(ml_cycle_every_hours=1, telegram_bot_token="123:abc"),
+    )
+
+    scheduler.start_scheduler()
+
+    job_ids = [job_id for job_id, _ in fake.jobs]
+    assert "hourly_cycle" in job_ids
+    assert "telegram_notifications" in job_ids
+
+
+def test_start_scheduler_skips_telegram_job_without_token(monkeypatch):
+    fake = _FakeScheduler()
+    monkeypatch.setattr(scheduler, "scheduler", fake)
+    monkeypatch.setattr(
+        scheduler,
+        "settings",
+        SimpleNamespace(ml_cycle_every_hours=1, telegram_bot_token=""),
+    )
+
+    scheduler.start_scheduler()
+
+    job_ids = [job_id for job_id, _ in fake.jobs]
+    assert "hourly_cycle" in job_ids
+    assert "telegram_notifications" not in job_ids
+
+
 def test_hourly_cycle_failure_marks_state_without_reraising(monkeypatch, scheduler_db):
     _seed_cities(scheduler_db)
 
