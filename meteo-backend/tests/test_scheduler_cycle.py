@@ -261,6 +261,58 @@ def test_hourly_cycle_success_persists_training_state_and_calls_cleanup(monkeypa
         assert state.verified_count_at_last_train == 1
 
 
+def test_db_save_cycle_data_persists_new_rain_forecast_features(scheduler_db):
+    with scheduler_db() as db:
+        db.add(
+            City(
+                id=1,
+                name="Roma",
+                name_lower="roma",
+                region="Lazio",
+                province="RM",
+                lat=41.9,
+                lon=12.5,
+                population=100,
+                locality_type="comune",
+            )
+        )
+        db.commit()
+
+    payload = {
+        "observations": [],
+        "predictions": [
+            {
+                "city_id": 1,
+                "predicted_at": datetime(2026, 7, 1, 10, 0),
+                "target_time": datetime(2026, 7, 1, 11, 0),
+                "lead_hours": 1,
+                "forecast_source": "open-meteo",
+                "forecast_temp": 22.0,
+                "humidity": 50.0,
+                "forecast_precipitation": 0.1,
+                "forecast_weather_code": 2,
+                "forecast_cloud_cover": 20.0,
+                "forecast_wind_speed": 10.0,
+                "forecast_wind_direction": 170.0,
+                "forecast_precipitation_probability": 65,
+                "forecast_surface_pressure": 1009.0,
+                "forecast_dew_point": 14.0,
+                "forecast_cape": 800.0,
+            }
+        ],
+    }
+
+    n_obs, n_pred = scheduler._db_save_cycle_data(payload)
+    assert (n_obs, n_pred) == (0, 1)
+
+    with scheduler_db() as db:
+        prediction = db.query(MlPrediction).one()
+        assert prediction.forecast_precipitation_probability == 65
+        assert prediction.forecast_surface_pressure == 1009.0
+        assert prediction.forecast_dew_point == 14.0
+        assert prediction.forecast_cape == 800.0
+
+
 def test_count_verified_since_uses_timestamp_not_retention_affected_total(scheduler_db):
     with scheduler_db() as db:
         db.add(

@@ -40,6 +40,12 @@ def test_alembic_upgrade_creates_expected_schema(tmp_path):
         "actual_wind_speed",
         "actual_wind_direction",
     } <= prediction_columns
+    assert {
+        "forecast_precipitation_probability",
+        "forecast_surface_pressure",
+        "forecast_dew_point",
+        "forecast_cape",
+    } <= prediction_columns
     prediction_indexes = {index["name"] for index in inspector.get_indexes("ml_predictions")}
     assert "idx_pred_verify_lookup" in prediction_indexes
 

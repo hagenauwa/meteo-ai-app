@@ -204,6 +204,10 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
             forecast_cloud_cover=pred.get("forecast_cloud_cover"),
             forecast_wind_speed=pred.get("forecast_wind_speed"),
             forecast_wind_direction=pred.get("forecast_wind_direction"),
+            forecast_precipitation_probability=pred.get("forecast_precipitation_probability"),
+            forecast_surface_pressure=pred.get("forecast_surface_pressure"),
+            forecast_dew_point=pred.get("forecast_dew_point"),
+            forecast_cape=pred.get("forecast_cape"),
         )
         for pred in predictions
         if pred.get("forecast_temp") is not None

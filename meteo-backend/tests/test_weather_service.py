@@ -45,6 +45,10 @@ def test_build_batch_results_creates_future_predictions():
                 "wind_direction_10m": [180, 181, 182, 183, 184, 185, 186],
                 "precipitation": [0, 0, 0, 0, 0.2, 0.3, 0.4],
                 "weather_code": [1, 1, 2, 2, 3, 61, 61],
+                "precipitation_probability": [5, 15, 25, 35, 45, 80, 90],
+                "surface_pressure": [1015, 1014, 1013, 1012, 1011, 1009, 1008],
+                "dew_point_2m": [8, 9, 10, 11, 12, 13, 14],
+                "cape": [100, 200, 300, 400, 500, 800, 900],
             },
         }
     ]
@@ -60,6 +64,11 @@ def test_build_batch_results_creates_future_predictions():
     assert first_prediction["forecast_temp"] == 19
     assert first_prediction["forecast_wind_speed"] == 11
     assert first_prediction["forecast_wind_direction"] == 181
+    # Fase 1: nuovi predittori pioggia raccolti dal cron (lead 1h -> indice 1).
+    assert first_prediction["forecast_precipitation_probability"] == 15
+    assert first_prediction["forecast_surface_pressure"] == 1014
+    assert first_prediction["forecast_dew_point"] == 9
+    assert first_prediction["forecast_cape"] == 200
 
 
 def test_fetch_single_city_returns_first_attempt_payload(monkeypatch):

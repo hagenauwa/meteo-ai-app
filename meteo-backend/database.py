@@ -111,6 +111,12 @@ class MlPrediction(Base):
     forecast_cloud_cover = Column(Float, nullable=True)
     forecast_wind_speed = Column(Float, nullable=True)
     forecast_wind_direction = Column(Float, nullable=True)
+    # Predittori pioggia ad alto valore forniti gratis da Open-Meteo (raccolti dal
+    # cron per il modello ML, popolati a partire da luglio 2026).
+    forecast_precipitation_probability = Column(Float, nullable=True)  # POP % (0-100)
+    forecast_surface_pressure = Column(Float, nullable=True)  # hPa
+    forecast_dew_point = Column(Float, nullable=True)  # dew point 2m in °C
+    forecast_cape = Column(Float, nullable=True)  # CAPE J/kg (potenziale convettivo)
     actual_precipitation = Column(Float, nullable=True)
     actual_weather_code = Column(Integer, nullable=True)
     actual_cloud_cover = Column(Float, nullable=True)

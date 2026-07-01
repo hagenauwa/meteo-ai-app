@@ -173,6 +173,10 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
             cloud_covers = hourly.get("cloud_cover", [])
             wind_speeds = hourly.get("wind_speed_10m", [])
             wind_directions = hourly.get("wind_direction_10m", [])
+            precip_probabilities = hourly.get("precipitation_probability", [])
+            surface_pressures = hourly.get("surface_pressure", [])
+            dew_points = hourly.get("dew_point_2m", [])
+            capes = hourly.get("cape", [])
 
             predictions.append(
                 {
@@ -188,6 +192,12 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
                     "forecast_cloud_cover": cloud_covers[idx] if idx < len(cloud_covers) else None,
                     "forecast_wind_speed": wind_speeds[idx] if idx < len(wind_speeds) else None,
                     "forecast_wind_direction": wind_directions[idx] if idx < len(wind_directions) else None,
+                    "forecast_precipitation_probability": (
+                        precip_probabilities[idx] if idx < len(precip_probabilities) else None
+                    ),
+                    "forecast_surface_pressure": surface_pressures[idx] if idx < len(surface_pressures) else None,
+                    "forecast_dew_point": dew_points[idx] if idx < len(dew_points) else None,
+                    "forecast_cape": capes[idx] if idx < len(capes) else None,
                 }
             )
 
@@ -205,7 +215,10 @@ async def fetch_weather_batch(cities: list[dict], client: httpx.AsyncClient) -> 
         "latitude": ",".join(str(c["lat"]) for c in cities),
         "longitude": ",".join(str(c["lon"]) for c in cities),
         "current": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,weather_code",
-        "hourly": "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,precipitation,weather_code",
+        "hourly": (
+            "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m,"
+            "precipitation,weather_code,precipitation_probability,surface_pressure,dew_point_2m,cape"
+        ),
         "wind_speed_unit": "kmh",
         "timezone": "UTC",
         "forecast_hours": max(ML_FORECAST_LEADS) + 1,
