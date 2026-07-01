@@ -314,6 +314,48 @@ def test_rain_pipeline_v2_uses_gradient_boosting_and_beats_baseline():
     assert proba.shape == (1, 2)
 
 
+def test_split_train_cal_test_is_disjoint_ordered_and_holds_out_test():
+    """Fondamento della valutazione onesta: train/cal/test contigui e disgiunti.
+
+    Se cal e test si sovrapponessero, il gate misurerebbe l'F1 sugli stessi dati
+    usati per scegliere la soglia (auto-promozione ottimistica). Il test deve
+    restare ~20% in coda, come il vecchio validation.
+    """
+    X = np.arange(100).reshape(-1, 1)
+    y = np.arange(100) % 2
+    split = ml_model._split_train_cal_test(X, y)
+    assert split is not None
+    X_train, X_cal, X_test, _, _, _ = split
+
+    assert (len(X_train), len(X_cal), len(X_test)) == (65, 15, 20)
+    # Contigue, ordinate temporalmente e senza sovrapposizioni.
+    reconstructed = np.concatenate([X_train, X_cal, X_test]).ravel().tolist()
+    assert reconstructed == list(range(100))
+    # Sotto la soglia minima non si può valutare onestamente.
+    assert ml_model._split_train_cal_test(np.arange(10).reshape(-1, 1), np.zeros(10)) is None
+
+
+def test_provider_rain_probability_proxy_prefers_real_pop():
+    """Con la POP reale di Open-Meteo (Fase 1) il proxy la usa (POP/100), non l'euristica."""
+    real_pop_row = {
+        "forecast_precipitation_probability": 90,
+        "forecast_precipitation": 0.0,
+        "forecast_weather_code": 0,
+        "cloud_cover": 10.0,
+    }
+    heuristic_row = {
+        "forecast_precipitation_probability": None,
+        "forecast_precipitation": 0.0,
+        "forecast_weather_code": 0,
+        "cloud_cover": 10.0,
+    }
+
+    # POP reale -> 0.9, ignorando l'euristica "cielo sereno".
+    assert abs(ml_model._provider_rain_probability_proxy(real_pop_row) - 0.9) < 1e-6
+    # Senza POP ricade sull'euristica (sereno, nessuna pioggia prevista) -> bassa.
+    assert ml_model._provider_rain_probability_proxy(heuristic_row) < 0.2
+
+
 def test_is_city_in_ml_coverage_respects_allowed_provinces(monkeypatch):
     monkeypatch.setattr(
         ml_model,

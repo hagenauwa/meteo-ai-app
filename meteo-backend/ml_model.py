@@ -1286,6 +1286,7 @@ def _prepare_training_rows(
             MlPrediction.forecast_weather_code,
             MlPrediction.forecast_wind_speed,
             MlPrediction.forecast_wind_direction,
+            MlPrediction.forecast_precipitation_probability,
             MlPrediction.actual_precipitation,
             MlPrediction.actual_weather_code,
             MlPrediction.actual_cloud_cover,
@@ -1349,6 +1350,7 @@ def _prepare_training_rows(
                 "forecast_weather_code": row.forecast_weather_code,
                 "forecast_wind_speed": row.forecast_wind_speed,
                 "forecast_wind_direction": _normalize_wind_direction(row.forecast_wind_direction),
+                "forecast_precipitation_probability": row.forecast_precipitation_probability,
                 "actual_precipitation": row.actual_precipitation,
                 "actual_weather_code": row.actual_weather_code,
                 "actual_cloud_cover": row.actual_cloud_cover,
@@ -1556,6 +1558,39 @@ def _split_train_validation(
     return X[:split_idx], X[split_idx:], y[:split_idx], y[split_idx:]
 
 
+def _split_train_cal_test(
+    X: np.ndarray, y: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """Split temporale a tre vie: train / calibrazione / test held-out.
+
+    Serve a valutare il modello pioggia in modo ONESTO. Con un solo validation la
+    calibrazione Platt e la soglia F1 vengono scelte E riportate sugli stessi dati:
+    il gate si auto-promuove citando l'F1 che ha appena ottimizzato. Qui il fit usa
+    ``train``, la calibrazione/soglia usano ``cal`` e le metriche del gate (brier, F1)
+    si misurano su ``test``, mai visto prima. Test ~20% (come il vecchio validation,
+    per non aumentare il rischio sugli eventi rari), calibrazione ~15%, train il resto.
+    """
+    n = len(X)
+    if n < 15:
+        return None
+
+    test_size = max(int(n * 0.20), 1)
+    cal_size = max(int(n * 0.15), 1)
+    train_size = n - cal_size - test_size
+    if train_size < 1:
+        return None
+
+    cal_end = train_size + cal_size
+    return (
+        X[:train_size],
+        X[train_size:cal_end],
+        X[cal_end:],
+        y[:train_size],
+        y[train_size:cal_end],
+        y[cal_end:],
+    )
+
+
 def _fit_platt_scaler(probabilities: np.ndarray, y: np.ndarray) -> dict | None:
     if len(probabilities) < 30:
         return None
@@ -1750,12 +1785,12 @@ def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
     if len(X) < 20:
         return {"success": False, "message": "Dati insufficienti per il modello pioggia"}
 
-    split = _split_train_validation(X, y)
+    split = _split_train_cal_test(X, y)
     if split is None:
         return {"success": False, "message": "Campioni insufficienti per il modello pioggia"}
 
-    X_train, X_val, y_train, y_val = split
-    baseline_acc = max(float(np.mean(y_val)), 1.0 - float(np.mean(y_val)))
+    X_train, X_cal, X_test, y_train, y_cal, y_test = split
+    baseline_acc = max(float(np.mean(y_test)), 1.0 - float(np.mean(y_test)))
 
     pipeline = Pipeline(
         [
@@ -1765,24 +1800,31 @@ def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
     )
     pipeline.fit(X_train, y_train, clf__sample_weight=compute_sample_weight("balanced", y_train))
 
-    # Calibrazione Platt sulle probabilità di validation. Il bilanciamento "balanced"
-    # addestra su un prior ~50/50 mentre la pioggia reale è ~10-15%: le probabilità
-    # grezze risultano gonfiate. Serviamo la versione calibrata + una soglia
-    # ottimizzata su F1 (la 0.5 è inadatta agli eventi rari).
-    raw_val_probs = pipeline.predict_proba(X_val)[:, 1]
-    platt = _fit_platt_scaler(raw_val_probs, y_val)
-    calibrated = np.array([_apply_platt(float(prob), platt) for prob in raw_val_probs], dtype=float)
-    threshold, f1 = _optimal_f1_threshold(calibrated, y_val)
+    # Calibrazione Platt + soglia F1 sulla fetta di CALIBRAZIONE. Il bilanciamento
+    # "balanced" addestra su un prior ~50/50 mentre la pioggia reale è ~10-15%: le
+    # probabilità grezze risultano gonfiate, quindi serviamo la versione calibrata.
+    # La 0.5 è inadatta agli eventi rari: cerchiamo la soglia ottima su F1.
+    cal_probs = pipeline.predict_proba(X_cal)[:, 1]
+    platt = _fit_platt_scaler(cal_probs, y_cal)
+    cal_calibrated = np.array([_apply_platt(float(prob), platt) for prob in cal_probs], dtype=float)
+    threshold, _ = _optimal_f1_threshold(cal_calibrated, y_cal)
 
-    acc = float(accuracy_score(y_val, (calibrated >= threshold).astype(int)))
-    brier = float(np.mean((calibrated - y_val) ** 2))
-    baseline_prob = float(np.mean(y_train)) if len(y_train) else float(np.mean(y_val))
-    baseline_brier = float(np.mean((baseline_prob - y_val) ** 2))
+    # Metriche del gate misurate ONESTAMENTE su test held-out: né il fit né la
+    # calibrazione/soglia hanno visto queste righe, quindi l'F1 non è auto-gonfiata.
+    test_probs = pipeline.predict_proba(X_test)[:, 1]
+    test_calibrated = np.array([_apply_platt(float(prob), platt) for prob in test_probs], dtype=float)
+    test_preds = (test_calibrated >= threshold).astype(int)
+    acc = float(accuracy_score(y_test, test_preds))
+    f1 = float(f1_score(y_test, test_preds, zero_division=0))
+    brier = float(np.mean((test_calibrated - y_test) ** 2))
+    baseline_prob = float(np.mean(y_train)) if len(y_train) else float(np.mean(y_test))
+    baseline_brier = float(np.mean((baseline_prob - y_test) ** 2))
     brier_improvement = (baseline_brier - brier) / max(baseline_brier, 1e-6)
 
     # Gate adatto agli eventi rari: il modello deve identificare la pioggia (F1>0
-    # alla soglia ottimale) E calibrare meglio del baseline costante. L'accuracy
-    # da sola era un no-op (un "mai pioggia" supera ~0.88 con eventi al ~12%).
+    # sul test held-out alla soglia calibrata) E calibrare meglio del baseline
+    # costante. L'accuracy da sola era un no-op (un "mai pioggia" supera ~0.88 con
+    # eventi al ~12%).
     if not (f1 > 0.0 and brier_improvement >= MIN_RAIN_BRIER_IMPROVEMENT_RATIO):
         return {
             "success": False,
@@ -1816,11 +1858,11 @@ def _train_rain_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
     if len(X) < 80:
         return {"success": False, "message": "Dati insufficienti per il modello pioggia v2"}
 
-    split = _split_train_validation(X, y)
+    split = _split_train_cal_test(X, y)
     if split is None:
         return {"success": False, "message": "Campioni insufficienti per il modello pioggia v2"}
 
-    X_train, X_val, y_train, y_val = split
+    X_train, X_cal, X_test, y_train, y_cal, y_test = split
     train_rows = [row for row in rows if row["actual_precipitation"] is not None][: len(X_train)]
     # Peso finale = recency (half-life) × bilanciamento classi. Con il gradient
     # boosting il bilanciamento viaggia via sample_weight invece di class_weight,
@@ -1834,20 +1876,24 @@ def _train_rain_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
     )
     pipeline.fit(X_train, y_train, clf__sample_weight=sample_weights)
 
-    raw_probs = pipeline.predict_proba(X_val)[:, 1]
-    platt = _fit_platt_scaler(raw_probs, y_val)
-    calibrated = np.array([_apply_platt(float(prob), platt) for prob in raw_probs], dtype=float)
+    # Calibrazione Platt + soglia F1 sulla fetta di calibrazione (coerente con v1).
+    # La 0.5 è inadatta agli eventi rari e renderebbe il confronto v1/v2 asimmetrico.
+    cal_probs = pipeline.predict_proba(X_cal)[:, 1]
+    platt = _fit_platt_scaler(cal_probs, y_cal)
+    cal_calibrated = np.array([_apply_platt(float(prob), platt) for prob in cal_probs], dtype=float)
+    threshold, _ = _optimal_f1_threshold(cal_calibrated, y_cal)
 
-    # Soglia ottimale su F1 (coerente con v1): la 0.5 è inadatta agli eventi rari
-    # e renderebbe il confronto v1/v2 asimmetrico nel gate di promozione.
-    threshold, f1 = _optimal_f1_threshold(calibrated, y_val)
-    brier = float(np.mean((calibrated - y_val) ** 2))
+    # Gate onesto su test held-out: brier e F1 non hanno visto la calibrazione.
+    test_probs = pipeline.predict_proba(X_test)[:, 1]
+    test_calibrated = np.array([_apply_platt(float(prob), platt) for prob in test_probs], dtype=float)
+    f1 = float(f1_score(y_test, (test_calibrated >= threshold).astype(int), zero_division=0))
+    brier = float(np.mean((test_calibrated - y_test) ** 2))
 
     baseline_prob = float(np.mean(y_train)) if len(y_train) else 0.5
-    baseline_probs = np.full(shape=len(y_val), fill_value=baseline_prob, dtype=float)
+    baseline_probs = np.full(shape=len(y_test), fill_value=baseline_prob, dtype=float)
     baseline_preds = (baseline_probs >= 0.5).astype(int)
-    baseline_f1 = float(f1_score(y_val, baseline_preds, zero_division=0))
-    baseline_brier = float(np.mean((baseline_probs - y_val) ** 2))
+    baseline_f1 = float(f1_score(y_test, baseline_preds, zero_division=0))
+    baseline_brier = float(np.mean((baseline_probs - y_test) ** 2))
 
     if brier > baseline_brier and f1 <= baseline_f1:
         return {
@@ -2131,6 +2177,14 @@ def _compute_variant_kpis(rows: list[dict], variant: str, pipelines: dict | None
 
 
 def _provider_rain_probability_proxy(row: dict) -> float:
+    # Preferisci la POP reale di Open-Meteo quando disponibile (raccolta dalla Fase 1):
+    # è la probabilità del provider stesso, non una nostra euristica derivata. Rende
+    # onesto il confronto ML-vs-provider e il blend di serving. Le righe più vecchie
+    # (POP non ancora raccolta) ricadono sull'euristica sottostante.
+    pop = row.get("forecast_precipitation_probability")
+    if pop is not None:
+        return _clip_prob(_safe_float(pop, 0.0) / 100.0)
+
     forecast_precipitation = _safe_float(row.get("forecast_precipitation"), 0.0)
     weather_code = row.get("forecast_weather_code")
     cloud_cover = _safe_float(row.get("cloud_cover"), 50.0)
