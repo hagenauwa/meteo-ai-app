@@ -115,17 +115,40 @@ class TestRateLimiter:
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_x_forwarded_for_priority(self, fresh_middleware):
-        """x-forwarded-for ha priorità su request.client.host."""
+    async def test_x_forwarded_for_uses_proxy_appended_rightmost_ip(self, fresh_middleware):
+        """Il valore spoofabile a sinistra non deve scegliere il bucket."""
         m = fresh_middleware
         for _ in range(60):
-            await self._dispatch(m, "/api/weather", forwarded_for="3.3.3.3", client_host="1.1.1.1")
+            await self._dispatch(m, "/api/weather", forwarded_for="9.9.9.9, 3.3.3.3", client_host="1.1.1.1")
 
-        # La 61a dal forward IP deve essere 429
-        resp = await self._dispatch(m, "/api/weather", forwarded_for="3.3.3.3", client_host="1.1.1.1")
+        # Cambiare il valore client-controlled a sinistra non aggira il limite.
+        resp = await self._dispatch(m, "/api/weather", forwarded_for="8.8.8.8, 3.3.3.3", client_host="1.1.1.1")
         assert resp.status_code == 429
 
         # Il client_host originale non e toccato
+        resp = await self._dispatch(m, "/api/weather", client_host="1.1.1.1")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_invalid_forwarded_for_falls_back_to_client(self, fresh_middleware):
+        m = fresh_middleware
+        for _ in range(60):
+            await self._dispatch(m, "/api/weather", forwarded_for="not-an-ip", client_host="1.1.1.1")
+
+        resp = await self._dispatch(m, "/api/weather", forwarded_for="also-invalid", client_host="1.1.1.1")
+        assert resp.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_sensitive_endpoint_has_separate_stricter_bucket(self, fresh_middleware):
+        m = fresh_middleware
+        for _ in range(10):
+            resp = await self._dispatch(m, "/api/telegram/link-code", client_host="1.1.1.1")
+            assert resp.status_code == 200
+
+        resp = await self._dispatch(m, "/api/telegram/link-code", client_host="1.1.1.1")
+        assert resp.status_code == 429
+
+        # Il bucket sensibile non consuma il limite generale.
         resp = await self._dispatch(m, "/api/weather", client_host="1.1.1.1")
         assert resp.status_code == 200
 

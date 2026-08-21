@@ -41,7 +41,7 @@ def test_rain_prediction_endpoint_supports_legacy_models(monkeypatch):
 
     install_fake_db_override(app, get_db)
     try:
-        response = client.get("/api/ml/rain-prediction?city=Roma&temp=20&humidity=60&cloud_cover=40&lead_hours=0")
+        response = client.get("/api/ml/rain-prediction?city=Roma&temp=20&humidity=60&cloud_cover=40&lead_hours=1")
     finally:
         app.dependency_overrides.pop(get_db, None)
 

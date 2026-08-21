@@ -174,6 +174,32 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
     observations = payload.get("observations", [])
     predictions = payload.get("predictions", [])
 
+    city_ids = sorted({int(pred["city_id"]) for pred in predictions})
+    city_map: dict[int, dict] = {}
+    if city_ids:
+        with SessionLocal() as db:
+            city_rows = db.query(City).filter(City.id.in_(city_ids)).all()
+            city_map = {
+                int(city.id): {
+                    "name": city.name,
+                    "lat": city.lat,
+                    "lon": city.lon,
+                    "region": city.region,
+                }
+                for city in city_rows
+            }
+
+    for pred in predictions:
+        city = city_map.get(int(pred["city_id"]))
+        if city is None:
+            continue
+        try:
+            pred.update(ml_model.build_evaluation_snapshot(pred, city))
+        except Exception as exc:
+            # La raccolta provider non deve fallire se lo snapshot ML non è
+            # disponibile: in quel caso la riga resta valutabile come baseline.
+            logger.warning("evaluation_snapshot_failed city_id=%s err=%s", pred["city_id"], exc)
+
     obs_objects = [
         WeatherObservation(
             city_id=obs["city_id"],
@@ -184,6 +210,8 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
             wind_speed=obs.get("wind_speed"),
             wind_direction=obs.get("wind_direction"),
             precipitation=obs.get("precipitation", 0.0),
+            observation_source=obs.get("observation_source", "unknown"),
+            observation_interval_minutes=obs.get("observation_interval_minutes"),
         )
         for obs in observations
         if obs.get("temp") is not None
@@ -212,6 +240,20 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
             forecast_surface_pressure=pred.get("forecast_surface_pressure"),
             forecast_dew_point=pred.get("forecast_dew_point"),
             forecast_cape=pred.get("forecast_cape"),
+            evaluation_model_store_id=pred.get("evaluation_model_store_id"),
+            evaluation_model_variant=pred.get("evaluation_model_variant"),
+            evaluation_corrected_temp=pred.get("evaluation_corrected_temp"),
+            evaluation_rain_probability=pred.get("evaluation_rain_probability"),
+            evaluation_rain_threshold=pred.get("evaluation_rain_threshold"),
+            evaluation_condition_code=pred.get("evaluation_condition_code"),
+            evaluation_rain_blend_weight=pred.get("evaluation_rain_blend_weight"),
+            evaluation_generated_at=pred.get("evaluation_generated_at"),
+            shadow_v1_rain_probability=pred.get("shadow_v1_rain_probability"),
+            shadow_v1_rain_threshold=pred.get("shadow_v1_rain_threshold"),
+            shadow_v1_condition_code=pred.get("shadow_v1_condition_code"),
+            shadow_v2_rain_probability=pred.get("shadow_v2_rain_probability"),
+            shadow_v2_rain_threshold=pred.get("shadow_v2_rain_threshold"),
+            shadow_v2_condition_code=pred.get("shadow_v2_condition_code"),
         )
         for pred in predictions
         if pred.get("forecast_temp") is not None
@@ -255,39 +297,42 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
             )
             .all()
         )
-        # Primo match per (city_id, target_time) replicando la semantica .first()
-        index: dict[tuple[int, datetime], MlPrediction] = {}
+        # Ogni target può avere forecast emessi a orizzonti diversi. La stessa
+        # osservazione deve verificare tutte le righe, non solo la prima.
+        index: dict[tuple[int, datetime], list[MlPrediction]] = {}
         for pred in sorted(candidates, key=lambda p: int(p.id)):
-            index.setdefault((int(pred.city_id), pred.target_time), pred)
+            index.setdefault((int(pred.city_id), pred.target_time), []).append(pred)
 
         for obs, observed_at in normalized:
             key = (int(obs["city_id"]), observed_at)
-            pred = index.get(key)
-            if pred is None:
+            matching_predictions = index.pop(key, [])
+            if not matching_predictions:
                 continue
-            try:
-                pred.actual_temp = obs["temp"]
-                pred.actual_precipitation = obs.get("precipitation")
-                pred.actual_weather_code = obs.get("weather_code")
-                pred.actual_cloud_cover = obs.get("cloud_cover")
-                pred.actual_wind_speed = obs.get("wind_speed")
-                pred.actual_wind_direction = obs.get("wind_direction")
-                pred.error = obs["temp"] - (
-                    pred.forecast_temp if pred.forecast_temp is not None else pred.predicted_temp
-                )
-                pred.verified = True
-                pred.verified_at = observed_at
-                verified_count += 1
-                # Evita che un secondo obs con la stessa key verifichi di nuovo
-                del index[key]
-            except Exception as exc:
-                logger.warning(
-                    "verify_pred_failed city_id=%s target_time=%s err=%s",
-                    obs["city_id"],
-                    observed_at,
-                    exc,
-                )
-                continue
+            for pred in matching_predictions:
+                try:
+                    pred.actual_temp = obs["temp"]
+                    pred.actual_precipitation = obs.get("precipitation")
+                    pred.actual_weather_code = obs.get("weather_code")
+                    pred.actual_cloud_cover = obs.get("cloud_cover")
+                    pred.actual_wind_speed = obs.get("wind_speed")
+                    pred.actual_wind_direction = obs.get("wind_direction")
+                    pred.actual_source = obs.get("observation_source", "unknown")
+                    pred.actual_interval_minutes = obs.get("observation_interval_minutes")
+                    pred.error = obs["temp"] - (
+                        pred.forecast_temp if pred.forecast_temp is not None else pred.predicted_temp
+                    )
+                    pred.verified = True
+                    pred.verified_at = observed_at
+                    verified_count += 1
+                except Exception as exc:
+                    logger.warning(
+                        "verify_pred_failed city_id=%s target_time=%s prediction_id=%s err=%s",
+                        obs["city_id"],
+                        observed_at,
+                        pred.id,
+                        exc,
+                    )
+                    continue
 
         db.commit()
         avg_error = db.execute(

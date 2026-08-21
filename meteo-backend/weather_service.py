@@ -143,6 +143,10 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
                     "wind_direction": current.get("wind_direction_10m"),
                     "precipitation": current.get("precipitation", 0.0),
                     "weather_code": current.get("weather_code"),
+                    # Il blocco current di Open-Meteo deriva dai modelli: non è
+                    # una misura di stazione e non va promosso a ground truth.
+                    "observation_source": "open-meteo-model-current",
+                    "observation_interval_minutes": max(1, int(current.get("interval", 900)) // 60),
                 }
             )
 
@@ -206,7 +210,7 @@ def _build_batch_results(cities: list[dict], payload: list[dict]) -> dict:
 
 async def fetch_weather_batch(cities: list[dict], client: httpx.AsyncClient) -> dict:
     """
-    Scarica osservazioni correnti e previsioni orarie per un batch di città.
+    Scarica valori correnti modellistici e previsioni orarie per un batch di città.
     """
     if not cities:
         return {"observations": [], "predictions": []}

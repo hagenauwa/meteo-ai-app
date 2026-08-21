@@ -8,7 +8,14 @@ Questa repository usa una pipeline leggera, divisa in blocchi chiari:
   - `npm run check:py`
   - `npm run check:js`
   - `npm run check:backend`
-  - `npm run build`
+- `npm run build`
+
+La CI aggiunge inoltre:
+
+- soglia coverage backend del 60%;
+- Playwright bloccante, dopo readiness deterministica del frontend;
+- `pip-audit` e `npm audit` per vulnerabilità note;
+- aggiornamenti settimanali Dependabot per Python, npm e GitHub Actions.
 
 ## Controlli Python
 

@@ -25,7 +25,7 @@ npm run test:e2e
 ## Regole
 
 - Non reintrodurre vecchi monoliti come `public/app.js`.
-- Non creare nuove integrazioni in `netlify/functions/`: è legacy.
+- Non aggiungere funzioni serverless Netlify: le API vivono nel backend FastAPI.
 - Se si modifica service worker, asset statici o PWA, aggiornare `CACHE_NAME`.
 - Biome è il formatter/linter JS canonico.
 - Playwright va usato per flussi UI critici, non per ogni micro-modifica.

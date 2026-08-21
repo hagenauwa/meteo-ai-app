@@ -261,7 +261,7 @@ def test_hourly_cycle_success_persists_training_state_and_calls_cleanup(monkeypa
         assert state.verified_count_at_last_train == 1
 
 
-def test_db_save_cycle_data_persists_new_rain_forecast_features(scheduler_db):
+def test_db_save_cycle_data_persists_new_rain_forecast_features(scheduler_db, monkeypatch):
     with scheduler_db() as db:
         db.add(
             City(
@@ -302,6 +302,27 @@ def test_db_save_cycle_data_persists_new_rain_forecast_features(scheduler_db):
         ],
     }
 
+    monkeypatch.setattr(
+        scheduler.ml_model,
+        "build_evaluation_snapshot",
+        lambda prediction, city: {
+            "evaluation_model_store_id": 42,
+            "evaluation_model_variant": "v1",
+            "evaluation_corrected_temp": 21.5,
+            "evaluation_rain_probability": 0.35,
+            "evaluation_rain_threshold": 0.4,
+            "evaluation_condition_code": 2,
+            "evaluation_rain_blend_weight": 0.2,
+            "evaluation_generated_at": datetime(2026, 7, 1, 10, 0),
+            "shadow_v1_rain_probability": 0.35,
+            "shadow_v1_rain_threshold": 0.4,
+            "shadow_v1_condition_code": 2,
+            "shadow_v2_rain_probability": 0.25,
+            "shadow_v2_rain_threshold": 0.3,
+            "shadow_v2_condition_code": 1,
+        },
+    )
+
     n_obs, n_pred = scheduler._db_save_cycle_data(payload)
     assert (n_obs, n_pred) == (0, 1)
 
@@ -311,6 +332,13 @@ def test_db_save_cycle_data_persists_new_rain_forecast_features(scheduler_db):
         assert prediction.forecast_surface_pressure == 1009.0
         assert prediction.forecast_dew_point == 14.0
         assert prediction.forecast_cape == 800.0
+        assert prediction.evaluation_model_store_id == 42
+        assert prediction.evaluation_model_variant == "v1"
+        assert prediction.evaluation_corrected_temp == 21.5
+        assert prediction.evaluation_rain_probability == 0.35
+        assert prediction.shadow_v1_rain_probability == 0.35
+        assert prediction.shadow_v2_rain_probability == 0.25
+        assert prediction.shadow_v2_condition_code == 1
 
 
 def test_count_verified_since_uses_timestamp_not_retention_affected_total(scheduler_db):

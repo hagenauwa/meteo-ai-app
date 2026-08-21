@@ -160,6 +160,86 @@ class TestDataPreparation:
             assert len(rows) == 1
             assert rows[0]["province"] == "Massa-Carrara"
 
+    def test_prepare_training_rows_requires_trusted_source_in_production_mode(self, db_session):
+        from unittest.mock import patch
+
+        from config import settings
+        from ml_model import _prepare_training_rows
+
+        city = City(name="Massa", name_lower="massa", region="Toscana", province="Massa-Carrara", lat=44.0, lon=10.1)
+        db_session.add(city)
+        db_session.flush()
+        now = datetime(2026, 8, 21, 12, tzinfo=timezone.utc)
+        for source, lead in (("open-meteo-model-current", 1), ("station", 3)):
+            db_session.add(
+                MlPrediction(
+                    city_id=city.id,
+                    predicted_at=now,
+                    target_time=now,
+                    lead_hours=lead,
+                    predicted_temp=20.0,
+                    forecast_temp=20.0,
+                    actual_temp=21.0,
+                    actual_precipitation=0.4,
+                    actual_source=source,
+                    actual_interval_minutes=60,
+                    error=1.0,
+                    verified=True,
+                    verified_at=now,
+                )
+            )
+        db_session.commit()
+
+        with (
+            patch.object(settings, "ml_require_trusted_observations", True),
+            patch.object(settings, "ml_trusted_observation_sources", ("station",)),
+            patch.object(settings, "ml_training_allowed_provinces", ("Massa-Carrara",)),
+        ):
+            rows = _prepare_training_rows(db_session)
+
+        assert len(rows) == 1
+        assert rows[0]["actual_source"] == "station"
+        assert rows[0]["lead_hours"] == 3
+
+    def test_prepare_training_rows_rejects_non_hourly_rain_target(self, db_session):
+        from unittest.mock import patch
+
+        from config import settings
+        from ml_model import _prepare_training_rows
+
+        city = City(name="Massa", name_lower="massa", region="Toscana", province="Massa-Carrara", lat=44.0, lon=10.1)
+        db_session.add(city)
+        db_session.flush()
+        now = datetime(2026, 8, 21, 12, tzinfo=timezone.utc)
+        db_session.add(
+            MlPrediction(
+                city_id=city.id,
+                predicted_at=now,
+                target_time=now,
+                lead_hours=1,
+                predicted_temp=20.0,
+                forecast_temp=20.0,
+                actual_temp=21.0,
+                actual_precipitation=0.4,
+                actual_source="station",
+                actual_interval_minutes=15,
+                error=1.0,
+                verified=True,
+                verified_at=now,
+            )
+        )
+        db_session.commit()
+
+        with (
+            patch.object(settings, "ml_require_trusted_observations", True),
+            patch.object(settings, "ml_trusted_observation_sources", ("station",)),
+            patch.object(settings, "ml_training_allowed_provinces", ("Massa-Carrara",)),
+        ):
+            rows = _prepare_training_rows(db_session)
+
+        assert len(rows) == 1
+        assert rows[0]["actual_precipitation"] is None
+
     def test_verify_predictions(self, db_session):
         from scheduler import _db_verify_predictions
 

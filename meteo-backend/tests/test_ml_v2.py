@@ -71,8 +71,8 @@ def test_rain_feature_vector_v2_shape_and_missing_flags():
         forecast_weather_code=None,
     )
 
-    assert features.shape == (1, 26)
-    assert features[0, -5:].tolist() == [1.0, 1.0, 1.0, 1.0, 1.0]
+    assert features.shape == (1, 34)
+    assert features[0, -9:].tolist() == [1.0] * 9
 
 
 def test_temperature_feature_vector_v2_includes_lead_bucket_flags():
@@ -246,6 +246,32 @@ def test_optimal_f1_threshold_identifies_positives_for_rare_event():
     assert f1 > 0.0
 
 
+def test_prequential_shadow_kpis_use_only_frozen_pair():
+    rows = []
+    for index in range(240):
+        wet = index % 2 == 0
+        rows.append(
+            {
+                "actual_precipitation": 1.0 if wet else 0.0,
+                "actual_weather_code": 61 if wet else 0,
+                "actual_cloud_cover": 90.0 if wet else 5.0,
+                "shadow_v1_rain_probability": 0.2 if wet else 0.8,
+                "shadow_v1_rain_threshold": 0.5,
+                "shadow_v2_rain_probability": 0.9 if wet else 0.1,
+                "shadow_v2_rain_threshold": 0.5,
+                "shadow_v1_condition_code": ml_model.CONDITION_TO_CODE["sereno" if wet else "pioggia"],
+                "shadow_v2_condition_code": ml_model.CONDITION_TO_CODE["pioggia" if wet else "sereno"],
+            }
+        )
+
+    v1, v2 = ml_model._compute_prequential_shadow_kpis(rows)
+
+    assert v1["rain_samples"] == v2["rain_samples"] == 240
+    assert v2["rain_brier"] < v1["rain_brier"]
+    assert v2["rain_f1"] > v1["rain_f1"]
+    assert v2["condition_macro_f1"] > v1["condition_macro_f1"]
+
+
 def _synthetic_rain_rows(n=240, seed=0):
     """Righe verificate sintetiche con una regola di pioggia NON-lineare.
 
@@ -310,7 +336,7 @@ def test_rain_pipeline_v2_uses_gradient_boosting_and_beats_baseline():
     assert result["brier"] < result["baseline_brier"]
     assert result["f1"] > 0.5
     # La pipeline addestrata deve restare servibile via predict_proba.
-    proba = result["pipeline"].predict_proba(np.zeros((1, 26)))
+    proba = result["pipeline"].predict_proba(np.zeros((1, 34)))
     assert proba.shape == (1, 2)
 
 
@@ -380,7 +406,7 @@ def test_is_city_in_ml_coverage_global_when_unconfigured(monkeypatch):
 def test_predict_rain_probability_uses_v2_when_v1_is_not_available(monkeypatch):
     class FakeRainV2Pipeline:
         def predict_proba(self, features):
-            assert features.shape == (1, 26)
+            assert features.shape == (1, 34)
             return np.array([[0.3, 0.7]])
 
     monkeypatch.setattr(ml_model, "_rain_pipeline", None)
@@ -402,11 +428,41 @@ def test_predict_rain_probability_uses_v2_when_v1_is_not_available(monkeypatch):
         forecast_wind_speed=18.0,
         forecast_wind_direction=180.0,
         forecast_weather_code=61,
+        force_variant="v2",
     )
 
     assert result["model_ready"] is True
     assert result["model_variant"] == "v2"
     assert result["rain_probability"] == 0.7
+
+
+def test_predict_rain_probability_keeps_v1_when_only_condition_v2_was_promoted(monkeypatch):
+    class FakeRainV1Pipeline:
+        n_features_in_ = 6
+
+        def predict_proba(self, features):
+            return np.array([[0.8, 0.2]])
+
+    monkeypatch.setattr(ml_model, "_rain_pipeline", FakeRainV1Pipeline())
+    monkeypatch.setattr(ml_model, "_rain_pipeline_v2", None)
+    monkeypatch.setattr(ml_model, "_rain_platt_v1", None)
+    monkeypatch.setattr(ml_model, "_ensure_latest_model_loaded", lambda **kwargs: None)
+
+    result = ml_model.predict_rain_probability(
+        forecast_temp=18.0,
+        humidity=70.0,
+        hour=13,
+        month=4,
+        lat=41.9,
+        lon=12.5,
+        region="Lazio",
+        lead_hours=72,
+        force_variant="v2",
+    )
+
+    assert result["model_ready"] is True
+    assert result["model_variant"] == "legacy"
+    assert result["rain_probability"] == 0.2
 
 
 def test_predict_rain_probability_v2_uses_optimal_threshold(monkeypatch):
@@ -437,6 +493,7 @@ def test_predict_rain_probability_v2_uses_optimal_threshold(monkeypatch):
         forecast_wind_speed=18.0,
         forecast_wind_direction=180.0,
         forecast_weather_code=61,
+        force_variant="v2",
     )
 
     assert result["model_ready"] is True
@@ -471,6 +528,7 @@ def test_predict_rain_probability_v2_falls_back_to_0_5_when_threshold_missing(mo
         region="Lazio",
         cloud_cover=45.0,
         lead_hours=72,
+        force_variant="v2",
     )
 
     assert result["model_ready"] is True
@@ -543,6 +601,7 @@ def test_predict_condition_outlook_uses_v2_when_v1_is_not_available(monkeypatch)
         forecast_wind_speed=18.0,
         forecast_wind_direction=180.0,
         forecast_weather_code=61,
+        force_variant="v2",
     )
 
     assert result["model_ready"] is True
@@ -640,8 +699,18 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
         {
             "v1": {},
             "v2": {
-                "intraday": {"ml_weight": 0.5},
-                "day2_3": {"ml_weight": 0.25},
+                "intraday": {
+                    "ml_weight": 0.5,
+                    "samples": 300,
+                    "rain_brier": 0.1,
+                    "provider_brier": 0.2,
+                },
+                "day2_3": {
+                    "ml_weight": 0.25,
+                    "samples": 300,
+                    "rain_brier": 0.1,
+                    "provider_brier": 0.2,
+                },
                 "day8_plus": {"ml_weight": 0.0},
             },
         },
@@ -819,7 +888,7 @@ def test_daily_insight_rain_code_or_real_precipitation_claims_rain(monkeypatch):
 
 def test_load_latest_model_rejects_incompatible_sklearn_pickle(monkeypatch):
     payload = {
-        "model_format_version": 2,
+        "model_format_version": ml_model.MODEL_FORMAT_VERSION,
         "sklearn_version": "1.5.2",
         "pipeline": object(),
         "rain_pipeline": object(),
@@ -887,7 +956,7 @@ def test_load_latest_model_rejects_incompatible_sklearn_pickle(monkeypatch):
 
 def test_load_latest_model_skips_incompatible_and_loads_older_compatible(monkeypatch):
     incompatible_payload = {
-        "model_format_version": 2,
+        "model_format_version": ml_model.MODEL_FORMAT_VERSION,
         "sklearn_version": "1.5.2",
         "pipeline": _PickleablePipeline(),
         "rain_pipeline": None,
@@ -895,7 +964,7 @@ def test_load_latest_model_skips_incompatible_and_loads_older_compatible(monkeyp
         "le": object(),
     }
     compatible_payload = {
-        "model_format_version": 2,
+        "model_format_version": ml_model.MODEL_FORMAT_VERSION,
         "sklearn_version": "1.6.1",
         "pipeline": _PickleablePipeline(),
         "rain_pipeline": None,
@@ -939,7 +1008,7 @@ def test_load_latest_model_skips_incompatible_and_loads_older_compatible(monkeyp
 
 def test_load_latest_model_accepts_matching_sklearn_pickle(monkeypatch):
     payload = {
-        "model_format_version": 2,
+        "model_format_version": ml_model.MODEL_FORMAT_VERSION,
         "sklearn_version": "1.6.1",
         "pipeline": _PickleablePipeline(),
         "rain_pipeline": None,
@@ -969,7 +1038,7 @@ def test_load_latest_model_accepts_matching_sklearn_pickle(monkeypatch):
     assert loaded is True
     summary = ml_model.get_public_summary()
     assert summary["model_sklearn_version"] == "1.6.1"
-    assert summary["model_format_version"] == 2
+    assert summary["model_format_version"] == ml_model.MODEL_FORMAT_VERSION
     assert summary["model_load_warning"] is None
     assert summary["model_mae"] == 0.9
 
