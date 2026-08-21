@@ -28,11 +28,11 @@
                 try {
                     const url = new URL(urlString);
                     const h = url.hostname;
+                    if (!["http:", "https:"].includes(url.protocol)) return false;
                     if (["localhost", "127.0.0.1"].includes(h)) return true;
                     if (/^(10\.(\d{1,3}\.){2}\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})$/.test(h)) return true;
                     if (h.endsWith(".local")) return true;
-                    if (h === "meteo-ai-backend.onrender.com") return true;
-                    return false;
+                    return h === "meteo-ai-backend.onrender.com" && url.protocol === "https:";
                 } catch (_) {
                     return false;
                 }
@@ -42,12 +42,8 @@
                 window.localStorage.removeItem(backendOverrideKey);
             } else if (queryOverride) {
                 if (isAllowedBackend(queryOverride)) {
-                    try {
-                        const parsed = new URL(queryOverride);
-                        window.localStorage.setItem(backendOverrideKey, parsed.origin);
-                    } catch (_) {
-                        // Ignora override non validi e usa il fallback standard.
-                    }
+                    const parsed = new URL(queryOverride);
+                    window.localStorage.setItem(backendOverrideKey, parsed.origin);
                 }
             }
 

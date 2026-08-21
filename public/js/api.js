@@ -16,7 +16,7 @@ const OPEN_METEO_DAILY_FIELDS =
     "precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_direction_10m_dominant";
 const OPEN_METEO_HOURLY_FIELDS =
     "temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,wind_direction_10m," +
-    "precipitation_probability,precipitation,weather_code";
+    "precipitation_probability,precipitation,weather_code,surface_pressure,dew_point_2m,cape";
 const OPEN_METEO_FORECAST_DAYS = 16;
 // Ore di dettaglio orario richieste a Open-Meteo: 7 giorni, così anche i giorni
 // successivi a oggi hanno la scansione ora-per-ora (prima erano 24h → la card
@@ -421,6 +421,9 @@ function formatWeatherForFrontend(rawData, cityName) {
         clouds: current.cloud_cover || 0,
         precipitation: current.precipitation || 0,
         pop,
+        forecast_pop: hourlyPop,
+        dew_point: currentHourIndex >= 0 ? ((hourly.dew_point_2m || [])[currentHourIndex] ?? null) : null,
+        cape: currentHourIndex >= 0 ? ((hourly.cape || [])[currentHourIndex] ?? null) : null,
         weather_code: effectiveWmo,
         weather: [{ description, icon }],
     };
@@ -457,6 +460,7 @@ function formatWeatherForFrontend(rawData, cityName) {
         const [dayDesc, dayIcon] = wmoToDescription(wmoCode);
         const minTemp = (daily.temperature_2m_min || [])[i] || 0;
         const maxTemp = (daily.temperature_2m_max || [])[i] || 0;
+        const representativeIndex = hourlyTimes.findIndex((value) => String(value).startsWith(`${dailyTimes[i]}T14`));
 
         dailyFormatted.push({
             dt: dailyTimes[i],
@@ -471,6 +475,10 @@ function formatWeatherForFrontend(rawData, cityName) {
             wind_deg: (daily.wind_direction_10m_dominant || [])[i] || 0,
             pop: ((daily.precipitation_probability_max || [])[i] || 0) / 100,
             precipitation_sum: Math.round(((daily.precipitation_sum || [])[i] || 0) * 10) / 10,
+            surface_pressure:
+                representativeIndex >= 0 ? ((hourly.surface_pressure || [])[representativeIndex] ?? null) : null,
+            dew_point: representativeIndex >= 0 ? ((hourly.dew_point_2m || [])[representativeIndex] ?? null) : null,
+            cape: representativeIndex >= 0 ? ((hourly.cape || [])[representativeIndex] ?? null) : null,
             weather: [{ description: dayDesc, icon: dayIcon }],
             weather_code: wmoCode,
         });
@@ -537,6 +545,10 @@ export async function fetchMlEnrichment(city, weatherPayload) {
                 wind_deg: weatherPayload.current?.wind_deg,
                 precipitation: weatherPayload.current?.precipitation,
                 weather_code: weatherPayload.current?.weather_code,
+                pop: weatherPayload.current?.forecast_pop,
+                surface_pressure: weatherPayload.current?.pressure,
+                dew_point: weatherPayload.current?.dew_point,
+                cape: weatherPayload.current?.cape,
             },
             daily: weatherPayload.daily.map((day) => ({
                 dt: day.dt,
@@ -548,6 +560,9 @@ export async function fetchMlEnrichment(city, weatherPayload) {
                 pop: day.pop,
                 precipitation_sum: day.precipitation_sum,
                 weather_code: day.weather_code,
+                surface_pressure: day.surface_pressure,
+                dew_point: day.dew_point,
+                cape: day.cape,
             })),
         }),
     });

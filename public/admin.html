@@ -13,7 +13,7 @@
 
     <script>
         (() => {
-            const backendOverrideKey = "meteo_backend_override";
+            const backendOverrideKey = "meteo_admin_backend_override";
             const params = new URLSearchParams(window.location.search);
             const hostname = window.location.hostname;
             const isLoopbackHost = ["localhost", "127.0.0.1"].includes(hostname);
@@ -21,15 +21,27 @@
             const isLocalNetworkHost = isLoopbackHost || isPrivateIpv4 || hostname.endsWith(".local");
             const queryOverride = params.get("backend");
 
+            function isAllowedBackend(urlString) {
+                try {
+                    const url = new URL(urlString);
+                    const h = url.hostname;
+                    if (!["http:", "https:"].includes(url.protocol)) return false;
+                    if (["localhost", "127.0.0.1"].includes(h)) return true;
+                    if (/^(10\.(\d{1,3}\.){2}\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})$/.test(h)) return true;
+                    if (h.endsWith(".local")) return true;
+                    return h === "meteo-ai-backend.onrender.com" && url.protocol === "https:";
+                } catch (_) {
+                    return false;
+                }
+            }
+
             if (queryOverride === "clear") {
                 window.localStorage.removeItem(backendOverrideKey);
             } else if (queryOverride) {
-                try {
+                if (isAllowedBackend(queryOverride)) {
                     const parsed = new URL(queryOverride);
-                    if (["http:", "https:"].includes(parsed.protocol)) {
-                        window.localStorage.setItem(backendOverrideKey, parsed.origin);
-                    }
-                } catch (_) {}
+                    window.localStorage.setItem(backendOverrideKey, parsed.origin);
+                }
             }
 
             const storedOverride = window.localStorage.getItem(backendOverrideKey);
@@ -37,8 +49,10 @@
                 ? `http://${hostname}:8000`
                 : "https://meteo-ai-backend.onrender.com";
 
-            if (storedOverride) {
+            if (storedOverride && isAllowedBackend(storedOverride)) {
                 backendUrl = storedOverride;
+            } else if (storedOverride) {
+                window.localStorage.removeItem(backendOverrideKey);
             }
 
             window.APP_ENV = isLocalNetworkHost ? "development" : "production";

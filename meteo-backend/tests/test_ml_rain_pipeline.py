@@ -221,3 +221,59 @@ def test_db_verify_predictions_bulk_multi_city_dedup(tmp_path, monkeypatch):
         assert len(verified) == 4
         # Nessuna predizione verificata due volte (verified_at impostato una sola volta)
         assert all(p.verified_at is not None for p in verified)
+
+
+def test_db_verify_predictions_verifies_every_horizon_for_same_target(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ml-horizons.db'}")
+    TestingSessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(scheduler, "SessionLocal", TestingSessionLocal)
+
+    target = datetime(2026, 8, 21, 12, 0, 0)
+    with TestingSessionLocal() as db:
+        db.add(
+            City(
+                id=1,
+                name="Massa",
+                name_lower="massa",
+                region="Toscana",
+                province="Massa-Carrara",
+                lat=44.0,
+                lon=10.1,
+            )
+        )
+        for pred_id, lead in enumerate((1, 3, 6, 14, 38, 86, 158), start=1):
+            db.add(
+                MlPrediction(
+                    id=pred_id,
+                    city_id=1,
+                    predicted_at=target - timedelta(hours=lead),
+                    target_time=target,
+                    lead_hours=lead,
+                    predicted_temp=20.0,
+                    forecast_temp=20.0,
+                    verified=False,
+                )
+            )
+        db.commit()
+
+    verified_count, _ = scheduler._db_verify_predictions(
+        [
+            {
+                "city_id": 1,
+                "observed_at": target.replace(tzinfo=timezone.utc),
+                "temp": 21.0,
+                "precipitation": 0.4,
+                "observation_source": "station",
+                "observation_interval_minutes": 60,
+            }
+        ]
+    )
+
+    assert verified_count == 7
+    with TestingSessionLocal() as db:
+        rows = db.query(MlPrediction).order_by(MlPrediction.lead_hours).all()
+        assert all(row.verified for row in rows)
+        assert {row.lead_hours for row in rows} == {1, 3, 6, 14, 38, 86, 158}
+        assert all(row.actual_source == "station" for row in rows)
+        assert all(row.actual_interval_minutes == 60 for row in rows)

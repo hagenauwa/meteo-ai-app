@@ -16,7 +16,7 @@
 ## Regole di manutenzione
 
 - `public/js/` è il frontend reale.
-- `netlify/functions/` è legacy: non aggiungere nuove integrazioni lì.
+- Netlify pubblica soltanto `public/`; le API vivono esclusivamente nel backend FastAPI.
 - `meteo-backend/main.py` registra middleware, health/readiness e router.
 - `meteo-backend/routers/` contiene gli endpoint pubblici/amministrativi.
 - `meteo-backend/*_service.py` contiene logica applicativa e integrazioni esterne.

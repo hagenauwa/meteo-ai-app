@@ -17,6 +17,8 @@ def test_ml_training_bounds_defaults(monkeypatch):
     monkeypatch.delenv("ML_CYCLE_EVERY_HOURS", raising=False)
     monkeypatch.delenv("ML_OBSERVATION_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("ML_PREDICTION_RETENTION_DAYS", raising=False)
+    monkeypatch.delenv("ML_V2_SHADOW_ONLY", raising=False)
+    monkeypatch.delenv("ML_V2_ROLLOUT_PERCENT", raising=False)
 
     settings = config.load_settings()
 
@@ -28,6 +30,8 @@ def test_ml_training_bounds_defaults(monkeypatch):
     assert settings.ml_cycle_every_hours == 1
     assert settings.ml_observation_retention_days == 7
     assert settings.ml_prediction_retention_days == 8
+    assert settings.ml_v2_shadow_only is True
+    assert settings.ml_v2_rollout_percent == 0
 
 
 def test_ml_training_bounds_have_minimums(monkeypatch):

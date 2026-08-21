@@ -68,7 +68,7 @@ class City(Base):
 
 
 class WeatherObservation(Base):
-    """Osservazione meteo reale raccolta ogni ora dal cron job."""
+    """Valore di riferimento raccolto dal cron, con provenienza esplicita."""
 
     __tablename__ = "weather_observations"
 
@@ -81,6 +81,8 @@ class WeatherObservation(Base):
     wind_speed = Column(Float)
     wind_direction = Column(Float)
     precipitation = Column(Float)
+    observation_source = Column(Text, nullable=False, default="unknown")
+    observation_interval_minutes = Column(Integer)
 
     city = relationship("City", back_populates="observations")
 
@@ -122,6 +124,27 @@ class MlPrediction(Base):
     actual_cloud_cover = Column(Float, nullable=True)
     actual_wind_speed = Column(Float, nullable=True)
     actual_wind_direction = Column(Float, nullable=True)
+    actual_source = Column(Text, nullable=True)
+    actual_interval_minutes = Column(Integer, nullable=True)
+    # Snapshot immutabile del modello disponibile quando il forecast è emesso.
+    # Permette metriche prequential senza ricalcolare oggi un modello sul passato.
+    evaluation_model_store_id = Column(Integer, nullable=True)
+    evaluation_model_variant = Column(Text, nullable=True)
+    evaluation_corrected_temp = Column(Float, nullable=True)
+    evaluation_rain_probability = Column(Float, nullable=True)
+    evaluation_rain_threshold = Column(Float, nullable=True)
+    evaluation_condition_code = Column(Integer, nullable=True)
+    evaluation_rain_blend_weight = Column(Float, nullable=True)
+    evaluation_generated_at = Column(DateTime(timezone=True), nullable=True)
+    # Coppia shadow V1/V2 congelata allo stesso istante. Questi campi rendono il
+    # gate di rollout realmente prequential: nessun modello corrente viene
+    # ricalcolato retrospettivamente sulle righe già verificate.
+    shadow_v1_rain_probability = Column(Float, nullable=True)
+    shadow_v1_rain_threshold = Column(Float, nullable=True)
+    shadow_v1_condition_code = Column(Integer, nullable=True)
+    shadow_v2_rain_probability = Column(Float, nullable=True)
+    shadow_v2_rain_threshold = Column(Float, nullable=True)
+    shadow_v2_condition_code = Column(Integer, nullable=True)
 
     city = relationship("City", back_populates="predictions")
 

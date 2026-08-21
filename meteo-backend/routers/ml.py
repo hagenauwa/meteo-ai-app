@@ -48,6 +48,10 @@ class EnrichCurrentPayload(BaseModel):
     wind_deg: float | None = 0.0
     precipitation: float | None = 0.0
     weather_code: int | None = None
+    pop: float | None = None
+    surface_pressure: float | None = None
+    dew_point: float | None = None
+    cape: float | None = None
 
 
 class EnrichDayTempPayload(BaseModel):
@@ -66,6 +70,9 @@ class EnrichDayPayload(BaseModel):
     pop: float | None = 0.0
     precipitation_sum: float | None = 0.0
     weather_code: int | None = None
+    surface_pressure: float | None = None
+    dew_point: float | None = None
+    cape: float | None = None
 
     @field_validator("dt")
     @classmethod
@@ -523,6 +530,10 @@ async def enrich_forecast(
         cloud_cover=payload.current.clouds or 50.0,
         lead_hours=0,
         city_name=payload.city.name,
+        forecast_precipitation_probability=(payload.current.pop * 100.0 if payload.current.pop is not None else None),
+        forecast_surface_pressure=payload.current.surface_pressure,
+        forecast_dew_point=payload.current.dew_point,
+        forecast_cape=payload.current.cape,
     )
 
     daily_ml = await asyncio.to_thread(
@@ -558,6 +569,10 @@ async def get_rain_prediction(
     forecast_wind_speed: float | None = Query(None),
     forecast_wind_direction: float | None = Query(None),
     forecast_weather_code: int | None = Query(None),
+    forecast_precipitation_probability: float | None = Query(None, ge=0.0, le=100.0),
+    forecast_surface_pressure: float | None = Query(None),
+    forecast_dew_point: float | None = Query(None),
+    forecast_cape: float | None = Query(None, ge=0.0),
     db: Session = Depends(get_db),
 ):
     now = _rome_now()
@@ -586,6 +601,10 @@ async def get_rain_prediction(
         forecast_wind_speed=forecast_wind_speed,
         forecast_wind_direction=forecast_wind_direction,
         forecast_weather_code=forecast_weather_code,
+        forecast_precipitation_probability=forecast_precipitation_probability,
+        forecast_surface_pressure=forecast_surface_pressure,
+        forecast_dew_point=forecast_dew_point,
+        forecast_cape=forecast_cape,
         city_name=city,
     )
 

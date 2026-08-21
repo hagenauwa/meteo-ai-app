@@ -172,7 +172,7 @@ def _exercise_public_helpers():
         lon=12.5,
         region="Lazio",
         cloud_cover=40.0,
-        lead_hours=0,
+        lead_hours=1,
     )
     rain = ml_model.predict_rain_probability(
         forecast_temp=20.0,
@@ -183,7 +183,7 @@ def _exercise_public_helpers():
         lon=12.5,
         region="Lazio",
         cloud_cover=40.0,
-        lead_hours=0,
+        lead_hours=1,
         city_name="Roma",
     )
     condition = ml_model.predict_condition_outlook(
@@ -319,7 +319,7 @@ def test_valid_model_fixture_keeps_public_ml_ready_without_disabled_status(isola
 
 
 def test_signing_key_prefers_model_signing_key_over_admin_api_token(monkeypatch):
-    """_signing_key() deve preferire model_signing_key con fallback a admin_api_token."""
+    """La chiave dedicata è preferita; il fallback resta solo in sviluppo."""
     # Caso 1: solo model_signing_key impostata
     monkeypatch.setattr(
         ml_model,
@@ -332,9 +332,16 @@ def test_signing_key_prefers_model_signing_key_over_admin_api_token(monkeypatch)
     monkeypatch.setattr(
         ml_model,
         "settings",
-        SimpleNamespace(model_signing_key="", admin_api_token="admin-key"),
+        SimpleNamespace(model_signing_key="", admin_api_token="admin-key", is_production=False),
     )
     assert ml_model._signing_key() == b"admin-key"
+
+    monkeypatch.setattr(
+        ml_model,
+        "settings",
+        SimpleNamespace(model_signing_key="", admin_api_token="admin-key", is_production=True),
+    )
+    assert ml_model._signing_key() is None
 
     # Caso 3: entrambe vuote -> None (pickle non firmato, vettore preesistente)
     monkeypatch.setattr(

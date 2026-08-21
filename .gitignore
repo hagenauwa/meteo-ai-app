@@ -36,6 +36,12 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.venv/
+.coverage
+
+# Test e2e
+test-results/
+playwright-report/
 
 # Database SQLite locale (non committare — su server si usa PostgreSQL)
 *.db

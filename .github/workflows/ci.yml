@@ -8,7 +8,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install -r meteo-backend/requirements.txt
-      - run: pytest --cov=. --cov-report=xml
+      - run: pip install pip-audit ruff
+      - run: pip-audit -r meteo-backend/requirements.txt
+      - run: ruff check . && ruff format --check .
+        working-directory: meteo-backend
+      - run: pytest --cov=. --cov-report=xml --cov-fail-under=60
         working-directory: meteo-backend
 
   frontend-test:
@@ -18,7 +22,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20", cache: "npm" }
       - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npx biome check public/js scripts tests/e2e
+      - run: npm run build
       - run: npx playwright install --with-deps
-      - run: npx netlify dev &
-      - run: npx wait-on http://localhost:8888 --timeout 30000 || true
-      - run: npm run test:e2e || true
+      - name: Start frontend
+        run: npx netlify dev > /tmp/netlify-dev.log 2>&1 &
+      - name: Wait for frontend
+        run: timeout 30s bash -c 'until curl --fail --silent http://localhost:8888 >/dev/null; do sleep 1; done'
+      - run: npm run test:e2e

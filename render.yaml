@@ -13,13 +13,9 @@ services:
       - key: ADMIN_API_TOKEN
         sync: false        # richiesto per /api/admin/* e /api/ml/train
       - key: MODEL_SIGNING_KEY
-        sync: false        # chiave dedicata firma modelli ML (HMAC su pickle).
-                           # ATTENZIONE: impostandola si ruota la chiave di firma ->
-                           # i modelli esistenti firmati con ADMIN_API_TOKEN non
-                           # validano piu' e il ML si disabilita fino al riaddestramento.
-                           # Al primo deploy con questa var impostata, lanciare un
-                           # /api/ml/train subito dopo. Se non impostata, fallback a
-                           # ADMIN_API_TOKEN (backward-compat).
+        sync: false        # obbligatoria in produzione per la firma HMAC dei modelli.
+                           # La prima configurazione invalida i modelli precedenti:
+                           # riaddestrare solo dopo avere dati osservativi affidabili.
       - key: FRONTEND_ORIGIN
         value: "https://leprevisioni.netlify.app"
       - key: APP_ENV
@@ -34,6 +30,14 @@ services:
         value: "100"
       - key: ML_FORECAST_LEADS
         value: "1,3,6,14,38,86,158"
+      - key: ML_V2_SHADOW_ONLY
+        value: "true"
+      - key: ML_V2_ROLLOUT_PERCENT
+        value: "0"
+      - key: ML_REQUIRE_TRUSTED_OBSERVATIONS
+        value: "true"
+      - key: ML_TRUSTED_OBSERVATION_SOURCES
+        value: "station,arpa,meteostat"
       - key: ML_CYCLE_EVERY_HOURS
         value: "1"
       - key: ML_OBSERVATION_RETENTION_DAYS
@@ -57,6 +61,8 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: MODEL_SIGNING_KEY
+        sync: false        # deve coincidere con la chiave del servizio web
       - key: APP_ENV
         value: "production"
       - key: ENABLE_SCHEDULER
@@ -69,6 +75,14 @@ services:
         value: "100"
       - key: ML_FORECAST_LEADS
         value: "1,3,6,14,38,86,158"
+      - key: ML_V2_SHADOW_ONLY
+        value: "true"
+      - key: ML_V2_ROLLOUT_PERCENT
+        value: "0"
+      - key: ML_REQUIRE_TRUSTED_OBSERVATIONS
+        value: "true"
+      - key: ML_TRUSTED_OBSERVATION_SOURCES
+        value: "station,arpa,meteostat"
       - key: ML_CYCLE_EVERY_HOURS
         value: "1"
       - key: ML_OBSERVATION_RETENTION_DAYS

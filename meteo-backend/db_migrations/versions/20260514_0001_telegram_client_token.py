@@ -81,10 +81,11 @@ def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
+    # Gli indici chat_id e linking_code appartengono alla revisione precedente.
+    # Rimuoverli qui rompe il downgrade successivo, che deve eliminarli insieme
+    # alla tabella telegram_subscriptions.
     for table_name, index_name in [
         ("telegram_subscriptions", "idx_telegram_subscriptions_client_token_hash"),
-        ("telegram_subscriptions", "idx_telegram_subscriptions_linking_code"),
-        ("telegram_subscriptions", "idx_telegram_subscriptions_chat_id"),
     ]:
         if _has_table(inspector, table_name) and _has_index(inspector, table_name, index_name):
             op.drop_index(index_name, table_name=table_name)
