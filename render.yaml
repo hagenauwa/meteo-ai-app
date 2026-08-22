@@ -98,7 +98,7 @@ services:
     rootDir: meteo-backend
     buildCommand: pip install -r requirements.txt
     startCommand: python scripts/run_telegram_checks.py
-    schedule: "0 * * * *"  # ogni ora allo :00
+    schedule: "*/15 * * * *"  # ogni 15 minuti, necessario per gli avvisi a breve termine
     envVars:
       - key: DATABASE_URL
         sync: false

@@ -1,3 +1,6 @@
+import { searchCities } from "./api.js";
+import { createAutocomplete } from "./autocomplete.js";
+
 const BACKEND_URL = window.BACKEND_URL || "http://localhost:8000";
 const TELEGRAM_CODE_KEY = "le_previsioni_telegram_code_v1";
 const TELEGRAM_CLIENT_TOKEN_KEY = "le_previsioni_telegram_client_token_v1";
@@ -10,6 +13,7 @@ let telegramPollingInterval = null;
 let consecutiveFailures = 0;
 let isGeneratingLinkCode = false;
 let linkCodeRequestId = 0;
+let selectedTelegramCity = null;
 
 // Escaping HTML per i valori controllati dall'utente (user_name, città, messaggi
 // di errore) inseriti via innerHTML: previene rotture del markup e XSS.
@@ -245,6 +249,17 @@ function showTelegramLinked(status) {
 
     if (btn) btn.classList.add("is-active");
 
+    selectedTelegramCity =
+        status.city_lat != null && status.city_lon != null
+            ? {
+                  name: status.city,
+                  lat: status.city_lat,
+                  lon: status.city_lon,
+                  region: status.city_region || "",
+                  province: status.city_province || "",
+              }
+            : null;
+
     content.innerHTML = `
         <div class="telegram-linked">
             <div class="telegram-status-header">
@@ -283,9 +298,10 @@ function showTelegramLinked(status) {
                     </select>
                 </div>
 
-                <div class="telegram-pref-item">
+                <div class="telegram-pref-item telegram-city-picker">
                     <label>Città:</label>
                     <input type="text" id="tgCity" value="${escapeHtml(status.city || "")}" placeholder="Es. Roma" class="telegram-city-input">
+                    <div id="tgCitySuggestions" class="autocomplete-list hidden"></div>
                 </div>
 
                 <button id="telegramSaveBtn" class="btn-primary btn-sm telegram-save-btn">
@@ -304,6 +320,24 @@ function showTelegramLinked(status) {
         const hourPicker = document.getElementById("tgHourPicker");
         if (hourPicker) hourPicker.style.display = e.target.checked ? "" : "none";
     });
+
+    const cityInput = document.getElementById("tgCity");
+    const citySuggestions = document.getElementById("tgCitySuggestions");
+    if (cityInput && citySuggestions) {
+        cityInput.addEventListener("input", () => {
+            if (cityInput.value.trim() !== selectedTelegramCity?.name) {
+                selectedTelegramCity = null;
+            }
+        });
+        createAutocomplete({
+            input: cityInput,
+            list: citySuggestions,
+            getSuggestions: (query, options) => searchCities(query, 8, "all", options),
+            onSelect: (city) => {
+                selectedTelegramCity = city;
+            },
+        });
+    }
 
     document.getElementById("telegramSaveBtn")?.addEventListener("click", async () => {
         await savePreferences();
@@ -324,6 +358,10 @@ async function savePreferences() {
         daily_forecast_enabled: document.getElementById("tgDailyForecast")?.checked || false,
         daily_forecast_hour: parseInt(document.getElementById("tgForecastHour")?.value || "8", 10),
         city: document.getElementById("tgCity")?.value?.trim() || null,
+        city_lat: selectedTelegramCity?.lat ?? null,
+        city_lon: selectedTelegramCity?.lon ?? null,
+        city_region: selectedTelegramCity?.region || null,
+        city_province: selectedTelegramCity?.province || null,
     };
 
     try {

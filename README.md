@@ -48,7 +48,7 @@ meteo-ai-app/
 │   └── functions/             # Serverless functions (legacy/optional)
 ├── netlify.toml               # Configurazione Netlify
 ├── render.yaml                # Configurazione Render (web + cron)
-├── package.json               # Dipendenze Node (netlify-cli, cross-env)
+├── package.json               # Dipendenze Node e comandi di sviluppo
 ├── meteo-backend/             # Backend Python (deploy su Render)
 │   ├── main.py                # FastAPI app
 │   ├── config.py              # Settings env-based

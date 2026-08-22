@@ -7,8 +7,8 @@
     "dev": "node scripts/dev-local.js",
     "dev:frontend": "node scripts/dev-local.js --frontend-only",
     "dev:backend": "node scripts/dev-local.js --backend-only",
-    "dev:netlify": "netlify dev",
-    "dev:live": "netlify dev --live",
+    "dev:netlify": "npx --yes netlify-cli@27.1.2 dev",
+    "dev:live": "npx --yes netlify-cli@27.1.2 dev --live",
     "dev:backend:full": "node scripts/dev-local.js --backend-full",
     "check": "npm run check:py && npm run check:js && npm run check:backend && npm run build",
     "check:py": "ruff check --config meteo-backend/pyproject.toml $(git ls-files '*.py') && ruff format --check --config meteo-backend/pyproject.toml $(git ls-files '*.py')",
@@ -23,7 +23,7 @@
     "dead-code": "fallow dead-code --root . --format compact",
     "build": "echo 'Static site - no build needed'",
     "test:e2e": "playwright test",
-    "deploy": "netlify deploy --prod"
+    "deploy": "npx --yes netlify-cli@27.1.2 deploy --prod"
   },
   "keywords": [
     "meteo",
@@ -40,7 +40,6 @@
     "@biomejs/biome": "^2.5.0",
     "@playwright/test": "^1.42.0",
     "cross-env": "^7.0.3",
-    "fallow": "^2.96.0",
-    "netlify-cli": "^17.0.0"
+    "fallow": "^2.96.0"
   }
 }

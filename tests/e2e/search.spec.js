@@ -11,7 +11,7 @@ async function mockWeatherApis(page, cityName) {
     const tomorrow = isoDate(1);
     const currentHour = `${today}T${String(new Date().getHours()).padStart(2, "0")}:00`;
 
-    await page.route("https://geocoding-api.open-meteo.com/**", route =>
+    await page.route("https://geocoding-api.open-meteo.com/**", (route) =>
         route.fulfill({
             json: {
                 results: [
@@ -26,9 +26,9 @@ async function mockWeatherApis(page, cityName) {
                     },
                 ],
             },
-        })
+        }),
     );
-    await page.route("https://api.open-meteo.com/**", route =>
+    await page.route("https://api.open-meteo.com/**", (route) =>
         route.fulfill({
             json: {
                 latitude: 41.9,
@@ -73,9 +73,9 @@ async function mockWeatherApis(page, cityName) {
                     wind_direction_10m_dominant: [180, 190],
                 },
             },
-        })
+        }),
     );
-    await page.route("https://meteo-ai-backend.onrender.com/**", route => {
+    await page.route("https://meteo-ai-backend.onrender.com/**", (route) => {
         const url = new URL(route.request().url());
         if (url.pathname === "/api/cities/search") {
             return route.fulfill({

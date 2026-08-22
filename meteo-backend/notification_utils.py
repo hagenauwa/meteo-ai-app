@@ -14,6 +14,7 @@ import html
 import logging
 import time
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -135,6 +136,10 @@ def get_ml_rain_probability(
     forecast_wind_speed: float | None = None,
     forecast_wind_direction: float | None = None,
     forecast_weather_code: int | None = None,
+    forecast_precipitation_probability: float | None = None,
+    forecast_surface_pressure: float | None = None,
+    forecast_dew_point: float | None = None,
+    forecast_cape: float | None = None,
     region: str = "Sconosciuta",
 ) -> dict:
     """
@@ -156,6 +161,10 @@ def get_ml_rain_probability(
             forecast_wind_speed=forecast_wind_speed,
             forecast_wind_direction=forecast_wind_direction,
             forecast_weather_code=forecast_weather_code,
+            forecast_precipitation_probability=forecast_precipitation_probability,
+            forecast_surface_pressure=forecast_surface_pressure,
+            forecast_dew_point=forecast_dew_point,
+            forecast_cape=forecast_cape,
             city_name=city_name,
         )
         return result
@@ -181,6 +190,7 @@ def check_hourly_rain_adaptive(
     region: str = "Sconosciuta",
     max_lead_hours: int = MAX_LEAD_HOURS,
     ml_coverage: bool = True,
+    now: datetime | None = None,
 ) -> dict | None:
     """
     Scansiona le previsioni orarie con logica adattiva:
@@ -201,10 +211,31 @@ def check_hourly_rain_adaptive(
     wind_speeds = hourly.get("wind_speed_10m", [])
     wind_directions = hourly.get("wind_direction_10m", [])
 
-    now = datetime.now(ZoneInfo("Europe/Rome"))
+    rome_tz = ZoneInfo("Europe/Rome")
+    now_rome = (now or datetime.now(rome_tz)).astimezone(rome_tz)
+    horizon = now_rome + timedelta(hours=max_lead_hours)
+    surface_pressures = hourly.get("surface_pressure", [])
+    dew_points = hourly.get("dew_point_2m", [])
+    capes = hourly.get("cape", [])
 
     for i, time_str in enumerate(times):
-        if i >= max_lead_hours:
+        try:
+            forecast_time = datetime.fromisoformat(str(time_str))
+            if forecast_time.tzinfo is None:
+                forecast_time = forecast_time.replace(tzinfo=rome_tz)
+            else:
+                forecast_time = forecast_time.astimezone(rome_tz)
+        except (ValueError, TypeError):
+            continue
+
+        # Open-Meteo associa POP e precipitazione al periodo che termina
+        # all'orario indicato. Selezioniamo solo intervalli che si sovrappongono
+        # davvero alla finestra futura richiesta.
+        interval_start = forecast_time - timedelta(hours=1)
+        interval_end = forecast_time
+        if interval_end <= now_rome:
+            continue
+        if interval_start >= horizon:
             break
 
         pop = (pops[i] if i < len(pops) else 0) or 0
@@ -220,19 +251,8 @@ def check_hourly_rain_adaptive(
         if not meets_pop and not meets_wmo and not meets_precip:
             continue
 
-        # Calcola lead_hours dall'orario previsto
-        forecast_hour = now.hour
-        try:
-            forecast_time = datetime.fromisoformat(time_str)
-            if forecast_time.tzinfo is None:
-                forecast_time = forecast_time.replace(tzinfo=timezone.utc)
-            forecast_hour = forecast_time.hour
-            lead_hours = max(
-                0,
-                int((forecast_time - now.replace(tzinfo=timezone.utc)).total_seconds() / 3600),
-            )
-        except (ValueError, TypeError):
-            lead_hours = i
+        forecast_hour = forecast_time.hour
+        lead_hours = max(1, ceil((interval_end - now_rome).total_seconds() / 3600))
 
         # Ottieni ML probability solo se la città è nell'area coperta dal modello:
         # fuori area sarebbe un'estrapolazione fuorviante (serving onesto).
@@ -244,13 +264,17 @@ def check_hourly_rain_adaptive(
                 forecast_temp=temperatures[i] if i < len(temperatures) else 20.0,
                 humidity=humidities[i] if i < len(humidities) else 50.0,
                 hour=forecast_hour,
-                month=now.month,
+                month=forecast_time.month,
                 cloud_cover=cloud_covers[i] if i < len(cloud_covers) else 50.0,
                 lead_hours=lead_hours,
                 forecast_precipitation=precipitation,
                 forecast_wind_speed=wind_speeds[i] if i < len(wind_speeds) else None,
                 forecast_wind_direction=wind_directions[i] if i < len(wind_directions) else None,
                 forecast_weather_code=weather_code,
+                forecast_precipitation_probability=pop,
+                forecast_surface_pressure=surface_pressures[i] if i < len(surface_pressures) else None,
+                forecast_dew_point=dew_points[i] if i < len(dew_points) else None,
+                forecast_cape=capes[i] if i < len(capes) else None,
                 region=region,
             )
         else:
@@ -291,6 +315,8 @@ def check_hourly_rain_adaptive(
             return {
                 "hour_index": i,
                 "time": time_str,
+                "interval_start": interval_start,
+                "interval_end": interval_end,
                 "pop": pop_fraction,
                 "weather_code": weather_code,
                 "precipitation": precipitation,
@@ -304,10 +330,17 @@ def check_hourly_rain_adaptive(
     return None
 
 
-def find_rain_time_slots(hourly: dict, threshold: float = 0.40) -> list[str]:
+def find_rain_time_slots(
+    hourly: dict,
+    threshold: float = 0.40,
+    *,
+    target_date=None,
+    not_before: datetime | None = None,
+) -> list[str]:
     """
     Scansiona TUTTE le ore disponibili e raggruppa quelle piovose in range consecutivi.
-    Restituisce max 3 periodi formattati come "14:00-16:00" o "14:00" per singola ora.
+    Restituisce al massimo 3 periodi formattati come intervalli, ad esempio
+    "14:00-16:00". Anche una singola ora mantiene inizio e fine espliciti.
     """
     times = hourly.get("time", [])
     pops = hourly.get("precipitation_probability", [])
@@ -317,8 +350,25 @@ def find_rain_time_slots(hourly: dict, threshold: float = 0.40) -> list[str]:
     if not times:
         return []
 
-    rainy_indices: list[int] = []
-    for i, _time_str in enumerate(times):
+    rome_tz = ZoneInfo("Europe/Rome")
+    cutoff = not_before.astimezone(rome_tz) if not_before is not None else None
+    rainy_intervals: list[tuple[datetime, datetime]] = []
+    for i, time_str in enumerate(times):
+        try:
+            interval_end = datetime.fromisoformat(str(time_str))
+            if interval_end.tzinfo is None:
+                interval_end = interval_end.replace(tzinfo=rome_tz)
+            else:
+                interval_end = interval_end.astimezone(rome_tz)
+        except (ValueError, TypeError):
+            continue
+        interval_start = interval_end - timedelta(hours=1)
+
+        if target_date is not None and interval_start.date() != target_date:
+            continue
+        if cutoff is not None and interval_end <= cutoff:
+            continue
+
         pop = (pops[i] if i < len(pops) else 0) or 0
         weather_code = weather_codes[i] if i < len(weather_codes) else None
         precipitation = precipitations[i] if i < len(precipitations) else 0
@@ -328,37 +378,22 @@ def find_rain_time_slots(hourly: dict, threshold: float = 0.40) -> list[str]:
         meets_precip = (precipitation or 0) > 0.1
 
         if meets_pop or meets_wmo or meets_precip:
-            rainy_indices.append(i)
+            rainy_intervals.append((interval_start, interval_end))
 
-    if not rainy_indices:
+    if not rainy_intervals:
         return []
 
-    # Raggruppa indici consecutivi in range
-    ranges: list[tuple[int, int]] = []
-    start = rainy_indices[0]
-    end = rainy_indices[0]
-    for idx in rainy_indices[1:]:
-        if idx == end + 1:
-            end = idx
+    ranges: list[tuple[datetime, datetime]] = []
+    start, end = rainy_intervals[0]
+    for next_start, next_end in rainy_intervals[1:]:
+        if next_start == end:
+            end = next_end
         else:
             ranges.append((start, end))
-            start = idx
-            end = idx
+            start, end = next_start, next_end
     ranges.append((start, end))
 
-    # Formatta: "HH:MM-HH:MM" per range, "HH:MM" per singola ora; max 3
-    result: list[str] = []
-    for start_idx, end_idx in ranges[:3]:
-        start_time = times[start_idx]
-        end_time = times[end_idx]
-        start_hm = start_time[11:16]
-        end_hm = end_time[11:16]
-        if start_idx == end_idx:
-            result.append(start_hm)
-        else:
-            result.append(f"{start_hm}-{end_hm}")
-
-    return result
+    return [f"{start:%H:%M}-{end:%H:%M}" for start, end in ranges[:3]]
 
 
 # ─── Cooldown management ─────────────────────────────────────────────────────
@@ -416,10 +451,13 @@ def build_rain_message(city_name: str, rain_info: dict) -> str:
     ml_prob = rain_info.get("ml_probability")
     ml_ready = rain_info.get("ml_ready", False)
     confidence = rain_info.get("confidence", "")
-    trigger_reason = rain_info.get("trigger_reason", "")
+    interval_start = rain_info.get("interval_start")
+    interval_end = rain_info.get("interval_end")
 
-    # Header
-    message = f"🌧️ <b>Sta per piovere a {html.escape(city_name)}!</b>\n\n"
+    message = f"🌧️ <b>Pioggia prevista a {html.escape(city_name)}</b>\n\n"
+
+    if isinstance(interval_start, datetime) and isinstance(interval_end, datetime):
+        message += f"🕒 Finestra prevista: {interval_start:%H:%M}-{interval_end:%H:%M}\n"
 
     # Descrizione condizioni
     message += f"{description}\n"
@@ -438,17 +476,6 @@ def build_rain_message(city_name: str, rain_info: dict) -> str:
         if confidence:
             message += f" (confidenza {confidence})"
         message += "\n"
-
-    # Motivo del trigger (debug, utile per capire)
-    if trigger_reason:
-        reason_labels = {
-            "wmo_rain": "Codice meteo pioggia",
-            "ml_confirmed": "Confermato dal modello ML",
-            "precipitation": "Precipitazione rilevata",
-            "wmo_with_ml_support": "Codice meteo + supporto ML",
-        }
-        reason_text = reason_labels.get(trigger_reason, trigger_reason)
-        message += f"📊 Trigger: {reason_text}\n"
 
     return message
 
@@ -552,6 +579,7 @@ def build_daily_message(
     daily: dict,
     hourly: dict,
     today_idx: int = 0,
+    now: datetime | None = None,
 ) -> str:
     """
     Costruisce il messaggio HTML per il promemoria giornaliero.
@@ -598,8 +626,19 @@ def build_daily_message(
         avg_wind = sum(wind_speeds[:12]) / min(12, len(wind_speeds))
         message += f"💨 Vento medio: {avg_wind:.0f} km/h\n"
 
-    # Fascie orarie pioggia (find_rain_time_slots limita già a max 3 periodi)
-    rain_slots = find_rain_time_slots(hourly)
+    # Fasce orarie pioggia (find_rain_time_slots limita già a max 3 periodi)
+    daily_times = daily.get("time", [])
+    target_date = None
+    if 0 <= today_idx < len(daily_times):
+        try:
+            target_date = datetime.fromisoformat(str(daily_times[today_idx])).date()
+        except (ValueError, TypeError):
+            target_date = None
+    rain_slots = find_rain_time_slots(
+        hourly,
+        target_date=target_date,
+        not_before=now or datetime.now(ZoneInfo("Europe/Rome")),
+    )
     if rain_slots:
         message += f"🌧️ Pioggia prevista: {', '.join(rain_slots)}\n"
     else:

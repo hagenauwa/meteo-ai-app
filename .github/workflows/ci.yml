@@ -27,7 +27,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps
       - name: Start frontend
-        run: npx netlify dev > /tmp/netlify-dev.log 2>&1 &
+        run: node scripts/dev-local.js --frontend-only > /tmp/frontend-dev.log 2>&1 &
       - name: Wait for frontend
         run: timeout 30s bash -c 'until curl --fail --silent http://localhost:8888 >/dev/null; do sleep 1; done'
       - run: npm run test:e2e

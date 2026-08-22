@@ -17,6 +17,10 @@ La CI aggiunge inoltre:
 - `pip-audit` e `npm audit` per vulnerabilità note;
 - aggiornamenti settimanali Dependabot per Python, npm e GitHub Actions.
 
+`netlify-cli` non è una dipendenza persistente del progetto. I comandi manuali
+la eseguono tramite `npx`, mentre i test E2E avviano il server statico locale.
+Questo evita che le dipendenze interne della CLI entrino nell'audit npm del sito.
+
 ## Controlli Python
 
 Da eseguire dentro `meteo-backend/`:

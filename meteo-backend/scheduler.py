@@ -26,7 +26,7 @@ RETRAIN_EVERY_HOURS = 6
 # Cadenza del job notifiche Telegram. Deve restare <= 60 min: con MAX_LEAD_HOURS=1
 # in notification_utils gli avvisi pioggia coprono solo l'ora successiva, quindi un
 # controllo troppo diradato perderebbe la finestra utile.
-TELEGRAM_CHECK_EVERY_MINUTES = 30
+TELEGRAM_CHECK_EVERY_MINUTES = 15
 OBSERVATION_RETENTION_DAYS = settings.ml_observation_retention_days
 PREDICTION_RETENTION_DAYS = settings.ml_prediction_retention_days
 TRAINING_STATE_ID = 1
