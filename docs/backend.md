@@ -49,3 +49,15 @@ npm run check:py
   shadow sono prequential: non ricalcolano il modello corrente sul passato.
 - V2 resta in shadow e con rollout zero finché i gate non vengono superati e la
   configurazione di produzione non viene modificata intenzionalmente.
+
+## Notifiche Telegram
+
+- Il cron di produzione controlla gli avvisi ogni 15 minuti.
+- Gli intervalli orari Open-Meteo sono interpretati come periodi che terminano
+  al timestamp restituito. Gli intervalli già conclusi non generano avvisi.
+- Le fasce del promemoria giornaliero sono filtrate sulla data locale richiesta.
+- La sottoscrizione conserva coordinate, regione e provincia della località
+  selezionata per evitare ambiguità tra città omonime.
+- Ogni avviso inviato viene registrato in `telegram_rain_alerts`. Se sono
+  disponibili osservazioni da fonti fidate, il cron lo classifica come `hit` o
+  `false_alarm` senza usare i valori modellistici come verità osservata.

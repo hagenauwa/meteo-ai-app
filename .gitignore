@@ -38,6 +38,7 @@ __pycache__/
 *.pyd
 .venv/
 .coverage
+coverage.xml
 
 # Test e2e
 test-results/

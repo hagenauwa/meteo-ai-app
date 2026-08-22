@@ -241,6 +241,10 @@ class TelegramSubscription(Base):
     chat_id = Column(BigInteger, nullable=True, unique=True)  # Telegram chat ID (valorizzato dopo il linking)
     user_name = Column(String(100), nullable=True)  # username Telegram
     city = Column(String(100), nullable=True)  # città preferita per le notifiche
+    city_lat = Column(Float, nullable=True)
+    city_lon = Column(Float, nullable=True)
+    city_region = Column(String(100), nullable=True)
+    city_province = Column(String(100), nullable=True)
     linking_code = Column(String(10), nullable=True, index=True)  # codice OTP temporaneo
     client_token_hash = Column(String(64), nullable=True, unique=True, index=True)
     linking_code_expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -252,6 +256,29 @@ class TelegramSubscription(Base):
     last_daily_forecast_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class TelegramRainAlert(Base):
+    """Avviso pioggia inviato, con dati sufficienti per deduplica e verifica."""
+
+    __tablename__ = "telegram_rain_alerts"
+
+    id = Column(BigInteger, primary_key=True)
+    subscription_id = Column(BigInteger, ForeignKey("telegram_subscriptions.id"), nullable=False)
+    city = Column(String(100), nullable=False)
+    city_lat = Column(Float, nullable=False)
+    city_lon = Column(Float, nullable=False)
+    forecast_interval_start = Column(DateTime(timezone=True), nullable=False)
+    forecast_interval_end = Column(DateTime(timezone=True), nullable=False)
+    precipitation_probability = Column(Float)
+    precipitation_mm = Column(Float)
+    weather_code = Column(Integer)
+    ml_probability = Column(Float)
+    trigger_reason = Column(String(50))
+    sent_at = Column(DateTime(timezone=True), nullable=False)
+    verification_status = Column(String(20), nullable=False, default="pending")
+    observed_precipitation_mm = Column(Float)
+    verified_at = Column(DateTime(timezone=True))
 
 
 # Indici per performance (compatibili sia SQLite che PostgreSQL)
@@ -270,6 +297,8 @@ Index("idx_push_subscriptions_endpoint", PushSubscription.endpoint)
 Index("idx_telegram_subscriptions_chat_id", TelegramSubscription.chat_id)
 Index("idx_telegram_subscriptions_linking_code", TelegramSubscription.linking_code)
 Index("idx_telegram_subscriptions_client_token_hash", TelegramSubscription.client_token_hash)
+Index("idx_telegram_rain_alert_subscription_sent", TelegramRainAlert.subscription_id, TelegramRainAlert.sent_at)
+Index("idx_telegram_rain_alert_pending", TelegramRainAlert.verification_status, TelegramRainAlert.forecast_interval_end)
 
 
 def get_db():

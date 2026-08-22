@@ -39,6 +39,10 @@ class LinkCodeResponse(BaseModel):
 
 class PreferencesUpdate(BaseModel):
     city: str | None = None
+    city_lat: float | None = None
+    city_lon: float | None = None
+    city_region: str | None = None
+    city_province: str | None = None
     rain_alerts_enabled: bool | None = None
     daily_forecast_enabled: bool | None = None
     daily_forecast_hour: int | None = None
@@ -50,6 +54,10 @@ class TelegramStatusResponse(BaseModel):
     chat_id: int | None = None
     user_name: str | None = None
     city: str | None = None
+    city_lat: float | None = None
+    city_lon: float | None = None
+    city_region: str | None = None
+    city_province: str | None = None
     rain_alerts_enabled: bool = False
     daily_forecast_enabled: bool = False
     daily_forecast_hour: int = 8
@@ -142,6 +150,10 @@ def _build_status_response(sub: TelegramSubscription | None) -> TelegramStatusRe
             chat_id=sub_row.chat_id,
             user_name=sub_row.user_name,
             city=sub_row.city,
+            city_lat=sub_row.city_lat,
+            city_lon=sub_row.city_lon,
+            city_region=sub_row.city_region,
+            city_province=sub_row.city_province,
             rain_alerts_enabled=sub_row.rain_alerts_enabled,
             daily_forecast_enabled=sub_row.daily_forecast_enabled,
             daily_forecast_hour=sub_row.daily_forecast_hour,
@@ -155,6 +167,10 @@ def _build_status_response(sub: TelegramSubscription | None) -> TelegramStatusRe
         linked=False,
         state="pending",
         city=sub_row.city,
+        city_lat=sub_row.city_lat,
+        city_lon=sub_row.city_lon,
+        city_region=sub_row.city_region,
+        city_province=sub_row.city_province,
         rain_alerts_enabled=sub_row.rain_alerts_enabled,
         daily_forecast_enabled=sub_row.daily_forecast_enabled,
         daily_forecast_hour=sub_row.daily_forecast_hour,
@@ -240,7 +256,20 @@ def update_preferences(
     sub_row = cast(Any, sub)
 
     if payload.city is not None:
+        city_changed = payload.city.strip().lower() != (sub_row.city or "").strip().lower()
         sub_row.city = payload.city
+        if city_changed and (payload.city_lat is None or payload.city_lon is None):
+            sub_row.city_lat = None
+            sub_row.city_lon = None
+            sub_row.city_region = None
+            sub_row.city_province = None
+    if payload.city_lat is not None and payload.city_lon is not None:
+        if not (-90 <= payload.city_lat <= 90 and -180 <= payload.city_lon <= 180):
+            raise HTTPException(status_code=422, detail="Coordinate città non valide")
+        sub_row.city_lat = payload.city_lat
+        sub_row.city_lon = payload.city_lon
+        sub_row.city_region = payload.city_region
+        sub_row.city_province = payload.city_province
     if payload.rain_alerts_enabled is not None:
         sub_row.rain_alerts_enabled = payload.rain_alerts_enabled
     if payload.daily_forecast_enabled is not None:
@@ -254,6 +283,10 @@ def update_preferences(
     return {
         "success": True,
         "city": sub_row.city,
+        "city_lat": sub_row.city_lat,
+        "city_lon": sub_row.city_lon,
+        "city_region": sub_row.city_region,
+        "city_province": sub_row.city_province,
         "rain_alerts_enabled": sub_row.rain_alerts_enabled,
         "daily_forecast_enabled": sub_row.daily_forecast_enabled,
         "daily_forecast_hour": sub_row.daily_forecast_hour,

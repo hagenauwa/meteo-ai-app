@@ -2,7 +2,9 @@
 
 import sys
 import os
+from datetime import datetime
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -11,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import notification_utils
 from notification_utils import (
     build_daily_message,
+    build_rain_message,
     check_hourly_rain_adaptive,
     find_rain_time_slots as _find_rain_time_slots,
 )
@@ -49,6 +52,7 @@ def test_rain_adaptive_skips_ml_when_out_of_coverage(monkeypatch):
         city_name="Milano",
         region="Lombardia",
         ml_coverage=False,
+        now=datetime(2026, 5, 22, 9, 30, tzinfo=ZoneInfo("Europe/Rome")),
     )
 
     assert calls == []  # ML non interrogato fuori area
@@ -71,6 +75,7 @@ def test_rain_adaptive_uses_ml_when_in_coverage(monkeypatch):
         city_name="Massa",
         region="Toscana",
         ml_coverage=True,
+        now=datetime(2026, 5, 22, 9, 30, tzinfo=ZoneInfo("Europe/Rome")),
     )
 
     assert len(calls) >= 1
@@ -95,7 +100,7 @@ def test_no_rain():
 
 
 def test_single_hour():
-    """Singola ora piovosa: POP=70 → ["14:00"]."""
+    """Il timestamp 14:00 rappresenta l'intervallo precedente 13:00-14:00."""
     hourly = {
         "time": [
             "2024-01-01T12:00",
@@ -108,7 +113,7 @@ def test_single_hour():
         "precipitation": [0.0, 0.0, 1.2, 0.0],
     }
     result = _find_rain_time_slots(hourly)
-    assert result == ["14:00"]
+    assert result == ["13:00-14:00"]
 
 
 def test_consecutive_range():
@@ -127,7 +132,7 @@ def test_consecutive_range():
         "precipitation": [0.0, 0.0, 1.2, 2.0, 0.8, 0.0],
     }
     result = _find_rain_time_slots(hourly)
-    assert result == ["14:00-16:00"]
+    assert result == ["13:00-16:00"]
 
 
 def test_multiple_disjoint_periods():
@@ -149,7 +154,7 @@ def test_multiple_disjoint_periods():
         "precipitation": [0.0, 0.0, 0.5, 0.8, 0.0, 0.0, 1.5, 2.0, 1.0],
     }
     result = _find_rain_time_slots(hourly)
-    assert result == ["10:00-11:00", "14:00-16:00"]
+    assert result == ["09:00-11:00", "13:00-16:00"]
 
 
 def test_cap_multiple_periods():
@@ -189,7 +194,7 @@ def test_cap_multiple_periods():
     # Consecutive: [06], [08], [10], [14-16], [20]
     # Only first 3 by helper: 06:00, 08:00, 10:00
     assert len(result) == 3
-    assert result == ["06:00", "08:00", "10:00"]
+    assert result == ["05:00-06:00", "07:00-08:00", "09:00-10:00"]
 
 
 def test_missing_data():
@@ -225,7 +230,12 @@ def test_daily_message_prefers_clear_hourly_picture_over_cloudy_daily_code():
         "wind_speed_10m": [5.0] * 12,
     }
 
-    message = build_daily_message("Avenza", daily, hourly)
+    message = build_daily_message(
+        "Avenza",
+        daily,
+        hourly,
+        now=datetime(2026, 5, 22, 8, 0, tzinfo=ZoneInfo("Europe/Rome")),
+    )
 
     assert "Condizioni: Cielo sereno" in message
     assert "Condizioni: Nuvoloso" not in message
@@ -250,10 +260,101 @@ def test_daily_message_keeps_rainy_daily_code_when_hourly_has_rain_risk():
         "wind_speed_10m": [5.0, 5.0],
     }
 
-    message = build_daily_message("Avenza", daily, hourly)
+    message = build_daily_message(
+        "Avenza",
+        daily,
+        hourly,
+        now=datetime(2026, 5, 22, 9, 0, tzinfo=ZoneInfo("Europe/Rome")),
+    )
 
     assert "Condizioni: Pioggia leggera" in message
-    assert "Pioggia prevista: 11:00" in message
+    assert "Pioggia prevista: 10:00-11:00" in message
+
+
+def test_rain_adaptive_skips_completed_interval_and_uses_next_hour(monkeypatch):
+    calls = []
+
+    def fake_ml(**kwargs):
+        calls.append(kwargs)
+        return {"rain_probability": 0.8, "model_ready": True, "will_rain": True, "confidence": "alta"}
+
+    monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
+    hourly = {
+        "time": ["2026-05-22T10:00", "2026-05-22T11:00"],
+        "precipitation_probability": [90, 70],
+        "weather_code": [61, 61],
+        "precipitation": [3.0, 1.0],
+        "temperature_2m": [18.0, 19.0],
+        "relative_humidity_2m": [90.0, 85.0],
+        "cloud_cover": [90.0, 80.0],
+        "wind_speed_10m": [8.0, 9.0],
+        "wind_direction_10m": [180.0, 180.0],
+    }
+
+    result = check_hourly_rain_adaptive(
+        hourly,
+        lat=44.0,
+        lon=10.1,
+        city_name="Massa",
+        region="Toscana",
+        now=datetime(2026, 5, 22, 10, 15, tzinfo=ZoneInfo("Europe/Rome")),
+    )
+
+    assert result is not None
+    assert result["hour_index"] == 1
+    assert result["interval_start"].hour == 10
+    assert result["interval_end"].hour == 11
+    assert calls[0]["lead_hours"] == 1
+
+
+def test_daily_message_excludes_rain_from_next_day():
+    daily = {
+        "time": ["2026-05-22"],
+        "temperature_2m_max": [24.0],
+        "temperature_2m_min": [17.0],
+        "weather_code": [1],
+        "precipitation_probability_max": [0],
+        "precipitation_sum": [0.0],
+    }
+    hourly = {
+        "time": ["2026-05-22T22:00", "2026-05-23T06:00"],
+        "weather_code": [0, 61],
+        "cloud_cover": [5, 90],
+        "precipitation_probability": [0, 80],
+        "precipitation": [0.0, 2.0],
+        "wind_speed_10m": [5.0, 5.0],
+    }
+
+    message = build_daily_message(
+        "Avenza",
+        daily,
+        hourly,
+        now=datetime(2026, 5, 22, 8, 0, tzinfo=ZoneInfo("Europe/Rome")),
+    )
+
+    assert "Nessuna pioggia prevista" in message
+    assert "05:00-06:00" not in message
+
+
+def test_rain_message_uses_forecast_window_without_internal_trigger_details():
+    message = build_rain_message(
+        "Roma",
+        {
+            "pop": 0.7,
+            "description": "Pioggia moderata",
+            "precipitation": 1.2,
+            "interval_start": datetime(2026, 5, 22, 10, 0, tzinfo=ZoneInfo("Europe/Rome")),
+            "interval_end": datetime(2026, 5, 22, 11, 0, tzinfo=ZoneInfo("Europe/Rome")),
+            "trigger_reason": "precipitation",
+            "ml_ready": False,
+        },
+    )
+
+    assert "Pioggia prevista a Roma" in message
+    assert "Finestra prevista: 10:00-11:00" in message
+    assert "Previsione: 1.2mm" in message
+    assert "Trigger:" not in message
+    assert "rilevata" not in message
 
 
 def test_telegram_cron_requires_secrets_in_production(monkeypatch):

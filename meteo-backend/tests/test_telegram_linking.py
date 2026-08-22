@@ -27,6 +27,7 @@ def _clear_backend_modules() -> None:
         "config",
         "database",
         "telegram_bot",
+        "telegram_notify_service",
         "routers",
         "routers.telegram",
     ):
@@ -57,6 +58,7 @@ def telegram_app(tmp_path_factory: pytest.TempPathFactory):
     database.Base.metadata.create_all(bind=database.engine)
     telegram_router = importlib.import_module("routers.telegram")
     telegram_bot = importlib.import_module("telegram_bot")
+    telegram_notify_service = importlib.import_module("telegram_notify_service")
     main = importlib.import_module("main")
 
     client = TestClient(main.app)
@@ -66,6 +68,7 @@ def telegram_app(tmp_path_factory: pytest.TempPathFactory):
         database=database,
         telegram_router=telegram_router,
         telegram_bot=telegram_bot,
+        telegram_notify_service=telegram_notify_service,
     )
 
     client.close()
@@ -75,12 +78,14 @@ def telegram_app(tmp_path_factory: pytest.TempPathFactory):
 @pytest.fixture(autouse=True)
 def reset_telegram_subscriptions(telegram_app):
     with telegram_app.database.SessionLocal() as db:
+        db.query(telegram_app.database.TelegramRainAlert).delete()
         db.query(telegram_app.database.TelegramSubscription).delete()
         db.commit()
 
     yield
 
     with telegram_app.database.SessionLocal() as db:
+        db.query(telegram_app.database.TelegramRainAlert).delete()
         db.query(telegram_app.database.TelegramSubscription).delete()
         db.commit()
 
@@ -168,6 +173,10 @@ def test_preferences_update_and_unlink_with_client_token(telegram_app):
         headers={"X-Telegram-Client-Token": client_token},
         json={
             "city": "Roma",
+            "city_lat": 41.8933,
+            "city_lon": 12.4829,
+            "city_region": "Lazio",
+            "city_province": "Roma",
             "rain_alerts_enabled": True,
             "daily_forecast_enabled": True,
             "daily_forecast_hour": 7,
@@ -177,6 +186,10 @@ def test_preferences_update_and_unlink_with_client_token(telegram_app):
     assert preferences_response.json() == {
         "success": True,
         "city": "Roma",
+        "city_lat": 41.8933,
+        "city_lon": 12.4829,
+        "city_region": "Lazio",
+        "city_province": "Roma",
         "rain_alerts_enabled": True,
         "daily_forecast_enabled": True,
         "daily_forecast_hour": 7,
@@ -186,6 +199,8 @@ def test_preferences_update_and_unlink_with_client_token(telegram_app):
         sub = db.get(telegram_app.database.TelegramSubscription, sub_id)
         assert sub is not None
         assert sub.city == "Roma"
+        assert sub.city_lat == 41.8933
+        assert sub.city_lon == 12.4829
         assert sub.rain_alerts_enabled is True
         assert sub.daily_forecast_enabled is True
         assert sub.daily_forecast_hour == 7
@@ -205,6 +220,47 @@ def test_preferences_update_and_unlink_with_client_token(telegram_app):
         assert sub.linking_code is None
         assert sub.linking_code_expires_at is None
         assert sub.client_token_hash is None
+
+
+def test_rain_event_dedup_distinguishes_continuation_from_new_event(telegram_app):
+    now = datetime(2026, 8, 22, 8, 15, tzinfo=timezone.utc)
+    with telegram_app.database.SessionLocal() as db:
+        sub = telegram_app.database.TelegramSubscription(
+            chat_id=999111222,
+            city="Roma",
+            city_lat=41.8933,
+            city_lon=12.4829,
+            rain_alerts_enabled=True,
+            is_active=True,
+        )
+        db.add(sub)
+        db.flush()
+        sub_id = sub.id
+        db.add(
+            telegram_app.database.TelegramRainAlert(
+                subscription_id=sub_id,
+                city="Roma",
+                city_lat=41.8933,
+                city_lon=12.4829,
+                forecast_interval_start=now,
+                forecast_interval_end=now + timedelta(hours=1),
+                sent_at=now,
+                verification_status="pending",
+            )
+        )
+        db.commit()
+
+    continuing = {
+        "interval_start": now + timedelta(hours=1),
+        "interval_end": now + timedelta(hours=2),
+    }
+    separate = {
+        "interval_start": now + timedelta(hours=2),
+        "interval_end": now + timedelta(hours=3),
+    }
+
+    assert telegram_app.telegram_notify_service._is_same_rain_event(sub_id, continuing, now) is True
+    assert telegram_app.telegram_notify_service._is_same_rain_event(sub_id, separate, now) is False
 
 
 def test_expired_code_cannot_link_and_status_is_expired(telegram_app):
