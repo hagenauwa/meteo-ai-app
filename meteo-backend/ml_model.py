@@ -1653,7 +1653,9 @@ def _split_train_validation(
 
 
 def _split_train_cal_test(
-    X: np.ndarray, y: np.ndarray
+    X: np.ndarray,
+    y: np.ndarray,
+    group_values: list | np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     """Split temporale a tre vie: train / calibrazione / test held-out.
 
@@ -1668,13 +1670,31 @@ def _split_train_cal_test(
     if n < 15:
         return None
 
-    test_size = max(int(n * 0.20), 1)
-    cal_size = max(int(n * 0.15), 1)
-    train_size = n - cal_size - test_size
-    if train_size < 1:
-        return None
-
-    cal_end = train_size + cal_size
+    if group_values is not None:
+        if len(group_values) != n:
+            raise ValueError("group_values deve avere la stessa lunghezza di X e y")
+        group_starts = [0]
+        for index in range(1, n):
+            if group_values[index] != group_values[index - 1]:
+                group_starts.append(index)
+        group_starts.append(n)
+        group_count = len(group_starts) - 1
+        if group_count < 3:
+            return None
+        test_groups = max(int(group_count * 0.20), 1)
+        cal_groups = max(int(group_count * 0.15), 1)
+        train_groups = group_count - cal_groups - test_groups
+        if train_groups < 1:
+            return None
+        train_size = group_starts[train_groups]
+        cal_end = group_starts[train_groups + cal_groups]
+    else:
+        test_size = max(int(n * 0.20), 1)
+        cal_size = max(int(n * 0.15), 1)
+        train_size = n - cal_size - test_size
+        if train_size < 1:
+            return None
+        cal_end = train_size + cal_size
     return (
         X[:train_size],
         X[train_size:cal_end],
@@ -1879,12 +1899,19 @@ def _train_rain_pipeline(rows: list[dict], encoder: LabelEncoder) -> dict:
     X, y = _build_rain_matrices(rows, encoder)
     if len(X) < 20:
         return {"success": False, "message": "Dati insufficienti per il modello pioggia"}
+    if len(set(y.tolist())) < 2:
+        return {"success": False, "message": "Servono sia ore piovose sia ore asciutte per il modello pioggia"}
 
-    split = _split_train_cal_test(X, y)
+    split = _split_train_cal_test(X, y, [row["target_time"] for row in eligible_rows])
     if split is None:
         return {"success": False, "message": "Campioni insufficienti per il modello pioggia"}
 
     X_train, X_cal, X_test, y_train, y_cal, y_test = split
+    if any(len(set(part.tolist())) < 2 for part in (y_train, y_cal, y_test)):
+        return {
+            "success": False,
+            "message": "Eventi pioggia insufficienti nelle finestre temporali di train, calibrazione e test",
+        }
     test_rows = eligible_rows[-len(X_test) :]
 
     pipeline = Pipeline(
@@ -1961,12 +1988,19 @@ def _train_rain_pipeline_v2(rows: list[dict], encoder: LabelEncoder) -> dict:
     X, y = _build_rain_matrices_v2(rows, encoder)
     if len(X) < 80:
         return {"success": False, "message": "Dati insufficienti per il modello pioggia v2"}
+    if len(set(y.tolist())) < 2:
+        return {"success": False, "message": "Servono sia ore piovose sia ore asciutte per il modello pioggia v2"}
 
-    split = _split_train_cal_test(X, y)
+    split = _split_train_cal_test(X, y, [row["target_time"] for row in eligible_rows])
     if split is None:
         return {"success": False, "message": "Campioni insufficienti per il modello pioggia v2"}
 
     X_train, X_cal, X_test, y_train, y_cal, y_test = split
+    if any(len(set(part.tolist())) < 2 for part in (y_train, y_cal, y_test)):
+        return {
+            "success": False,
+            "message": "Eventi pioggia insufficienti nelle finestre temporali v2 di train, calibrazione e test",
+        }
     train_rows = eligible_rows[: len(X_train)]
     test_rows = eligible_rows[-len(X_test) :]
     # Peso finale = recency (half-life) × bilanciamento classi. Con il gradient
@@ -2755,8 +2789,15 @@ def train(min_samples: int = 100) -> dict:
         # Riserva l'ultima fetta temporale: non entra in nessun fit e viene
         # usata solo per promozione e profilo di blend.
         holdout_size = max(1, int(len(rows) * 0.20))
-        model_rows = rows[:-holdout_size]
-        evaluation_rows = rows[-holdout_size:]
+        holdout_start = len(rows) - holdout_size
+        # Tutte le citta' verificate alla stessa ora devono finire nella stessa
+        # partizione. Altrimenti la stessa etichetta di stazione potrebbe
+        # comparire sia nel fit sia nell'holdout e gonfiare artificialmente KPI.
+        holdout_boundary = rows[holdout_start]["target_time"]
+        while holdout_start > 0 and rows[holdout_start - 1]["target_time"] == holdout_boundary:
+            holdout_start -= 1
+        model_rows = rows[:holdout_start]
+        evaluation_rows = rows[holdout_start:]
         if len(model_rows) < min_samples:
             return {
                 "success": False,

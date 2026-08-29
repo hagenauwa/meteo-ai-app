@@ -361,6 +361,24 @@ def test_split_train_cal_test_is_disjoint_ordered_and_holds_out_test():
     assert ml_model._split_train_cal_test(np.arange(10).reshape(-1, 1), np.zeros(10)) is None
 
 
+def test_split_train_cal_test_never_splits_same_observation_hour():
+    X = np.arange(100).reshape(-1, 1)
+    y = np.arange(100) % 2
+    hours = [index // 10 for index in range(100)]
+
+    split = ml_model._split_train_cal_test(X, y, hours)
+
+    assert split is not None
+    X_train, X_cal, X_test, _, _, _ = split
+    assert (len(X_train), len(X_cal), len(X_test)) == (70, 10, 20)
+    train_hours = {hours[int(index)] for index in X_train.ravel()}
+    cal_hours = {hours[int(index)] for index in X_cal.ravel()}
+    test_hours = {hours[int(index)] for index in X_test.ravel()}
+    assert train_hours.isdisjoint(cal_hours)
+    assert train_hours.isdisjoint(test_hours)
+    assert cal_hours.isdisjoint(test_hours)
+
+
 def test_provider_rain_probability_proxy_prefers_real_pop():
     """Con la POP reale di Open-Meteo (Fase 1) il proxy la usa (POP/100), non l'euristica."""
     real_pop_row = {
@@ -1180,11 +1198,11 @@ def test_train_failure_reports_temperature_v1_and_v2_diagnostics(monkeypatch):
 
     rows = [
         {
-            "target_time": datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
-            "verified_at": datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+            "target_time": datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc) + timedelta(hours=index),
+            "verified_at": datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc) + timedelta(hours=index),
             "region": "Lazio",
         }
-        for _ in range(20)
+        for index in range(20)
     ]
     monkeypatch.setattr(ml_model, "SessionLocal", lambda: FakeSession())
     monkeypatch.setattr(

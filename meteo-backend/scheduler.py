@@ -16,6 +16,7 @@ from sqlalchemy import text
 
 from config import settings
 from database import City, MlModelStore, MlPrediction, MlTrainingState, SessionLocal, WeatherObservation
+from trusted_observation_service import fetch_meteostat_observations
 from weather_service import fetch_all_cities_weather
 import ml_model
 
@@ -174,6 +175,57 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
     observations = payload.get("observations", [])
     predictions = payload.get("predictions", [])
 
+    # Il backfill Meteostat ripassa intenzionalmente sulle ultime ore. Evitiamo
+    # duplicati per (citta', ora, fonte), sia nello stesso payload sia rispetto
+    # alle righe gia' presenti nel DB.
+    observations_to_save = observations
+    if observations:
+
+        def observation_key(obs: dict) -> tuple[int, datetime, str]:
+            observed_at = obs["observed_at"]
+            if observed_at.tzinfo is not None:
+                observed_at = observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+            return (
+                int(obs["city_id"]),
+                observed_at,
+                str(obs.get("observation_source", "unknown")).lower(),
+            )
+
+        input_city_ids = sorted({int(obs["city_id"]) for obs in observations})
+        input_times = [key[1] for key in map(observation_key, observations)]
+        input_sources = sorted({observation_key(obs)[2] for obs in observations})
+        with SessionLocal() as db:
+            existing_rows = (
+                db.query(
+                    WeatherObservation.city_id,
+                    WeatherObservation.observed_at,
+                    WeatherObservation.observation_source,
+                )
+                .filter(WeatherObservation.city_id.in_(input_city_ids))
+                .filter(WeatherObservation.observed_at >= min(input_times))
+                .filter(WeatherObservation.observed_at <= max(input_times))
+                .filter(WeatherObservation.observation_source.in_(input_sources))
+                .all()
+            )
+        existing_keys = {
+            observation_key(
+                {
+                    "city_id": row.city_id,
+                    "observed_at": row.observed_at,
+                    "observation_source": row.observation_source,
+                }
+            )
+            for row in existing_rows
+        }
+        observations_to_save = []
+        seen_keys = set(existing_keys)
+        for obs in observations:
+            key = observation_key(obs)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            observations_to_save.append(obs)
+
     city_ids = sorted({int(pred["city_id"]) for pred in predictions})
     city_map: dict[int, dict] = {}
     if city_ids:
@@ -213,7 +265,7 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
             observation_source=obs.get("observation_source", "unknown"),
             observation_interval_minutes=obs.get("observation_interval_minutes"),
         )
-        for obs in observations
+        for obs in observations_to_save
         if obs.get("temp") is not None
     ]
 
@@ -275,12 +327,23 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
 
     # Pre-normalizza observed_at a UTC naive per il match con target_time nel DB.
     # SQLAlchemy ORM gestisce DateTime in modo omogeneo tra SQLite e PostgreSQL.
+    trusted_sources = {str(source).lower() for source in getattr(settings, "ml_trusted_observation_sources", ())}
+    require_trusted = bool(getattr(settings, "ml_require_trusted_observations", False))
     normalized: list[tuple[dict, datetime]] = []
     for obs in observations:
+        source = str(obs.get("observation_source", "unknown")).lower()
+        if require_trusted and source not in trusted_sources:
+            continue
         observed_at = obs["observed_at"].replace(minute=0, second=0, microsecond=0)
         if observed_at.tzinfo is not None:
             observed_at = observed_at.astimezone(timezone.utc).replace(tzinfo=None)
         normalized.append((obs, observed_at))
+
+    # Se in sviluppo sono ammesse entrambe, una misura di stazione deve vincere
+    # su un dato modellistico per lo stesso target.
+    normalized.sort(key=lambda item: str(item[0].get("observation_source", "unknown")).lower() not in trusted_sources)
+    if not normalized:
+        return 0, 0.0
 
     city_ids = sorted({int(obs["city_id"]) for obs, _ in normalized})
     target_times = sorted({at for _, at in normalized})
@@ -548,8 +611,20 @@ async def hourly_cycle():
                 f"pred={cleanup['deleted_predictions']} models={cleanup['deleted_models']}"
             )
 
-        payload = await fetch_all_cities_weather(cities)
-        observations = payload.get("observations", [])
+        provider_task = fetch_all_cities_weather(cities)
+        if bool(getattr(settings, "ml_require_trusted_observations", False)):
+            provider_payload, trusted_observations = await asyncio.gather(
+                provider_task,
+                asyncio.to_thread(fetch_meteostat_observations, cities, now=cycle_started_at),
+            )
+        else:
+            provider_payload = await provider_task
+            trusted_observations = []
+
+        payload = provider_payload
+        provider_observations = payload.get("observations", [])
+        observations = [*trusted_observations, *provider_observations]
+        payload["observations"] = observations
         predictions = payload.get("predictions", [])
         if not observations:
             print("[WARN] Nessuna osservazione scaricata")
@@ -565,7 +640,10 @@ async def hourly_cycle():
             )
 
         n_obs, n_pred = await asyncio.to_thread(_db_save_cycle_data, payload)
-        print(f"[SAVE] Salvate {n_obs} osservazioni e {n_pred} previsioni future")
+        print(
+            f"[SAVE] Salvate {n_obs} osservazioni "
+            f"({len(trusted_observations)} fidate ricevute) e {n_pred} previsioni future"
+        )
 
         verified_count, avg_error = await asyncio.to_thread(_db_verify_predictions, observations)
         print(f"[OK] Verificate {verified_count} predictions (errore medio: {avg_error:.2f}°C)")
@@ -582,7 +660,7 @@ async def hourly_cycle():
             new_verified_since_last = total_verified
         else:
             new_verified_since_last = await asyncio.to_thread(_db_count_verified_since, last_training)
-        model_ready = bool(ml_model.get_public_summary().get("model_ready"))
+        model_ready = bool(ml_model.get_public_summary().get("rain_model_ready"))
         should_retrain = _should_retrain(
             total_verified=total_verified,
             new_verified_since_last=new_verified_since_last,

@@ -80,16 +80,19 @@ def test_rain_adaptive_uses_ml_when_in_coverage(monkeypatch):
 
     assert len(calls) >= 1
     assert result is not None
-    assert result["trigger_reason"] == "ml_confirmed"
+    assert result["trigger_reason"] == "ml_prediction"
 
 
 def test_rain_adaptive_ignores_metno_rain_without_real_probability(monkeypatch):
-    """Una previsione deterministica met.no non deve diventare un falso 100%."""
+    """Il modello puo' bocciare una previsione deterministica met.no senza POP."""
 
-    def unexpected_ml(**kwargs):
-        raise AssertionError("Il modello ML non va interrogato senza una POP reale")
+    calls = []
 
-    monkeypatch.setattr(notification_utils, "get_ml_rain_probability", unexpected_ml)
+    def dry_ml(**kwargs):
+        calls.append(kwargs)
+        return {"rain_probability": 0.08, "model_ready": True, "will_rain": False, "confidence": "alta"}
+
+    monkeypatch.setattr(notification_utils, "get_ml_rain_probability", dry_ml)
     hourly = {
         "time": ["2026-08-28T18:00"],
         "precipitation_probability": [None],
@@ -100,6 +103,35 @@ def test_rain_adaptive_ignores_metno_rain_without_real_probability(monkeypatch):
         "cloud_cover": [80.0],
         "wind_speed_10m": [8.0],
         "wind_direction_10m": [180.0],
+    }
+
+    result = check_hourly_rain_adaptive(
+        hourly,
+        lat=44.05,
+        lon=10.06667,
+        city_name="Avenza",
+        region="Toscana",
+        now=datetime(2026, 8, 28, 17, 15, tzinfo=ZoneInfo("Europe/Rome")),
+    )
+
+    assert result is None
+    assert len(calls) == 1
+    assert calls[0]["forecast_precipitation_probability"] is None
+
+
+def test_rain_model_vetoes_provider_false_positive(monkeypatch):
+    def dry_ml(**kwargs):
+        return {"rain_probability": 0.12, "model_ready": True, "will_rain": False, "confidence": "alta"}
+
+    monkeypatch.setattr(notification_utils, "get_ml_rain_probability", dry_ml)
+    hourly = {
+        "time": ["2026-08-28T18:00"],
+        "precipitation_probability": [100],
+        "weather_code": [61],
+        "precipitation": [0.8],
+        "temperature_2m": [27.0],
+        "relative_humidity_2m": [80.0],
+        "cloud_cover": [80.0],
     }
 
     result = check_hourly_rain_adaptive(
@@ -403,6 +435,23 @@ def test_rain_message_does_not_invent_missing_probability():
 
     assert "Probabilità:" not in message
     assert "100%" not in message
+
+
+def test_rain_message_labels_model_probability_as_decision_source():
+    message = build_rain_message(
+        "Avenza",
+        {
+            "pop": 0.95,
+            "description": "Pioggia prevista dal modello Meteo AI",
+            "precipitation": 0.8,
+            "ml_probability": 0.58,
+            "ml_ready": True,
+            "confidence": "alta",
+        },
+    )
+
+    assert "Probabilità Meteo AI: 58%" in message
+    assert "Probabilità provider: 95%" in message
 
 
 def test_telegram_cron_requires_secrets_in_production(monkeypatch):

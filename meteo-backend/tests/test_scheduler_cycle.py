@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from database import Base, City, MlPrediction, MlTrainingState
+from database import Base, City, MlPrediction, MlTrainingState, WeatherObservation
 import scheduler
 
 
@@ -339,6 +339,104 @@ def test_db_save_cycle_data_persists_new_rain_forecast_features(scheduler_db, mo
         assert prediction.shadow_v1_rain_probability == 0.35
         assert prediction.shadow_v2_rain_probability == 0.25
         assert prediction.shadow_v2_condition_code == 1
+
+
+def test_verify_predictions_prefers_trusted_station_observation(monkeypatch, scheduler_db):
+    observed_at = datetime(2026, 8, 28, 15, 0, tzinfo=timezone.utc)
+    with scheduler_db() as db:
+        db.add(
+            City(
+                id=20,
+                name="Carrara",
+                name_lower="carrara",
+                region="Toscana",
+                province="Massa-Carrara",
+                lat=44.08,
+                lon=10.10,
+                locality_type="comune",
+            )
+        )
+        db.add(
+            MlPrediction(
+                city_id=20,
+                predicted_at=observed_at - timedelta(hours=1),
+                target_time=observed_at,
+                lead_hours=1,
+                predicted_temp=28.0,
+                forecast_temp=28.0,
+                verified=False,
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(scheduler.settings, "ml_require_trusted_observations", True, raising=False)
+    monkeypatch.setattr(
+        scheduler.settings,
+        "ml_trusted_observation_sources",
+        ("station", "arpa", "meteostat"),
+        raising=False,
+    )
+    observations = [
+        {
+            "city_id": 20,
+            "observed_at": observed_at,
+            "temp": 30.0,
+            "precipitation": 2.0,
+            "observation_source": "open-meteo-model-current",
+            "observation_interval_minutes": 60,
+        },
+        {
+            "city_id": 20,
+            "observed_at": observed_at,
+            "temp": 27.0,
+            "precipitation": 0.0,
+            "observation_source": "meteostat",
+            "observation_interval_minutes": 60,
+        },
+    ]
+
+    verified, _ = scheduler._db_verify_predictions(observations)
+
+    assert verified == 1
+    with scheduler_db() as db:
+        prediction = db.query(MlPrediction).one()
+        assert prediction.actual_temp == 27.0
+        assert prediction.actual_precipitation == 0.0
+        assert prediction.actual_source == "meteostat"
+
+
+def test_save_cycle_data_deduplicates_meteostat_backfill(scheduler_db):
+    with scheduler_db() as db:
+        db.add(
+            City(
+                id=21,
+                name="Massa",
+                name_lower="massa",
+                region="Toscana",
+                province="Massa-Carrara",
+                lat=44.04,
+                lon=10.14,
+                locality_type="comune",
+            )
+        )
+        db.commit()
+
+    observation = {
+        "city_id": 21,
+        "observed_at": datetime(2026, 8, 28, 15, 0, tzinfo=timezone.utc),
+        "temp": 27.0,
+        "precipitation": 0.0,
+        "observation_source": "meteostat",
+        "observation_interval_minutes": 60,
+    }
+
+    first = scheduler._db_save_cycle_data({"observations": [observation], "predictions": []})
+    second = scheduler._db_save_cycle_data({"observations": [observation], "predictions": []})
+
+    assert first == (1, 0)
+    assert second == (0, 0)
+    with scheduler_db() as db:
+        assert db.query(WeatherObservation).count() == 1
 
 
 def test_count_verified_since_uses_timestamp_not_retention_affected_total(scheduler_db):

@@ -5,7 +5,8 @@ alembic==1.13.3
 psycopg2-binary==2.9.10
 scikit-learn==1.6.1
 httpx==0.28.1
-pandas==2.2.3
+pandas==2.3.3
+meteostat==2.1.4
 apscheduler==3.10.4
 python-dotenv==1.2.2
 numpy==2.2.4

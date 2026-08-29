@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from math import atan2, cos, radians, sin, sqrt
 
 from config import settings
 from database import City, SessionLocal, TelegramRainAlert, TelegramSubscription, WeatherObservation
@@ -38,7 +39,19 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _lookup_city_geo(city_name: str) -> tuple[str | None, str | None]:
+def _distance_km(lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> float:
+    radius_km = 6371.0
+    d_lat = radians(lat_b - lat_a)
+    d_lon = radians(lon_b - lon_a)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat_a)) * cos(radians(lat_b)) * sin(d_lon / 2) ** 2
+    return radius_km * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+
+def _lookup_city_geo(
+    city_name: str,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> tuple[str | None, str | None]:
     """Recupera (region, province) reali dal DB per una città, best-effort.
 
     Serve a passare al modello la regione vista in training (invece di
@@ -48,11 +61,34 @@ def _lookup_city_geo(city_name: str) -> tuple[str | None, str | None]:
         return None, None
     with SessionLocal() as db:
         row = (
-            db.query(City.region, City.province)
-            .filter(City.name_lower == city_name.strip().lower())
-            .order_by(City.population.desc())
-            .first()
+            db.query(City).filter(City.name_lower == city_name.strip().lower()).order_by(City.population.desc()).first()
         )
+        if row and row.province:
+            return row.region, row.province
+
+        # Le localita' GeoNames (Avenza compresa) possono avere provincia NULL.
+        # In quel caso ereditiamo la provincia dal comune piu' vicino, ma solo
+        # entro 35 km: e' abbastanza per le frazioni senza mascherare geocoding
+        # palesemente errati.
+        lookup_lat = lat if lat is not None else (row.lat if row else None)
+        lookup_lon = lon if lon is not None else (row.lon if row else None)
+        if lookup_lat is not None and lookup_lon is not None:
+            candidates = (
+                db.query(City)
+                .filter(City.locality_type == "comune")
+                .filter(City.province.isnot(None))
+                .filter(City.lat.between(lookup_lat - 0.4, lookup_lat + 0.4))
+                .filter(City.lon.between(lookup_lon - 0.5, lookup_lon + 0.5))
+                .all()
+            )
+            if candidates:
+                nearest = min(
+                    candidates,
+                    key=lambda city: _distance_km(lookup_lat, lookup_lon, city.lat, city.lon),
+                )
+                if _distance_km(lookup_lat, lookup_lon, nearest.lat, nearest.lon) <= 35.0:
+                    return nearest.region or (row.region if row else None), nearest.province
+
         if row:
             return row.region, row.province
     return None, None
@@ -193,6 +229,41 @@ def _verify_pending_alerts(now: datetime) -> dict:
                 .filter(WeatherObservation.observed_at <= alert.forecast_interval_end)
                 .all()
             )
+            if not observations:
+                # Le osservazioni sono raccolte sui comuni del campione ML,
+                # mentre una subscription puo' indicare una frazione come
+                # Avenza. Per l'audit dell'allerta usiamo il comune osservato
+                # piu' vicino entro la stessa soglia prudente di 35 km.
+                nearby_rows = (
+                    db.query(WeatherObservation, City.lat, City.lon, City.id)
+                    .join(City, WeatherObservation.city_id == City.id)
+                    .filter(City.locality_type == "comune")
+                    .filter(City.lat.between(alert.city_lat - 0.4, alert.city_lat + 0.4))
+                    .filter(City.lon.between(alert.city_lon - 0.5, alert.city_lon + 0.5))
+                    .filter(WeatherObservation.observation_source.in_(trusted_sources))
+                    .filter(WeatherObservation.observed_at > alert.forecast_interval_start)
+                    .filter(WeatherObservation.observed_at <= alert.forecast_interval_end)
+                    .limit(5000)
+                    .all()
+                )
+                if nearby_rows:
+                    nearest_city_id = min(
+                        {int(item.id) for item in nearby_rows},
+                        key=lambda city_id: min(
+                            _distance_km(alert.city_lat, alert.city_lon, item.lat, item.lon)
+                            for item in nearby_rows
+                            if int(item.id) == city_id
+                        ),
+                    )
+                    nearest_distance = min(
+                        _distance_km(alert.city_lat, alert.city_lon, item.lat, item.lon)
+                        for item in nearby_rows
+                        if int(item.id) == nearest_city_id
+                    )
+                    if nearest_distance <= 35.0:
+                        observations = [
+                            item.WeatherObservation for item in nearby_rows if int(item.id) == nearest_city_id
+                        ]
             covered_minutes = sum(max(1, item.observation_interval_minutes or 0) for item in observations)
             if covered_minutes < 45:
                 continue
@@ -235,7 +306,7 @@ async def _fetch_and_check_rain(sub: TelegramSubscription, now: datetime) -> dic
     region = sub.city_region
     province = sub.city_province
     if not region or not province:
-        lookup_region, lookup_province = await asyncio.to_thread(_lookup_city_geo, city_name)
+        lookup_region, lookup_province = await asyncio.to_thread(_lookup_city_geo, city_name, lat, lon)
         region = region or lookup_region
         province = province or lookup_province
     if sub.city_lat is None or sub.city_lon is None:
@@ -304,7 +375,7 @@ async def _send_daily_forecast(sub: TelegramSubscription, now: datetime) -> dict
         return {"status": "skipped", "reason": "coords_not_found"}
 
     if sub.city_lat is None or sub.city_lon is None:
-        region, province = await asyncio.to_thread(_lookup_city_geo, city_name)
+        region, province = await asyncio.to_thread(_lookup_city_geo, city_name, lat, lon)
         await asyncio.to_thread(
             _persist_city_coords,
             sub.id,

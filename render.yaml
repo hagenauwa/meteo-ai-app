@@ -102,6 +102,8 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: MODEL_SIGNING_KEY
+        sync: false        # deve coincidere con web e ciclo ML per caricare il modello
       - key: APP_ENV
         value: "production"
       - key: ENABLE_SCHEDULER

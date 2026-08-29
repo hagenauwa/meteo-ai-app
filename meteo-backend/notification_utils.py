@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ─── Costanti ────────────────────────────────────────────────────────────────
 
 RAIN_POP_THRESHOLD = 0.50  # Soglia POP ridotta da 60% a 50%
-RAIN_ML_THRESHOLD = 0.40  # Soglia ML per trigger combinato
+RAIN_ML_THRESHOLD = 0.50  # Policy conservativa per notifiche: limita i falsi positivi
 MAX_LEAD_HOURS = 1  # Notifica solo pioggia entro 1 ora (issue #notifiche-troppo-anticipo)
 RAIN_ALERT_COOLDOWN_HOURS = 2  # Cooldown ridotto da 6 a 2 ore
 
@@ -193,12 +193,12 @@ def check_hourly_rain_adaptive(
     now: datetime | None = None,
 ) -> dict | None:
     """
-    Scansiona le previsioni orarie con logica adattiva:
-    - POP >= 50% AND (weather_code pioggia OR ML >= 40% OR precipitazione > 0.1mm)
+    Scansiona le previsioni orarie con logica adattiva.
 
-    Senza una POP reale non invia allerte. Il fallback met.no offre una
-    previsione deterministica ma non una probabilità, quindi non è sufficiente
-    per una notifica urgente.
+    Quando il modello calibrato e' disponibile decide lui: un provider al 100%
+    non puo' piu' scavalcarlo. Il provider resta un fallback conservativo solo
+    mentre il modello e' indisponibile. Per Telegram imponiamo inoltre almeno il
+    50% calibrato, privilegiando la precisione rispetto al richiamo.
 
     Restituisce il primo orario che soddisfa il trigger, o None.
     """
@@ -246,15 +246,10 @@ def check_hourly_rain_adaptive(
         weather_code = weather_codes[i] if i < len(weather_codes) else None
         precipitation = precipitations[i] if i < len(precipitations) else 0
 
-        pop_fraction = raw_pop / 100.0 if isinstance(raw_pop, (int, float)) else None
+        pop_fraction = raw_pop / 100.0 if isinstance(raw_pop, int | float) else None
         meets_pop = pop_fraction is not None and pop_fraction >= RAIN_POP_THRESHOLD
         meets_wmo = _is_rain_weather_code(weather_code)
         meets_precip = (precipitation or 0) > 0.1
-
-        # Una quantità deterministica o un codice WMO, senza una vera
-        # probabilità di precipitazione, non bastano per un'allerta affidabile.
-        if not meets_pop:
-            continue
 
         forecast_hour = forecast_time.hour
         lead_hours = max(1, ceil((interval_end - now_rome).total_seconds() / 3600))
@@ -297,21 +292,20 @@ def check_hourly_rain_adaptive(
         ml_will_rain = bool(ml_result.get("will_rain", ml_prob >= RAIN_ML_THRESHOLD))
 
         # Trigger adattivo:
-        # 1. POP >= 50% AND weather_code pioggia → sempre trigger
-        # 2. POP >= 50% AND il modello ML prevede pioggia → trigger (ML conferma)
-        # 3. POP >= 50% AND precipitazione > 0.1mm → trigger (dati reali)
+        # 1. modello pronto: decide la probabilita' calibrata (con policy >=50%)
+        # 2. modello assente: fallback POP >=50% + evidenza WMO/quantita'
         trigger = False
         trigger_reason = ""
 
-        if meets_pop and meets_wmo:
+        if ml_ready:
+            trigger = ml_will_rain and ml_prob >= RAIN_ML_THRESHOLD
+            trigger_reason = "ml_prediction" if trigger else ""
+        elif meets_pop and meets_wmo:
             trigger = True
-            trigger_reason = "wmo_rain"
-        elif meets_pop and ml_ready and ml_will_rain:
-            trigger = True
-            trigger_reason = "ml_confirmed"
+            trigger_reason = "provider_wmo_fallback"
         elif meets_pop and meets_precip:
             trigger = True
-            trigger_reason = "precipitation"
+            trigger_reason = "provider_precipitation_fallback"
         if trigger:
             return {
                 "hour_index": i,
@@ -321,7 +315,11 @@ def check_hourly_rain_adaptive(
                 "pop": pop_fraction,
                 "weather_code": weather_code,
                 "precipitation": precipitation,
-                "description": _wmo_rain_description(weather_code) if weather_code else "Pioggia prevista",
+                "description": (
+                    "Pioggia prevista dal modello Meteo AI"
+                    if trigger_reason == "ml_prediction"
+                    else (_wmo_rain_description(weather_code) if weather_code else "Pioggia prevista")
+                ),
                 "ml_probability": ml_prob,
                 "ml_ready": ml_ready,
                 "trigger_reason": trigger_reason,
@@ -463,21 +461,22 @@ def build_rain_message(city_name: str, rain_info: dict) -> str:
     # Descrizione condizioni
     message += f"{description}\n"
 
-    # Probabilità POP, mostrata solo quando il provider la fornisce davvero.
-    if isinstance(pop, (int, float)):
-        message += f"💧 Probabilità: {round(pop * 100)}%\n"
+    # Quando il modello e' attivo la sua probabilita' e' quella decisionale. Il
+    # provider resta visibile come confronto, senza fingersi Meteo AI.
+    if ml_ready and ml_prob is not None:
+        ml_pct = round(ml_prob * 100)
+        message += f"🤖 Probabilità Meteo AI: {ml_pct}%"
+        if confidence:
+            message += f" (confidenza {confidence})"
+        message += "\n"
+        if isinstance(pop, int | float):
+            message += f"💧 Probabilità provider: {round(pop * 100)}%\n"
+    elif isinstance(pop, int | float):
+        message += f"💧 Probabilità provider: {round(pop * 100)}%\n"
 
     # Precipitazione prevista
     if precip_mm and precip_mm > 0:
         message += f"🌧️ Previsione: {precip_mm:.1f}mm di pioggia\n"
-
-    # Informazioni ML (se disponibili)
-    if ml_ready and ml_prob is not None:
-        ml_pct = round(ml_prob * 100)
-        message += f"🤖 Modello ML: {ml_pct}%"
-        if confidence:
-            message += f" (confidenza {confidence})"
-        message += "\n"
 
     return message
 
