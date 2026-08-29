@@ -83,6 +83,37 @@ def test_rain_adaptive_uses_ml_when_in_coverage(monkeypatch):
     assert result["trigger_reason"] == "ml_confirmed"
 
 
+def test_rain_adaptive_ignores_metno_rain_without_real_probability(monkeypatch):
+    """Una previsione deterministica met.no non deve diventare un falso 100%."""
+
+    def unexpected_ml(**kwargs):
+        raise AssertionError("Il modello ML non va interrogato senza una POP reale")
+
+    monkeypatch.setattr(notification_utils, "get_ml_rain_probability", unexpected_ml)
+    hourly = {
+        "time": ["2026-08-28T18:00"],
+        "precipitation_probability": [None],
+        "weather_code": [61],
+        "precipitation": [0.3],
+        "temperature_2m": [27.0],
+        "relative_humidity_2m": [90.0],
+        "cloud_cover": [80.0],
+        "wind_speed_10m": [8.0],
+        "wind_direction_10m": [180.0],
+    }
+
+    result = check_hourly_rain_adaptive(
+        hourly,
+        lat=44.05,
+        lon=10.06667,
+        city_name="Avenza",
+        region="Toscana",
+        now=datetime(2026, 8, 28, 17, 15, tzinfo=ZoneInfo("Europe/Rome")),
+    )
+
+    assert result is None
+
+
 def test_no_rain():
     """Nessuna pioggia: tutte le ore hanno POP=0, weather_code sereno → []."""
     hourly = {
@@ -355,6 +386,23 @@ def test_rain_message_uses_forecast_window_without_internal_trigger_details():
     assert "Previsione: 1.2mm" in message
     assert "Trigger:" not in message
     assert "rilevata" not in message
+
+
+def test_rain_message_does_not_invent_missing_probability():
+    message = build_rain_message(
+        "Avenza",
+        {
+            "pop": None,
+            "description": "Pioggia leggera",
+            "precipitation": 0.8,
+            "interval_start": datetime(2026, 8, 28, 17, 0, tzinfo=ZoneInfo("Europe/Rome")),
+            "interval_end": datetime(2026, 8, 28, 18, 0, tzinfo=ZoneInfo("Europe/Rome")),
+            "ml_ready": False,
+        },
+    )
+
+    assert "Probabilità:" not in message
+    assert "100%" not in message
 
 
 def test_telegram_cron_requires_secrets_in_production(monkeypatch):

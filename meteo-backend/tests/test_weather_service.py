@@ -322,8 +322,12 @@ def test_convert_metno_payload_to_open_meteo_shape():
     assert result is not None
     assert result["current"]["temperature_2m"] == 20.5
     assert result["current"]["weather_code"] == 2
+    assert result["current"]["time"] == "2026-04-04T02:00"
+    assert result["hourly"]["time"][0] == "2026-04-04T03:00"
+    assert result["hourly"]["precipitation_probability"] == [None, None, None, None]
     assert result["hourly"]["weather_code"][1] == 0
     assert result["daily"]["weather_code"][0] == 0
+    assert result["daily"]["precipitation_probability_max"][0] is None
     assert result["daily"]["time"]
     assert result["daily"]["wind_direction_10m_dominant"][0] == 190
 

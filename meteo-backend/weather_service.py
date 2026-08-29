@@ -491,6 +491,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
     daily_groups: dict[str, list[dict]] = {}
     for item in timeseries:
         timestamp = parse_utc_timestamp(item["time"])
+        interval_end = timestamp + timedelta(hours=1)
         details = item["data"]["instant"]["details"]
         next_1 = item["data"].get("next_1_hours", {})
         summary = next_1.get("summary") or item["data"].get("next_6_hours", {}).get("summary") or {}
@@ -499,7 +500,12 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
 
         hourly_entry = {
             "timestamp": timestamp,
-            "local_hour": _format_local_hour(timestamp),
+            # met.no associa ``next_1_hours`` all'ora che inizia al timestamp.
+            # Nel payload Open-Meteo, invece, precipitazione e POP appartengono
+            # all'ora che termina al timestamp. Spostiamo quindi l'etichetta di
+            # un'ora, così 17:00-18:00 viene esposto come ``18:00``.
+            "local_hour": _format_local_hour(interval_end),
+            "current_local_hour": _format_local_hour(timestamp),
             "local_day": _format_local_day(timestamp),
             "temp": details.get("air_temperature", 0.0),
             "humidity": details.get("relative_humidity", 0),
@@ -508,7 +514,10 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
             "wind_direction": details.get("wind_from_direction", 0),
             "pressure": details.get("air_pressure_at_sea_level", 1013),
             "precipitation": precipitation or 0.0,
-            "precipitation_probability": 100 if (precipitation or 0.0) > 0 else 0,
+            # Locationforecast non fornisce una probabilità di precipitazione.
+            # Non convertire una previsione deterministica, anche minima, in un
+            # falso 100%: i chiamanti devono distinguere "non disponibile" da 0%.
+            "precipitation_probability": None,
             "weather_code": weather_code,
         }
         hourly_items.append(hourly_entry)
@@ -534,7 +543,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         pops = [entry["precipitation_probability"] for entry in items]
         precipitations = [entry["precipitation"] for entry in items]
         preferred = next(
-            (entry for entry in items if entry["local_hour"].endswith("12:00")),
+            (entry for entry in items if entry["current_local_hour"].endswith("12:00")),
             items[len(items) // 2],
         )
         common_code = Counter(entry["weather_code"] for entry in items).most_common(1)[0][0]
@@ -542,7 +551,8 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         daily["temperature_2m_max"].append(max(temps))
         preferred_code = preferred["weather_code"]
         daily["weather_code"].append(preferred_code if preferred_code is not None else common_code)
-        daily["precipitation_probability_max"].append(max(pops))
+        available_pops = [pop for pop in pops if pop is not None]
+        daily["precipitation_probability_max"].append(max(available_pops) if available_pops else None)
         daily["precipitation_sum"].append(round(sum(precipitations), 2))
         daily["wind_speed_10m_max"].append(max(winds))
         daily["wind_direction_10m_dominant"].append(preferred["wind_direction"])
@@ -552,7 +562,7 @@ def _convert_metno_to_open_meteo_payload(payload: dict, *, lat: float, lon: floa
         "longitude": lon,
         "timezone": "Europe/Rome",
         "current": {
-            "time": current_hour["local_hour"],
+            "time": current_hour["current_local_hour"],
             "temperature_2m": current_hour["temp"],
             "relative_humidity_2m": current_hour["humidity"],
             "apparent_temperature": current_hour["temp"],

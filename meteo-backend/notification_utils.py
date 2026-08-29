@@ -196,6 +196,10 @@ def check_hourly_rain_adaptive(
     Scansiona le previsioni orarie con logica adattiva:
     - POP >= 50% AND (weather_code pioggia OR ML >= 40% OR precipitazione > 0.1mm)
 
+    Senza una POP reale non invia allerte. Il fallback met.no offre una
+    previsione deterministica ma non una probabilità, quindi non è sufficiente
+    per una notifica urgente.
+
     Restituisce il primo orario che soddisfa il trigger, o None.
     """
     times = hourly.get("time", [])
@@ -238,17 +242,18 @@ def check_hourly_rain_adaptive(
         if interval_start >= horizon:
             break
 
-        pop = (pops[i] if i < len(pops) else 0) or 0
+        raw_pop = pops[i] if i < len(pops) else None
         weather_code = weather_codes[i] if i < len(weather_codes) else None
         precipitation = precipitations[i] if i < len(precipitations) else 0
 
-        pop_fraction = pop / 100.0
-        meets_pop = pop_fraction >= RAIN_POP_THRESHOLD
+        pop_fraction = raw_pop / 100.0 if isinstance(raw_pop, (int, float)) else None
+        meets_pop = pop_fraction is not None and pop_fraction >= RAIN_POP_THRESHOLD
         meets_wmo = _is_rain_weather_code(weather_code)
         meets_precip = (precipitation or 0) > 0.1
 
-        # Se POP basso e non piove secondo WMO, salta
-        if not meets_pop and not meets_wmo and not meets_precip:
+        # Una quantità deterministica o un codice WMO, senza una vera
+        # probabilità di precipitazione, non bastano per un'allerta affidabile.
+        if not meets_pop:
             continue
 
         forecast_hour = forecast_time.hour
@@ -271,7 +276,7 @@ def check_hourly_rain_adaptive(
                 forecast_wind_speed=wind_speeds[i] if i < len(wind_speeds) else None,
                 forecast_wind_direction=wind_directions[i] if i < len(wind_directions) else None,
                 forecast_weather_code=weather_code,
-                forecast_precipitation_probability=pop,
+                forecast_precipitation_probability=raw_pop,
                 forecast_surface_pressure=surface_pressures[i] if i < len(surface_pressures) else None,
                 forecast_dew_point=dew_points[i] if i < len(dew_points) else None,
                 forecast_cape=capes[i] if i < len(capes) else None,
@@ -307,10 +312,6 @@ def check_hourly_rain_adaptive(
         elif meets_pop and meets_precip:
             trigger = True
             trigger_reason = "precipitation"
-        elif meets_wmo and ml_ready and ml_will_rain:
-            trigger = True
-            trigger_reason = "wmo_with_ml_support"
-
         if trigger:
             return {
                 "hour_index": i,
@@ -445,7 +446,7 @@ def build_rain_message(city_name: str, rain_info: dict) -> str:
     Costruisce il messaggio HTML per l'allerta pioggia.
     Include informazioni ML se disponibili.
     """
-    pop_pct = round(rain_info["pop"] * 100)
+    pop = rain_info.get("pop")
     description = rain_info.get("description", "Pioggia prevista")
     precip_mm = rain_info.get("precipitation", 0)
     ml_prob = rain_info.get("ml_probability")
@@ -462,8 +463,9 @@ def build_rain_message(city_name: str, rain_info: dict) -> str:
     # Descrizione condizioni
     message += f"{description}\n"
 
-    # Probabilità POP
-    message += f"💧 Probabilità: {pop_pct}%\n"
+    # Probabilità POP, mostrata solo quando il provider la fornisce davvero.
+    if isinstance(pop, (int, float)):
+        message += f"💧 Probabilità: {round(pop * 100)}%\n"
 
     # Precipitazione prevista
     if precip_mm and precip_mm > 0:
