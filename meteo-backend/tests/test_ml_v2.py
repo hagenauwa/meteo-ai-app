@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from sklearn.ensemble import HistGradientBoostingClassifier
 
 import sys
@@ -641,7 +642,7 @@ def test_platt_scaler_produces_bounded_probabilities():
 def test_v2_gates_are_independent_when_v1_component_is_missing():
     rain_gate = ml_model._rain_v2_gate(
         {},
-        {},
+        {"rain_brier": 0.04, "provider_rain_brier": 0.08, "rain_f1": 0.4, "provider_rain_f1": 0.0},
         {
             "brier": 0.04,
             "baseline_brier": 0.08,
@@ -651,7 +652,7 @@ def test_v2_gates_are_independent_when_v1_component_is_missing():
     )
     condition_gate = ml_model._condition_v2_gate(
         {},
-        {},
+        {"condition_macro_f1": 0.55, "provider_condition_macro_f1": 0.45},
         {
             "macro_f1": 0.55,
             "baseline_macro_f1": 0.45,
@@ -659,19 +660,19 @@ def test_v2_gates_are_independent_when_v1_component_is_missing():
     )
 
     assert rain_gate["pass"] is True
-    assert rain_gate["source"] == "training_baseline"
+    assert rain_gate["source"] == "holdout_provider"
     assert condition_gate["pass"] is True
-    assert condition_gate["source"] == "training_baseline"
+    assert condition_gate["source"] == "holdout_provider"
 
 
-def test_stats_variant_helpers_expose_v2_when_v1_component_is_missing(monkeypatch):
+def test_stats_variant_helpers_do_not_expose_shadow_v2_as_live(monkeypatch):
     monkeypatch.setattr(ml_model, "_rain_pipeline", None)
     monkeypatch.setattr(ml_model, "_rain_pipeline_v2", object())
     monkeypatch.setattr(ml_model, "_condition_pipeline", object())
     monkeypatch.setattr(ml_model, "_condition_pipeline_v2", object())
     monkeypatch.setattr(ml_model, "_global_model_variant_for_stats", lambda: "v1")
 
-    assert ml_model._rain_model_variant_for_stats() == "v2"
+    assert ml_model._rain_model_variant_for_stats() == "provider"
     assert ml_model._condition_model_variant_for_stats() == "v1"
 
 
@@ -757,12 +758,12 @@ def test_daily_insight_applies_horizon_support_rules(monkeypatch):
     )
 
     assert full["horizon_support"] == "full"
-    assert full["model_variant"] == "v2"
-    assert full["rain_probability"] == 0.5  # 50% provider + 50% ML
+    assert full["model_variant"] == "provider"
+    assert full["rain_probability"] == 0.2  # il modello orario non modifica la POP giornaliera
 
     assert limited["horizon_support"] == "limited"
-    assert limited["model_variant"] == "v2"
-    assert limited["rain_probability"] == 0.35  # 75% provider + 25% ML
+    assert limited["model_variant"] == "provider"
+    assert limited["rain_probability"] == 0.2
 
     assert provider_only["horizon_support"] == "provider_only"
     assert provider_only["model_variant"] == "provider"
@@ -856,9 +857,9 @@ def test_daily_insight_exposes_provider_condition_for_frontend_impact_checks(mon
 
     insight = ml_model.build_daily_insight(day=day, lat=41.9, lon=12.5, region="Lazio", lead_hours=14, city_name="Roma")
 
-    assert insight["condition_source"] == "ml"
+    assert insight["condition_source"] == "provider"
     assert insight["provider_condition"] == "sereno"
-    assert insight["expected_condition"] == "pioggia"
+    assert insight["expected_condition"] == "sereno"
 
 
 def test_daily_insight_rain_code_or_real_precipitation_claims_rain(monkeypatch):
@@ -1129,9 +1130,10 @@ def test_load_latest_model_clears_state_on_malformed_payload(monkeypatch):
     assert summary["model_load_warning"] == "corrupt_model_blob"
 
 
-def test_load_latest_model_rejects_unsupported_format_version(monkeypatch):
+@pytest.mark.parametrize("format_version", [3, 999])
+def test_load_latest_model_rejects_unsupported_format_version(monkeypatch, format_version):
     payload = {
-        "model_format_version": 999,
+        "model_format_version": format_version,
         "sklearn_version": "1.6.1",
         "pipeline": _PickleablePipeline(),
         "rain_pipeline": None,
@@ -1153,7 +1155,7 @@ def test_load_latest_model_rejects_unsupported_format_version(monkeypatch):
 
     assert loaded is False
     summary = ml_model.get_public_summary()
-    assert summary["model_format_version"] == 999
+    assert summary["model_format_version"] == format_version
     assert summary["model_load_warning"] == "incompatible_model_format"
 
 

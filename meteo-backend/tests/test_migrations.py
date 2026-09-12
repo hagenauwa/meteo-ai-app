@@ -4,7 +4,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 import sys
 import os
@@ -62,3 +62,46 @@ def test_alembic_upgrade_creates_expected_schema(tmp_path):
 
     supporter_token_columns = {column["name"] for column in inspector.get_columns("supporter_tokens")}
     assert {"supporter_id", "token_hash", "last_seen_at"} <= supporter_token_columns
+
+
+def test_observation_validation_migration_preserves_existing_model_and_prediction(tmp_path):
+    backend_root = Path(__file__).resolve().parents[1]
+    url = f"sqlite:///{tmp_path / 'existing_model.db'}"
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    cfg.set_main_option("script_location", str(backend_root / "db_migrations"))
+    command.upgrade(cfg, "20260822_0002")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO ml_model_store (id, trained_at, model_bytes, n_samples) VALUES (1, '2026-08-28', :blob, 500)"
+            ),
+            {"blob": b"original-model"},
+        )
+        conn.execute(text("INSERT INTO cities (id, name, name_lower, lat, lon) VALUES (1, 'Comune', 'comune', 44, 10)"))
+        conn.execute(
+            text(
+                "INSERT INTO ml_predictions (id, city_id, predicted_at, target_time, predicted_temp, actual_source, verified) VALUES (1, 1, '2026-08-28', '2026-08-29', 20, 'meteostat', true)"
+            )
+        )
+
+    for _ in range(2):
+        command.upgrade(cfg, "head")
+        inspector = inspect(engine)
+        assert {"station_id", "station_distance_km"} <= {
+            col["name"] for col in inspector.get_columns("weather_observations")
+        }
+        assert {"actual_station_id", "actual_station_distance_km"} <= {
+            col["name"] for col in inspector.get_columns("ml_predictions")
+        }
+        with engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT model_bytes, validation_state FROM ml_model_store WHERE id = 1")
+            ).one() == (b"original-model", None)
+            assert conn.execute(text("SELECT actual_source, verified FROM ml_predictions WHERE id = 1")).one() == (
+                "meteostat",
+                1,
+            )
+        command.downgrade(cfg, "20260822_0002")
+    engine.dispose()

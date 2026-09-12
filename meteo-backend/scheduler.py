@@ -12,11 +12,11 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.base import SchedulerAlreadyRunningError, SchedulerNotRunningError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 
 from config import settings
 from database import City, MlModelStore, MlPrediction, MlTrainingState, SessionLocal, WeatherObservation
-from trusted_observation_service import fetch_meteostat_observations
+from trusted_observation_service import METEOSTAT_MAX_BACKFILL_HOURS, fetch_meteostat_observations
 from weather_service import fetch_all_cities_weather
 import ml_model
 
@@ -174,6 +174,44 @@ def _select_training_cities(cities: list[dict], now: datetime | None = None) -> 
 def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
     observations = payload.get("observations", [])
     predictions = payload.get("predictions", [])
+    if predictions:
+
+        def prediction_key(pred):
+            return (
+                int(pred["city_id"]),
+                ml_model._to_naive_utc(pred["predicted_at"]),
+                ml_model._to_naive_utc(pred["target_time"]),
+                pred.get("forecast_source", "open-meteo"),
+            )
+
+        with SessionLocal() as db:
+            existing = (
+                db.query(MlPrediction)
+                .filter(
+                    MlPrediction.city_id.in_({int(pred["city_id"]) for pred in predictions}),
+                    MlPrediction.predicted_at.in_({pred["predicted_at"] for pred in predictions}),
+                )
+                .all()
+            )
+        seen = {
+            prediction_key(
+                {
+                    "city_id": row.city_id,
+                    "predicted_at": row.predicted_at,
+                    "target_time": row.target_time,
+                    "forecast_source": row.forecast_source,
+                }
+            )
+            for row in existing
+            if row.target_time is not None
+        }
+        unique_predictions = []
+        for pred in predictions:
+            key = prediction_key(pred)
+            if key not in seen:
+                seen.add(key)
+                unique_predictions.append(pred)
+        predictions = unique_predictions
 
     # Il backfill Meteostat ripassa intenzionalmente sulle ultime ore. Evitiamo
     # duplicati per (citta', ora, fonte), sia nello stesso payload sia rispetto
@@ -264,6 +302,8 @@ def _db_save_cycle_data(payload: dict) -> tuple[int, int]:
             precipitation=obs.get("precipitation", 0.0),
             observation_source=obs.get("observation_source", "unknown"),
             observation_interval_minutes=obs.get("observation_interval_minutes"),
+            station_id=obs.get("station_id"),
+            station_distance_km=obs.get("station_distance_km"),
         )
         for obs in observations_to_save
         if obs.get("temp") is not None
@@ -325,8 +365,8 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
     if not observations:
         return 0, 0.0
 
-    # Pre-normalizza observed_at a UTC naive per il match con target_time nel DB.
-    # SQLAlchemy ORM gestisce DateTime in modo omogeneo tra SQLite e PostgreSQL.
+    # Le chiavi Python devono usare la stessa forma su entrambi i lati:
+    # PostgreSQL restituisce date con timezone, SQLite date senza timezone.
     trusted_sources = {str(source).lower() for source in getattr(settings, "ml_trusted_observation_sources", ())}
     require_trusted = bool(getattr(settings, "ml_require_trusted_observations", False))
     normalized: list[tuple[dict, datetime]] = []
@@ -356,7 +396,7 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
             .filter(
                 MlPrediction.city_id.in_(city_ids),
                 MlPrediction.target_time.in_(target_times),
-                MlPrediction.verified.is_(False),
+                or_(MlPrediction.verified.is_(False), MlPrediction.actual_source == "meteostat"),
             )
             .all()
         )
@@ -364,7 +404,7 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
         # osservazione deve verificare tutte le righe, non solo la prima.
         index: dict[tuple[int, datetime], list[MlPrediction]] = {}
         for pred in sorted(candidates, key=lambda p: int(p.id)):
-            index.setdefault((int(pred.city_id), pred.target_time), []).append(pred)
+            index.setdefault((int(pred.city_id), ml_model._to_naive_utc(pred.target_time)), []).append(pred)
 
         for obs, observed_at in normalized:
             key = (int(obs["city_id"]), observed_at)
@@ -381,11 +421,13 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
                     pred.actual_wind_direction = obs.get("wind_direction")
                     pred.actual_source = obs.get("observation_source", "unknown")
                     pred.actual_interval_minutes = obs.get("observation_interval_minutes")
+                    pred.actual_station_id = obs.get("station_id")
+                    pred.actual_station_distance_km = obs.get("station_distance_km")
                     pred.error = obs["temp"] - (
                         pred.forecast_temp if pred.forecast_temp is not None else pred.predicted_temp
                     )
                     pred.verified = True
-                    pred.verified_at = observed_at
+                    pred.verified_at = datetime.now(timezone.utc)
                     verified_count += 1
                 except Exception as exc:
                     logger.warning(
@@ -412,7 +454,10 @@ def _db_verify_predictions(observations: list[dict]) -> tuple[int, float]:
 
 def _db_count_verified() -> int:
     with SessionLocal() as db:
-        return db.query(MlPrediction).filter(MlPrediction.verified.is_(True)).count()
+        query = db.query(MlPrediction).filter(MlPrediction.verified.is_(True))
+        if getattr(settings, "ml_require_trusted_observations", False):
+            query = query.filter(MlPrediction.actual_source.in_(settings.ml_trusted_observation_sources))
+        return query.count()
 
 
 def _db_count_verified_since(since: datetime | None) -> int:
@@ -421,13 +466,45 @@ def _db_count_verified_since(since: datetime | None) -> int:
     if since.tzinfo is not None:
         since = since.astimezone(timezone.utc).replace(tzinfo=None)
     with SessionLocal() as db:
-        return (
+        query = (
             db.query(MlPrediction)
             .filter(MlPrediction.verified.is_(True))
             .filter(MlPrediction.verified_at.isnot(None))
             .filter(MlPrediction.verified_at > since)
-            .count()
         )
+        if getattr(settings, "ml_require_trusted_observations", False):
+            query = query.filter(MlPrediction.actual_source.in_(settings.ml_trusted_observation_sources))
+        return query.count()
+
+
+def _db_observation_backfill(cities: list[dict], now: datetime) -> tuple[list[dict], datetime | None]:
+    """Recupera anche le citta' uscite dal campione che attendono una misura."""
+    with SessionLocal() as db:
+        pending = (
+            db.query(City, func.min(MlPrediction.target_time).label("oldest_target"))
+            .join(MlPrediction, City.id == MlPrediction.city_id)
+            .filter(or_(MlPrediction.verified.is_(False), MlPrediction.actual_source == "meteostat"))
+            .filter(MlPrediction.target_time >= now - timedelta(hours=METEOSTAT_MAX_BACKFILL_HOURS))
+            .filter(MlPrediction.target_time <= now - timedelta(hours=2))
+            .group_by(City.id)
+            .all()
+        )
+        by_id = {int(city["id"]): city for city in cities}
+        starts = []
+        for city, oldest_target in pending:
+            item = {
+                "id": city.id,
+                "name": city.name,
+                "lat": city.lat,
+                "lon": city.lon,
+                "region": city.region,
+                "province": city.province,
+            }
+            if not _filter_training_cities_by_province([item]):
+                continue
+            by_id[city.id] = item
+            starts.append(ml_model._to_naive_utc(oldest_target))
+    return list(by_id.values()), min(starts) if starts else None
 
 
 def _db_get_or_create_training_state(db) -> MlTrainingState:
@@ -441,6 +518,18 @@ def _db_get_or_create_training_state(db) -> MlTrainingState:
         db.add(state)
         db.flush()
     return state
+
+
+def _should_wait_for_shadow_validation(summary: dict, last_training: datetime | None, now: datetime) -> bool:
+    if last_training is None or not (summary.get("rain_model_v2_ready") or summary.get("condition_model_v2_ready")):
+        return False
+    shadow = summary.get("shadow", {})
+    if shadow.get("last_pass") is False:
+        return False
+    age_hours = (ml_model._to_naive_utc(now) - ml_model._to_naive_utc(last_training)).total_seconds() / 3600
+    # Due finestre da 200 eventi indipendenti possono richiedere diversi giorni
+    # in un'area con poche stazioni. Un candidato bocciato si puo' sostituire subito.
+    return shadow.get("consecutive_positive_windows", 0) < ml_model.SHADOW_REQUIRED_STREAK and 0 <= age_hours < 7 * 24
 
 
 def _should_retrain(
@@ -613,9 +702,12 @@ async def hourly_cycle():
 
         provider_task = fetch_all_cities_weather(cities)
         if bool(getattr(settings, "ml_require_trusted_observations", False)):
+            observation_cities, start_time = await asyncio.to_thread(_db_observation_backfill, cities, cycle_started_at)
             provider_payload, trusted_observations = await asyncio.gather(
                 provider_task,
-                asyncio.to_thread(fetch_meteostat_observations, cities, now=cycle_started_at),
+                asyncio.to_thread(
+                    fetch_meteostat_observations, observation_cities, now=cycle_started_at, start_time=start_time
+                ),
             )
         else:
             provider_payload = await provider_task
@@ -626,7 +718,7 @@ async def hourly_cycle():
         observations = [*trusted_observations, *provider_observations]
         payload["observations"] = observations
         predictions = payload.get("predictions", [])
-        if not observations:
+        if not observations and not predictions:
             print("[WARN] Nessuna osservazione scaricata")
             return await asyncio.to_thread(
                 _db_update_training_state,
@@ -660,7 +752,8 @@ async def hourly_cycle():
             new_verified_since_last = total_verified
         else:
             new_verified_since_last = await asyncio.to_thread(_db_count_verified_since, last_training)
-        model_ready = bool(ml_model.get_public_summary().get("rain_model_ready"))
+        model_summary = ml_model.get_public_summary()
+        model_ready = bool(model_summary.get("rain_model_ready"))
         should_retrain = _should_retrain(
             total_verified=total_verified,
             new_verified_since_last=new_verified_since_last,
@@ -668,6 +761,8 @@ async def hourly_cycle():
             now=now,
             model_ready=model_ready,
         )
+        if _should_wait_for_shadow_validation(model_summary, last_training, now):
+            should_retrain = False
 
         cycle_message = "retrain_skipped"
         if should_retrain:

@@ -77,7 +77,7 @@ BLEND_BUCKET_ML_WEIGHT_LIMITS = {
     "day4_7": (0.05, 0.35),
     "day8_plus": (0.0, 0.2),
 }
-MODEL_FORMAT_VERSION = 3
+MODEL_FORMAT_VERSION = 4  # Excludes models trained before observation-only provenance and unit fixes.
 MODEL_METADATA_PREFIX = b"MLMETA "
 
 # Pipeline globali caricate in memoria all'avvio
@@ -199,12 +199,17 @@ def get_cached_stats(*, allow_stale: bool = False) -> dict | None:
 def _latest_model_record_summary() -> dict | None:
     db: Session = SessionLocal()
     try:
-        record = db.query(MlModelStore.id, MlModelStore.trained_at).order_by(MlModelStore.trained_at.desc()).first()
+        record = (
+            db.query(MlModelStore.id, MlModelStore.trained_at, MlModelStore.validation_state)
+            .order_by(MlModelStore.trained_at.desc())
+            .first()
+        )
         if not record:
             return None
         return {
             "id": int(record.id),
             "trained_at": record.trained_at,
+            "validation_state": record.validation_state,
         }
     except Exception:
         return None
@@ -238,6 +243,32 @@ def _reset_loaded_model_state() -> None:
     _known_regions = []
     _temperature_feature_variant = "v1"
     _blend_profiles = {"v1": {}, "v2": {}}
+    _restore_shadow_state(None)
+
+
+def _restore_shadow_state(raw: str | None) -> None:
+    global _shadow_state, _runtime_force_v1
+    state = {}
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict) and parsed.get("model_store_id") == _loaded_model_store_id:
+                streak = parsed.get("consecutive_positive_windows", 0)
+                if type(streak) is not int or streak < 0:
+                    raise ValueError("invalid validation streak")
+                if parsed.get("last_target_time"):
+                    datetime.fromisoformat(str(parsed["last_target_time"]))
+                state = parsed
+        except (TypeError, ValueError):
+            logger.warning("Invalid persisted ML validation state")
+    _shadow_state = {
+        "consecutive_positive_windows": 0,
+        "last_check_at": None,
+        "last_pass": None,
+        "last_details": None,
+        **state,
+    }
+    _runtime_force_v1 = bool(state.get("runtime_force_v1", False))
 
 
 def _signing_key() -> bytes | None:
@@ -425,6 +456,8 @@ def _ensure_latest_model_loaded(*, force: bool = False) -> None:
 
     if latest["id"] != _loaded_model_store_id or latest["trained_at"] != _loaded_model_trained_at:
         load_latest_model()
+    elif "validation_state" in latest:
+        _restore_shadow_state(latest["validation_state"])
 
 
 def _normalize_wind_direction(value: float | int | None) -> float:
@@ -618,7 +651,7 @@ def _recency_sample_weights(rows: list[dict]) -> np.ndarray:
     if not rows:
         return np.array([], dtype=float)
 
-    normalized_times = [_to_naive_utc(row.get("verified_at") or row["target_time"]) for row in rows]
+    normalized_times = [_to_naive_utc(row["target_time"]) for row in rows]
     reference_time = max(normalized_times)
     weights = []
     for sample_time in normalized_times:
@@ -668,8 +701,6 @@ def _rain_model_variant_for_stats() -> str:
         return "v2"
     if _rain_pipeline is not None:
         return "v1"
-    if _rain_pipeline_v2 is not None:
-        return "v2"
     return "provider"
 
 
@@ -679,8 +710,6 @@ def _condition_model_variant_for_stats() -> str:
         return "v2"
     if _condition_pipeline is not None:
         return "v1"
-    if _condition_pipeline_v2 is not None:
-        return "v2"
     return "provider"
 
 
@@ -1294,6 +1323,7 @@ def _prepare_training_rows(
     allowed_provinces = _allowed_training_provinces()
     query = (
         db.query(
+            MlPrediction.city_id,
             MlPrediction.predicted_at,
             MlPrediction.target_time,
             MlPrediction.predicted_temp,
@@ -1316,6 +1346,8 @@ def _prepare_training_rows(
             MlPrediction.actual_wind_direction,
             MlPrediction.actual_source,
             MlPrediction.actual_interval_minutes,
+            MlPrediction.actual_station_id,
+            MlPrediction.actual_station_distance_km,
             MlPrediction.evaluation_model_store_id,
             MlPrediction.evaluation_model_variant,
             MlPrediction.evaluation_corrected_temp,
@@ -1346,9 +1378,14 @@ def _prepare_training_rows(
 
     if window_start is not None:
         query = query.filter(
-            MlPrediction.verified_at.isnot(None),
-            MlPrediction.verified_at >= _to_naive_utc(window_start),
+            MlPrediction.target_time >= _to_naive_utc(window_start),
         )
+
+    # Escludi la vecchia sorgente anche in sviluppo: poteva includere stime e
+    # nuvolosita' in ottavi. Non correggiamo retroattivamente dati ambigui.
+    query = query.filter((MlPrediction.actual_source.is_(None)) | (MlPrediction.actual_source != "meteostat"))
+    if getattr(settings, "ml_require_trusted_observations", False):
+        query = query.filter(MlPrediction.actual_source.in_(settings.ml_trusted_observation_sources))
 
     if allowed_provinces:
         query = query.filter(City.province.isnot(None))
@@ -1394,6 +1431,7 @@ def _prepare_training_rows(
         target_time = row.target_time or row.predicted_at
         if not target_time:
             continue
+        target_time = _to_naive_utc(target_time)
 
         forecast_temp = row.forecast_temp if row.forecast_temp is not None else row.predicted_temp
         rain_interval_compatible = row.actual_interval_minutes == 60
@@ -1403,6 +1441,7 @@ def _prepare_training_rows(
 
         prepared.append(
             {
+                "city_id": row.city_id,
                 "target_time": _to_naive_utc(target_time),
                 "verified_at": _to_naive_utc_optional(row.verified_at),
                 "forecast_temp": forecast_temp,
@@ -1432,6 +1471,8 @@ def _prepare_training_rows(
                 "actual_wind_direction": row.actual_wind_direction,
                 "actual_source": actual_source,
                 "actual_interval_minutes": row.actual_interval_minutes,
+                "actual_station_id": row.actual_station_id,
+                "actual_station_distance_km": row.actual_station_distance_km,
                 "evaluation_model_store_id": row.evaluation_model_store_id,
                 "evaluation_model_variant": row.evaluation_model_variant,
                 "evaluation_corrected_temp": row.evaluation_corrected_temp,
@@ -1448,8 +1489,18 @@ def _prepare_training_rows(
                 "shadow_v2_condition_code": row.shadow_v2_condition_code,
             }
         )
-    prepared.sort(key=lambda item: item["target_time"])
-    return prepared
+    # Una misura copiata in piu' comuni non e' un nuovo evento. Per ciascuna
+    # stazione/ora/orizzonte conserva la previsione del comune piu' vicino.
+    independent = {}
+    for row in prepared:
+        station = row.get("actual_station_id")
+        key = (station or f"city:{row['city_id']}", row["target_time"], row["lead_hours"])
+        previous = independent.get(key)
+        distance = row.get("actual_station_distance_km")
+        previous_distance = previous.get("actual_station_distance_km") if previous else None
+        if previous is None or (distance is not None and (previous_distance is None or distance < previous_distance)):
+            independent[key] = row
+    return sorted(independent.values(), key=lambda item: item["target_time"])
 
 
 def _encode_regions(rows: list[dict]) -> LabelEncoder:
@@ -2326,6 +2377,7 @@ def _compute_variant_kpis(rows: list[dict], variant: str, pipelines: dict | None
         "rain_brier": None,
         "rain_f1": None,
         "provider_rain_brier": None,
+        "provider_rain_f1": None,
         "condition_macro_f1": None,
         "provider_condition_macro_f1": None,
         "rain_samples": len(rain_truth),
@@ -2344,6 +2396,7 @@ def _compute_variant_kpis(rows: list[dict], variant: str, pipelines: dict | None
         threshold = float(threshold) if threshold is not None else 0.5
         metrics["rain_brier"] = float(np.mean((rain_probs_np - rain_truth_np) ** 2))
         metrics["provider_rain_brier"] = float(np.mean((provider_probs_np - rain_truth_np) ** 2))
+        metrics["provider_rain_f1"] = float(f1_score(rain_truth_np, provider_probs_np >= 0.5, zero_division=0))
         metrics["rain_f1"] = float(f1_score(rain_truth_np, (rain_probs_np >= threshold).astype(int), zero_division=0))
 
     if condition_truth:
@@ -2384,7 +2437,7 @@ def _provider_rain_probability_proxy(row: dict) -> float:
 
 
 def _compute_rain_kpis_by_bucket(
-    rows: list[dict], variant: str, pipelines: dict | None = None
+    rows: list[dict], variant: str, pipelines: dict | None = None, *, frozen: bool = False
 ) -> dict[str, dict[str, float | int | None]]:
     grouped: dict[str, dict[str, list[float] | list[int]]] = {}
 
@@ -2392,15 +2445,42 @@ def _compute_rain_kpis_by_bucket(
         if row.get("actual_precipitation") is None:
             continue
 
-        prob = _rain_probability_for_row(row, variant, pipelines)
+        prob = (
+            row.get(f"shadow_{variant}_rain_probability")
+            if frozen
+            else _rain_probability_for_row(row, variant, pipelines)
+        )
         if prob is None:
             continue
 
         bucket = _lead_bucket_name(row.get("lead_hours"))
-        entry = grouped.setdefault(bucket, {"truth": [], "probs": [], "provider_probs": []})
+        entry = grouped.setdefault(
+            bucket,
+            {"truth": [], "probs": [], "provider_probs": [], "provider_alerts": [], "events": [], "thresholds": []},
+        )
         entry["truth"].append(1 if (row.get("actual_precipitation") or 0.0) > 0.1 else 0)
         entry["probs"].append(float(prob))
         entry["provider_probs"].append(_provider_rain_probability_proxy(row))
+        if frozen:
+            saved_threshold = row.get(f"shadow_{variant}_rain_threshold")
+            entry["thresholds"].append(0.5 if saved_threshold is None else saved_threshold)
+        raw_pop = row.get("forecast_precipitation_probability")
+        entry["provider_alerts"].append(
+            bool(
+                raw_pop is not None
+                and raw_pop >= 50
+                and (
+                    row.get("forecast_weather_code") in RAIN_WEATHER_CODES
+                    or _safe_float(row.get("forecast_precipitation"), 0.0) > 0.1
+                )
+            )
+        )
+        entry["events"].append(
+            (
+                row.get("actual_station_id") or row.get("city_id") or (row.get("lat"), row.get("lon")),
+                row.get("target_time"),
+            )
+        )
 
     bucket_metrics: dict[str, dict[str, float | int | None]] = {}
     for bucket in LEAD_BUCKETS:
@@ -2416,9 +2496,34 @@ def _compute_rain_kpis_by_bucket(
             if pipelines is not None
             else (_rain_threshold_v2 if variant == "v2" else _rain_threshold_v1)
         )
-        threshold = float(threshold) if threshold is not None else 0.5
+        threshold = np.array(entry["thresholds"]) if frozen else (float(threshold) if threshold is not None else 0.5)
+        ml_alerts = probs >= np.maximum(0.5, threshold)
+        provider_alerts = np.array(entry["provider_alerts"], dtype=bool)
+        wet = truth > 0
+        ml_hits = int(np.sum(ml_alerts & wet))
+        provider_hits = int(np.sum(provider_alerts & wet))
+        ml_precision = ml_hits / max(1, int(np.sum(ml_alerts)))
+        provider_precision = provider_hits / max(1, int(np.sum(provider_alerts)))
+        ml_recall = ml_hits / max(1, int(np.sum(wet)))
+        provider_recall = provider_hits / max(1, int(np.sum(wet)))
+        independent_samples = len(set(entry["events"]))
+        rain_events = len({event for event, rainy in zip(entry["events"], wet, strict=True) if rainy})
         bucket_metrics[bucket] = {
             "samples": int(len(truth)),
+            "independent_samples": independent_samples,
+            "rain_events": rain_events,
+            "alert_precision": ml_precision,
+            "alert_recall": ml_recall,
+            "provider_alert_precision": provider_precision,
+            "provider_alert_recall": provider_recall,
+            "alert_validated": (
+                independent_samples >= 200
+                and rain_events >= 20
+                and int(np.sum(ml_alerts)) >= 20
+                and ml_precision >= provider_precision
+                and ml_recall >= provider_recall
+                and float(np.mean((probs - truth) ** 2)) < float(np.mean((provider_probs - truth) ** 2))
+            ),
             "rain_brier": float(np.mean((probs - truth) ** 2)),
             "provider_brier": float(np.mean((provider_probs - truth) ** 2)),
             "rain_f1": float(f1_score(truth, (probs >= threshold).astype(int), zero_division=0)),
@@ -2460,6 +2565,7 @@ def _compute_blend_profile(
             ml_weight = max_weight * support_factor * relative_skill
 
         profile[bucket] = {
+            **metrics,
             "ml_weight": round(float(ml_weight), 3),
             "samples": samples,
             "rain_brier": round(rain_brier, 4),
@@ -2482,6 +2588,11 @@ def _rain_blend_weight(lead_hours: int, model_variant: str) -> float:
         return float(bucket_profile["ml_weight"])
 
     return 0.0
+
+
+def _rain_alert_validated(lead_hours: int, variant: str) -> bool:
+    profile = _blend_profiles.get(variant, {}).get(_lead_bucket_name(lead_hours), {})
+    return bool(profile.get("alert_validated", False))
 
 
 def _kpi_gate(v1: dict, v2: dict) -> dict:
@@ -2529,10 +2640,12 @@ def _rain_v2_gate(v1: dict, v2: dict, train_result: dict) -> dict:
             "rain_f1_gain": round(float(rain_f1_gain), 4),
         }
 
-    brier = train_result.get("brier")
-    baseline_brier = train_result.get("baseline_brier")
-    f1 = train_result.get("f1")
-    baseline_f1 = train_result.get("baseline_f1")
+    # Anche senza V1 il gate deve usare l'holdout esterno, mai i risultati
+    # interni gia' utilizzati per selezionare il candidato.
+    brier = v2.get("rain_brier")
+    baseline_brier = v2.get("provider_rain_brier")
+    f1 = v2.get("rain_f1")
+    baseline_f1 = v2.get("provider_rain_f1")
     if brier is None or baseline_brier is None or f1 is None or baseline_f1 is None:
         return {"pass": False, "reason": "rain_kpi_insufficient"}
 
@@ -2540,7 +2653,7 @@ def _rain_v2_gate(v1: dict, v2: dict, train_result: dict) -> dict:
     f1_gain = float(f1) - float(baseline_f1)
     return {
         "pass": brier_improvement >= MIN_RAIN_BRIER_IMPROVEMENT_RATIO and f1_gain >= 0.0,
-        "source": "training_baseline",
+        "source": "holdout_provider",
         "rain_brier_improvement": round(float(brier_improvement), 4),
         "rain_f1_gain": round(float(f1_gain), 4),
     }
@@ -2557,15 +2670,15 @@ def _condition_v2_gate(v1: dict, v2: dict, train_result: dict) -> dict:
             "condition_macro_f1_gain": round(float(f1_gain), 4),
         }
 
-    macro_f1 = train_result.get("macro_f1")
-    baseline_macro_f1 = train_result.get("baseline_macro_f1")
+    macro_f1 = v2.get("condition_macro_f1")
+    baseline_macro_f1 = v2.get("provider_condition_macro_f1")
     if macro_f1 is None or baseline_macro_f1 is None:
         return {"pass": False, "reason": "condition_kpi_insufficient"}
 
     f1_gain = float(macro_f1) - float(baseline_macro_f1)
     return {
         "pass": f1_gain >= MIN_CONDITION_MACRO_F1_GAIN,
-        "source": "training_baseline",
+        "source": "holdout_provider",
         "condition_macro_f1_gain": round(float(f1_gain), 4),
     }
 
@@ -2640,6 +2753,7 @@ def _compute_prequential_shadow_kpis(rows: list[dict]) -> tuple[dict, dict]:
 def evaluate_shadow_window() -> dict:
     global _runtime_force_v1
 
+    _ensure_latest_model_loaded()
     now = datetime.now(timezone.utc)
     if not settings.ml_v2_enabled:
         return {
@@ -2667,8 +2781,22 @@ def evaluate_shadow_window() -> dict:
             window_start=window_start,
             limit=MAX_KPI_EVAL_ROWS,
         )
+        # Le prove appartengono al modello che ha emesso le previsioni. Un
+        # riaddestramento non eredita il via libera di un modello precedente.
+        rows = [
+            row
+            for row in rows
+            if row.get("evaluation_model_store_id") == _loaded_model_store_id
+            and row.get("evaluation_generated_at") is not None
+            and row["evaluation_generated_at"] < row["target_time"]
+        ]
+        last_target = _shadow_state.get("last_target_time")
+        if last_target:
+            boundary = _to_naive_utc(datetime.fromisoformat(str(last_target)))
+            rows = [row for row in rows if row["target_time"] > boundary]
 
-        if len(rows) < 200:
+        independent_events = {(row.get("actual_station_id") or row.get("city_id"), row["target_time"]) for row in rows}
+        if len(independent_events) < 200:
             return {
                 "checked": False,
                 "reason": "not_enough_rows",
@@ -2727,6 +2855,15 @@ def evaluate_shadow_window() -> dict:
             "rain_gate": rain_gate,
             "condition_gate": condition_gate,
         }
+        _shadow_state["last_target_time"] = max(row["target_time"] for row in rows).isoformat()
+        _shadow_state["model_store_id"] = _loaded_model_store_id
+        _shadow_state["runtime_force_v1"] = _runtime_force_v1
+        record = db.get(MlModelStore, _loaded_model_store_id) if _loaded_model_store_id is not None else None
+        if record is None:
+            _restore_shadow_state(None)
+            return {"checked": False, "reason": "missing_model_record"}
+        record.validation_state = json.dumps(_shadow_state)
+        db.commit()
 
         _invalidate_stats_cache()
 
@@ -3022,6 +3159,7 @@ def train(min_samples: int = 100) -> dict:
         _loaded_model_store_id = int(record.id)
         _loaded_model_trained_at = record.trained_at
         _last_model_version_check_at = datetime.now(timezone.utc)
+        _restore_shadow_state(None)
 
         _latest_summary = {
             "model_status": "loaded",
@@ -3160,6 +3298,7 @@ def load_latest_model() -> bool:
                 _known_regions = data.get("regions", [])
                 _loaded_model_store_id = int(record.id)
                 _loaded_model_trained_at = record.trained_at
+                _restore_shadow_state(getattr(record, "validation_state", None))
                 _last_model_version_check_at = datetime.now(timezone.utc)
                 rain_feature_variant = data.get("rain_feature_variant") or _infer_rain_feature_variant_from_pipeline()
                 condition_feature_variant = (
@@ -3258,7 +3397,7 @@ def predict_correction(
             "model_variant": "provider",
             "warning_status": _disabled_model_warning_status(),
         }
-    if lead_hours < min(settings.ml_forecast_leads):
+    if lead_hours < min(settings.ml_forecast_leads) or lead_hours > max(settings.ml_forecast_leads):
         return {
             "correction": 0.0,
             "corrected_temp": temp,
@@ -3359,7 +3498,7 @@ def predict_rain_probability(
             "model_variant": "provider",
             "warning_status": _disabled_model_warning_status(),
         }
-    if lead_hours < min(settings.ml_forecast_leads):
+    if lead_hours < min(settings.ml_forecast_leads) or lead_hours > max(settings.ml_forecast_leads):
         return {
             "model_ready": False,
             "rain_probability": None,
@@ -3398,6 +3537,7 @@ def predict_rain_probability(
                 "rain_probability": round(rain_prob, 3),
                 "will_rain": rain_prob >= threshold,
                 "rain_threshold": round(threshold, 3),
+                "alert_validated": _rain_alert_validated(lead_hours, "v2"),
                 "model_ready": True,
                 "confidence": confidence,
                 "model_variant": "v2",
@@ -3440,6 +3580,7 @@ def predict_rain_probability(
             "rain_probability": round(rain_prob, 3),
             "will_rain": rain_prob >= threshold,
             "rain_threshold": round(threshold, 3),
+            "alert_validated": _rain_alert_validated(lead_hours, "v1"),
             "model_ready": True,
             "confidence": confidence,
             "model_variant": active_variant,
@@ -3734,28 +3875,26 @@ def build_daily_insight(
     lon: float | None = None,
     city_name: str | None = None,
 ) -> dict:
-    representative_time = datetime.fromisoformat(day["dt"]).replace(
-        hour=14,
-        minute=0,
-        second=0,
-        microsecond=0,
-        tzinfo=ROME_TZ,
+    # Il modello pioggia/condizioni e' orario: un accumulo giornaliero o la POP
+    # massima del giorno non sono gli input su cui e' stato addestrato.
+    # Conserva la probabilita' giornaliera del provider fino a quando esistera'
+    # un modello con target giornaliero e una validazione dedicata.
+    representative_time = (
+        datetime.fromisoformat(day["dt"])
+        .replace(
+            hour=14,
+            minute=0,
+            second=0,
+            microsecond=0,
+            tzinfo=ROME_TZ,
+        )
+        .astimezone(timezone.utc)
     )
     forecast_temp = day.get("temp", {}).get("day", 0.0)
-    forecast_pop = _safe_float(day.get("pop"), 0.0)
-    forecast_precipitation = _safe_float(day.get("precipitation_sum"), 0.0)
+    forecast_pop = max(0.0, min(1.0, _safe_float(day.get("pop"), 0.0)))
+    precipitation = _safe_float(day.get("precipitation_sum"), 0.0)
     cloud_cover = _safe_float(day.get("cloud_cover"), 55.0)
     wind_speed = _safe_float(day.get("wind_speed"), 0.0)
-    wind_direction = _safe_float(day.get("wind_deg"), 0.0)
-    weather_code = day.get("weather_code")
-    forecast_precipitation_probability = forecast_pop * 100.0
-    forecast_surface_pressure = day.get("surface_pressure")
-    forecast_dew_point = day.get("dew_point")
-    forecast_cape = day.get("cape")
-
-    support = _horizon_support(lead_hours)
-    requested_variant = _resolve_live_model_variant(city_name)
-
     correction = predict_correction(
         temp=forecast_temp,
         humidity=_safe_float(day.get("humidity"), 55.0),
@@ -3766,127 +3905,36 @@ def build_daily_insight(
         region=region,
         cloud_cover=cloud_cover,
         lead_hours=lead_hours,
-        forecast_precipitation=forecast_precipitation,
+        forecast_precipitation=precipitation,
         forecast_wind_speed=wind_speed,
-        forecast_wind_direction=wind_direction,
-        forecast_weather_code=weather_code,
+        forecast_wind_direction=_safe_float(day.get("wind_deg"), 0.0),
+        forecast_weather_code=day.get("weather_code"),
     )
-
-    if support == "provider_only":
-        condition_label = _condition_from_inputs(
-            weather_code=weather_code,
-            cloud_cover=cloud_cover,
-            precipitation=forecast_precipitation,
-            rain_probability=forecast_pop,
-        )
-        blended_rain = round(forecast_pop, 3)
-        model_variant = "provider"
-        condition = {
-            "display_condition": _condition_display(condition_label),
-            "confidence": "media",
-            "source": "provider",
-            "expected_condition": condition_label,
-            "provider_condition": condition_label,
-        }
-        rain = {
-            "model_ready": False,
-            "confidence": "provider",
-        }
-        blend_weight = 0.0
-    else:
-        rain = predict_rain_probability(
-            forecast_temp=forecast_temp,
-            humidity=_safe_float(day.get("humidity"), 55.0),
-            hour=representative_time.hour,
-            month=representative_time.month,
-            lat=lat,
-            lon=lon,
-            region=region,
-            cloud_cover=cloud_cover,
-            lead_hours=lead_hours,
-            forecast_precipitation=forecast_precipitation,
-            forecast_wind_speed=wind_speed,
-            forecast_wind_direction=wind_direction,
-            forecast_weather_code=weather_code,
-            forecast_precipitation_probability=forecast_precipitation_probability,
-            forecast_surface_pressure=forecast_surface_pressure,
-            forecast_dew_point=forecast_dew_point,
-            forecast_cape=forecast_cape,
-            city_name=city_name,
-            force_variant=requested_variant,
-        )
-        condition = predict_condition_outlook(
-            forecast_temp=forecast_temp,
-            humidity=_safe_float(day.get("humidity"), 55.0),
-            hour=representative_time.hour,
-            month=representative_time.month,
-            lat=lat,
-            lon=lon,
-            region=region,
-            cloud_cover=cloud_cover,
-            lead_hours=lead_hours,
-            forecast_precipitation=forecast_precipitation,
-            forecast_wind_speed=wind_speed,
-            forecast_wind_direction=wind_direction,
-            forecast_weather_code=weather_code,
-            city_name=city_name,
-            force_variant=requested_variant,
-        )
-        if not condition.get("model_ready"):
-            provider_condition = _condition_from_inputs(
-                weather_code=weather_code,
-                cloud_cover=cloud_cover,
-                precipitation=forecast_precipitation,
-                rain_probability=forecast_pop,
-            )
-            condition.update(
-                {
-                    "expected_condition": provider_condition,
-                    "display_condition": _condition_display(provider_condition),
-                    "confidence": "media",
-                    "source": "provider",
-                    "provider_condition": provider_condition,
-                }
-            )
-
-        blended_rain = forecast_pop
-        blend_weight = 0.0
-        if rain.get("model_ready"):
-            blend_weight = _rain_blend_weight(lead_hours, rain.get("model_variant", requested_variant))
-            provider_weight = 1.0 - blend_weight
-            blended_rain = round((forecast_pop * provider_weight) + (rain["rain_probability"] * blend_weight), 3)
-
-        if condition.get("model_ready"):
-            model_variant = condition.get("model_variant") or requested_variant
-        elif rain.get("model_ready"):
-            model_variant = rain.get("model_variant") or requested_variant
-        else:
-            model_variant = "provider"
-
+    condition = _condition_from_inputs(
+        weather_code=day.get("weather_code"),
+        cloud_cover=cloud_cover,
+        precipitation=precipitation,
+        rain_probability=forecast_pop,
+    )
     delta = correction["correction"] if correction.get("model_ready") else 0.0
-    adjusted_min = round(day["temp"]["min"] + delta, 1)
-    adjusted_max = round(day["temp"]["max"] + delta, 1)
-    expected_condition = condition["expected_condition"]
-    confidence = condition["confidence"]
-
     return {
-        "expected_condition": expected_condition,
-        "display_condition": condition["display_condition"],
-        "condition_confidence": confidence,
-        "condition_source": condition["source"],
-        "provider_condition": condition.get("provider_condition"),
-        "rain_probability": blended_rain,
-        "rain_blend_weight": round(float(blend_weight), 3),
-        "rain_confidence": rain.get("confidence", "media") if rain.get("model_ready") else "provider",
+        "expected_condition": condition,
+        "display_condition": _condition_display(condition),
+        "condition_confidence": "media",
+        "condition_source": "provider",
+        "provider_condition": condition,
+        "rain_probability": round(forecast_pop, 3),
+        "rain_blend_weight": 0.0,
+        "rain_confidence": "provider",
         "temperature_delta": round(delta, 2),
         "adjusted_temp_range": {
-            "min": adjusted_min,
-            "max": adjusted_max,
+            "min": round(day["temp"]["min"] + delta, 1),
+            "max": round(day["temp"]["max"] + delta, 1),
         },
-        "summary": _daily_summary(expected_condition, blended_rain, wind_speed, confidence),
-        "badge": _daily_badge(expected_condition, blended_rain, wind_speed),
-        "horizon_support": support,
-        "model_variant": model_variant,
+        "summary": _daily_summary(condition, forecast_pop, wind_speed, "media"),
+        "badge": _daily_badge(condition, forecast_pop, wind_speed),
+        "horizon_support": _horizon_support(lead_hours),
+        "model_variant": "provider",
     }
 
 
@@ -3901,11 +3949,80 @@ def get_public_summary() -> dict:
 
 
 def _recent_rows_for_kpis(db: Session, window_start: datetime) -> list[dict]:
-    return _prepare_training_rows(
+    rows = _prepare_training_rows(
         db,
         window_start=window_start,
         limit=MAX_KPI_EVAL_ROWS,
     )
+    return [
+        row
+        for row in rows
+        if row.get("evaluation_generated_at") is not None and row["evaluation_generated_at"] < row["target_time"]
+    ]
+
+
+def _compute_frozen_variant_kpis(rows: list[dict], variant: str) -> dict:
+    """Riutilizza solo output emessi prima dell'evento, senza inferenza retrospettiva."""
+    rain_rows = [
+        row
+        for row in rows
+        if row.get("actual_precipitation") is not None and row.get(f"shadow_{variant}_rain_probability") is not None
+    ]
+    condition_rows = [
+        row
+        for row in rows
+        if _condition_target_from_row(row) is not None and row.get(f"shadow_{variant}_condition_code") is not None
+    ]
+    metrics = {
+        "rain_samples": len(rain_rows),
+        "condition_samples": len(condition_rows),
+        "rain_brier": None,
+        "rain_f1": None,
+        "provider_rain_brier": None,
+        "condition_macro_f1": None,
+        "provider_condition_macro_f1": None,
+    }
+    if rain_rows:
+        truth = np.array([float(row["actual_precipitation"]) > 0.1 for row in rain_rows], dtype=int)
+        probabilities = np.array([row[f"shadow_{variant}_rain_probability"] for row in rain_rows])
+        thresholds = np.array(
+            [
+                0.5 if row.get(f"shadow_{variant}_rain_threshold") is None else row[f"shadow_{variant}_rain_threshold"]
+                for row in rain_rows
+            ]
+        )
+        metrics["rain_brier"] = float(np.mean((probabilities - truth) ** 2))
+        metrics["provider_rain_brier"] = float(
+            np.mean((np.array([_provider_rain_probability_proxy(row) for row in rain_rows]) - truth) ** 2)
+        )
+        metrics["rain_f1"] = float(f1_score(truth, probabilities >= thresholds, zero_division=0))
+    if condition_rows:
+        metrics["condition_macro_f1"] = float(
+            f1_score(
+                [_condition_target_from_row(row) for row in condition_rows],
+                [row[f"shadow_{variant}_condition_code"] for row in condition_rows],
+                average="macro",
+                zero_division=0,
+            )
+        )
+        metrics["provider_condition_macro_f1"] = float(
+            f1_score(
+                [_condition_target_from_row(row) for row in condition_rows],
+                [
+                    CONDITION_TO_CODE[
+                        _condition_from_inputs(
+                            weather_code=row.get("forecast_weather_code"),
+                            cloud_cover=row.get("cloud_cover"),
+                            precipitation=row.get("forecast_precipitation"),
+                        )
+                    ]
+                    for row in condition_rows
+                ],
+                average="macro",
+                zero_division=0,
+            )
+        )
+    return metrics
 
 
 def _compute_issued_kpis(rows: list[dict]) -> dict:
@@ -3915,6 +4032,8 @@ def _compute_issued_kpis(rows: list[dict]) -> dict:
     rain_truth: list[int] = []
     provider_rain_probs: list[float] = []
     served_rain_probs: list[float] = []
+    ml_rain_probs: list[float] = []
+    ml_rain_predictions: list[bool] = []
     condition_truth: list[int] = []
     provider_condition: list[int] = []
     ml_condition: list[int] = []
@@ -3936,6 +4055,9 @@ def _compute_issued_kpis(rows: list[dict]) -> dict:
             rain_truth.append(truth)
             provider_rain_probs.append(provider_prob)
             served_rain_probs.append(served_prob)
+            ml_rain_probs.append(float(ml_rain))
+            threshold = row.get("evaluation_rain_threshold")
+            ml_rain_predictions.append(float(ml_rain) >= (float(threshold) if threshold is not None else 0.5))
 
         actual_condition = _condition_target_from_row(row)
         evaluated_condition = row.get("evaluation_condition_code")
@@ -3957,6 +4079,8 @@ def _compute_issued_kpis(rows: list[dict]) -> dict:
         "rain_samples": len(rain_truth),
         "provider_rain_brier": None,
         "served_rain_brier": None,
+        "ml_rain_brier": None,
+        "ml_rain_f1": None,
         "rain_brier_delta": None,
         "condition_samples": len(condition_truth),
         "provider_condition_macro_f1": None,
@@ -3980,6 +4104,8 @@ def _compute_issued_kpis(rows: list[dict]) -> dict:
             {
                 "provider_rain_brier": round(provider_brier, 4),
                 "served_rain_brier": round(served_brier, 4),
+                "ml_rain_brier": round(float(np.mean((np.array(ml_rain_probs) - truth) ** 2)), 4),
+                "ml_rain_f1": round(float(f1_score(truth, ml_rain_predictions, zero_division=0)), 4),
                 "rain_brier_delta": round(provider_brier - served_brier, 4),
             }
         )
@@ -4055,8 +4181,8 @@ def get_stats() -> dict:
 
         recent_rows = _recent_rows_for_kpis(db, window_start)
         issued_kpis = _compute_issued_kpis(recent_rows) if recent_rows else _compute_issued_kpis([])
-        v1_kpis = _compute_variant_kpis(recent_rows, "v1") if recent_rows else {}
-        v2_kpis = _compute_variant_kpis(recent_rows, "v2") if recent_rows else {}
+        v1_kpis = _compute_frozen_variant_kpis(recent_rows, "v1")
+        v2_kpis = _compute_frozen_variant_kpis(recent_rows, "v2")
         temp_bucket_metrics: dict[str, dict[str, float | int]] = {}
         for row in recent_rows:
             bucket = _lead_bucket_name(row.get("lead_hours"))
@@ -4078,8 +4204,8 @@ def get_stats() -> dict:
             for bucket in LEAD_BUCKETS
             if bucket in temp_bucket_metrics
         ]
-        rain_v1_by_bucket = _compute_rain_kpis_by_bucket(recent_rows, "v1") if recent_rows else {}
-        rain_v2_by_bucket = _compute_rain_kpis_by_bucket(recent_rows, "v2") if recent_rows else {}
+        rain_v1_by_bucket = _compute_rain_kpis_by_bucket(recent_rows, "v1", frozen=True) if recent_rows else {}
+        rain_v2_by_bucket = _compute_rain_kpis_by_bucket(recent_rows, "v2", frozen=True) if recent_rows else {}
 
         serving_variant = _global_model_variant_for_stats()
         rain_serving_variant = _rain_model_variant_for_stats()
@@ -4110,6 +4236,7 @@ def get_stats() -> dict:
             "rain_model_variant": rain_serving_variant,
             "condition_model_variant": condition_serving_variant,
             "kpi_window_days": settings.ml_kpi_window_days,
+            "kpi_evaluation_mode": "issued_predictions",
             "v1_kpis": v1_kpis,
             "v2_kpis": v2_kpis,
             "rain_v1_by_bucket": rain_v1_by_bucket,

@@ -37,7 +37,7 @@ services:
       - key: ML_REQUIRE_TRUSTED_OBSERVATIONS
         value: "true"
       - key: ML_TRUSTED_OBSERVATION_SOURCES
-        value: "station,arpa,meteostat"
+        value: "station,arpa,meteostat-observed"
       - key: ML_CYCLE_EVERY_HOURS
         value: "1"
       - key: ML_OBSERVATION_RETENTION_DAYS
@@ -82,7 +82,7 @@ services:
       - key: ML_REQUIRE_TRUSTED_OBSERVATIONS
         value: "true"
       - key: ML_TRUSTED_OBSERVATION_SOURCES
-        value: "station,arpa,meteostat"
+        value: "station,arpa,meteostat-observed"
       - key: ML_CYCLE_EVERY_HOURS
         value: "1"
       - key: ML_OBSERVATION_RETENTION_DAYS

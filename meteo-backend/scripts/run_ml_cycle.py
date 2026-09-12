@@ -19,7 +19,9 @@ def main() -> None:
     print("[ML-CRON] Avvio ciclo ML schedulato")
     init_db()
     ml_model.load_latest_model()
-    asyncio.run(hourly_cycle())
+    result = asyncio.run(hourly_cycle())
+    if not result or result.get("last_cycle_status") == "failed":
+        raise RuntimeError(f"Ciclo ML fallito: {(result or {}).get('last_cycle_message', 'missing_result')}")
     print("[ML-CRON] Ciclo ML completato")
 
 

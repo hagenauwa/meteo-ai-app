@@ -90,7 +90,8 @@ def test_db_verify_predictions_matches_aware_observation_to_naive_target(tmp_pat
     with TestingSessionLocal() as db:
         prediction = db.get(MlPrediction, 1)
         assert prediction.verified is True
-        assert prediction.verified_at == target_time
+        assert prediction.verified_at > target_time
+        assert prediction.target_time == target_time
         assert prediction.actual_precipitation == 1.2
 
 

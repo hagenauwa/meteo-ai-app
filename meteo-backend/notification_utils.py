@@ -195,10 +195,9 @@ def check_hourly_rain_adaptive(
     """
     Scansiona le previsioni orarie con logica adattiva.
 
-    Quando il modello calibrato e' disponibile decide lui: un provider al 100%
-    non puo' piu' scavalcarlo. Il provider resta un fallback conservativo solo
-    mentre il modello e' indisponibile. Per Telegram imponiamo inoltre almeno il
-    50% calibrato, privilegiando la precisione rispetto al richiamo.
+    Il modello decide solo quando la policy degli avvisi e' stata validata sul
+    relativo orizzonte contro il provider. Altrimenti decide il provider.
+    Per Telegram imponiamo almeno il 50% calibrato oltre alla soglia del modello.
 
     Restituisce il primo orario che soddisfa il trigger, o None.
     """
@@ -251,7 +250,8 @@ def check_hourly_rain_adaptive(
         meets_wmo = _is_rain_weather_code(weather_code)
         meets_precip = (precipitation or 0) > 0.1
 
-        forecast_hour = forecast_time.hour
+        feature_time = forecast_time.astimezone(timezone.utc)
+        forecast_hour = feature_time.hour
         lead_hours = max(1, ceil((interval_end - now_rome).total_seconds() / 3600))
 
         # Ottieni ML probability solo se la città è nell'area coperta dal modello:
@@ -264,7 +264,7 @@ def check_hourly_rain_adaptive(
                 forecast_temp=temperatures[i] if i < len(temperatures) else 20.0,
                 humidity=humidities[i] if i < len(humidities) else 50.0,
                 hour=forecast_hour,
-                month=forecast_time.month,
+                month=feature_time.month,
                 cloud_cover=cloud_covers[i] if i < len(cloud_covers) else 50.0,
                 lead_hours=lead_hours,
                 forecast_precipitation=precipitation,
@@ -285,15 +285,19 @@ def check_hourly_rain_adaptive(
                 "confidence": "bassa",
             }
 
-        ml_prob = ml_result.get("rain_probability", 0.0)
-        ml_ready = ml_result.get("model_ready", False)
+        raw_ml_prob = ml_result.get("rain_probability")
+        valid_probability = isinstance(raw_ml_prob, (int, float)) and 0.0 <= raw_ml_prob <= 1.0
+        ml_prob = float(raw_ml_prob) if valid_probability else 0.0
+        ml_ready = bool(
+            valid_probability and ml_result.get("model_ready", False) and ml_result.get("alert_validated", False)
+        )
         # will_rain usa la probabilità CALIBRATA e la soglia ottimizzata su F1 del
         # modello (fallback alla soglia fissa solo per modelli senza will_rain).
         ml_will_rain = bool(ml_result.get("will_rain", ml_prob >= RAIN_ML_THRESHOLD))
 
         # Trigger adattivo:
-        # 1. modello pronto: decide la probabilita' calibrata (con policy >=50%)
-        # 2. modello assente: fallback POP >=50% + evidenza WMO/quantita'
+        # 1. policy ML validata: probabilita' calibrata e soglia almeno 50%
+        # 2. altrimenti: fallback POP >=50% + evidenza WMO/quantita'
         trigger = False
         trigger_reason = ""
 

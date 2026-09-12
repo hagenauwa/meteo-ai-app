@@ -56,9 +56,13 @@ def test_fetch_meteostat_observations_maps_station_rows_to_cities(monkeypatch):
 
     assert captured["stations"] == ["16125"]
     assert captured["timezone"] == "UTC"
+    assert service.ms.config.include_model_data is False
+    assert observations[0]["cloud_cover"] == 62.5
+    assert observations[0]["station_id"] == "16125"
+    assert observations[0]["station_distance_km"] == 7.621
     assert len(observations) == 4
     assert {item["city_id"] for item in observations} == {1, 2}
-    assert all(item["observation_source"] == "meteostat" for item in observations)
+    assert all(item["observation_source"] == service.METEOSTAT_SOURCE for item in observations)
     assert all(item["observation_interval_minutes"] == 60 for item in observations)
     rainy = [item for item in observations if item["precipitation"] == 0.4]
     assert len(rainy) == 2
@@ -67,7 +71,7 @@ def test_fetch_meteostat_observations_maps_station_rows_to_cities(monkeypatch):
 
 def test_fetch_meteostat_observations_rejects_rows_without_rain_measurement(monkeypatch):
     station_frame = pd.DataFrame(
-        {"name": ["Sarzana / Luni"]},
+        {"name": ["Sarzana / Luni"], "distance": [7621.0]},
         index=pd.Index(["16125"], name="id"),
     )
     hourly_index = pd.MultiIndex.from_tuples(

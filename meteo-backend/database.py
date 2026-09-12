@@ -83,6 +83,8 @@ class WeatherObservation(Base):
     precipitation = Column(Float)
     observation_source = Column(Text, nullable=False, default="unknown")
     observation_interval_minutes = Column(Integer)
+    station_id = Column(Text, nullable=True)
+    station_distance_km = Column(Float, nullable=True)
 
     city = relationship("City", back_populates="observations")
 
@@ -126,6 +128,8 @@ class MlPrediction(Base):
     actual_wind_direction = Column(Float, nullable=True)
     actual_source = Column(Text, nullable=True)
     actual_interval_minutes = Column(Integer, nullable=True)
+    actual_station_id = Column(Text, nullable=True)
+    actual_station_distance_km = Column(Float, nullable=True)
     # Snapshot immutabile del modello disponibile quando il forecast è emesso.
     # Permette metriche prequential senza ricalcolare oggi un modello sul passato.
     evaluation_model_store_id = Column(Integer, nullable=True)
@@ -159,6 +163,7 @@ class MlModelStore(Base):
     model_bytes = Column(LargeBinary)  # pickle del Pipeline scikit-learn
     mae = Column(Float)  # Mean Absolute Error sul validation set
     n_samples = Column(Integer)
+    validation_state = Column(Text, nullable=True)
 
 
 class MlTrainingState(Base):

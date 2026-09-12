@@ -41,7 +41,13 @@ def test_rain_adaptive_skips_ml_when_out_of_coverage(monkeypatch):
 
     def fake_ml(**kwargs):
         calls.append(kwargs)
-        return {"rain_probability": 0.9, "model_ready": True, "will_rain": True, "confidence": "alta"}
+        return {
+            "rain_probability": 0.9,
+            "model_ready": True,
+            "alert_validated": True,
+            "will_rain": True,
+            "confidence": "alta",
+        }
 
     monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
 
@@ -64,7 +70,13 @@ def test_rain_adaptive_uses_ml_when_in_coverage(monkeypatch):
 
     def fake_ml(**kwargs):
         calls.append(kwargs)
-        return {"rain_probability": 0.8, "model_ready": True, "will_rain": True, "confidence": "alta"}
+        return {
+            "rain_probability": 0.8,
+            "model_ready": True,
+            "alert_validated": True,
+            "will_rain": True,
+            "confidence": "alta",
+        }
 
     monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
 
@@ -90,7 +102,13 @@ def test_rain_adaptive_ignores_metno_rain_without_real_probability(monkeypatch):
 
     def dry_ml(**kwargs):
         calls.append(kwargs)
-        return {"rain_probability": 0.08, "model_ready": True, "will_rain": False, "confidence": "alta"}
+        return {
+            "rain_probability": 0.08,
+            "model_ready": True,
+            "alert_validated": True,
+            "will_rain": False,
+            "confidence": "alta",
+        }
 
     monkeypatch.setattr(notification_utils, "get_ml_rain_probability", dry_ml)
     hourly = {
@@ -121,7 +139,13 @@ def test_rain_adaptive_ignores_metno_rain_without_real_probability(monkeypatch):
 
 def test_rain_model_vetoes_provider_false_positive(monkeypatch):
     def dry_ml(**kwargs):
-        return {"rain_probability": 0.12, "model_ready": True, "will_rain": False, "confidence": "alta"}
+        return {
+            "rain_probability": 0.12,
+            "model_ready": True,
+            "alert_validated": True,
+            "will_rain": False,
+            "confidence": "alta",
+        }
 
     monkeypatch.setattr(notification_utils, "get_ml_rain_probability", dry_ml)
     hourly = {
@@ -339,7 +363,13 @@ def test_rain_adaptive_skips_completed_interval_and_uses_next_hour(monkeypatch):
 
     def fake_ml(**kwargs):
         calls.append(kwargs)
-        return {"rain_probability": 0.8, "model_ready": True, "will_rain": True, "confidence": "alta"}
+        return {
+            "rain_probability": 0.8,
+            "model_ready": True,
+            "alert_validated": True,
+            "will_rain": True,
+            "confidence": "alta",
+        }
 
     monkeypatch.setattr(notification_utils, "get_ml_rain_probability", fake_ml)
     hourly = {

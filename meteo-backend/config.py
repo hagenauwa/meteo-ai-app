@@ -56,7 +56,7 @@ class Settings:
     ml_v2_shadow_only: bool = True
     ml_v2_rollout_percent: int = 0
     ml_require_trusted_observations: bool = False
-    ml_trusted_observation_sources: tuple[str, ...] = ("station", "arpa", "meteostat")
+    ml_trusted_observation_sources: tuple[str, ...] = ("station", "arpa", "meteostat-observed")
     ml_kpi_window_days: int = 14
     ml_training_window_days: int = 30
     ml_training_max_rows: int = 60000
@@ -149,8 +149,10 @@ def load_settings() -> Settings:
             os.getenv("ML_REQUIRE_TRUSTED_OBSERVATIONS"), default=app_env == "production"
         ),
         ml_trusted_observation_sources=tuple(
-            source.lower()
-            for source in _split_csv(os.getenv("ML_TRUSTED_OBSERVATION_SOURCES", "station,arpa,meteostat"))
+            # Migra anche le variabili Render gia' impostate: le vecchie righe
+            # "meteostat" possono contenere stime e restano escluse dal training.
+            "meteostat-observed" if source.lower() == "meteostat" else source.lower()
+            for source in _split_csv(os.getenv("ML_TRUSTED_OBSERVATION_SOURCES", "station,arpa,meteostat-observed"))
         ),
         ml_kpi_window_days=max(3, int(os.getenv("ML_KPI_WINDOW_DAYS", "14"))),
         ml_training_window_days=max(3, int(os.getenv("ML_TRAINING_WINDOW_DAYS", "30"))),

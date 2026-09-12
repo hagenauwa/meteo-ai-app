@@ -415,6 +415,7 @@ async def get_correction(
         parsed_hour, hour_warning = _parse_int_query(hour, field_name="hour", minimum=0, maximum=23)
         if hour_warning is not None:
             return _disabled_prediction_payload(temp=parsed_temp, warning=hour_warning)
+    feature_time = now.replace(hour=parsed_hour).astimezone(timezone.utc)
 
     resolution = _resolve_city_context(city, db)
     if not resolution["resolved"]:
@@ -428,8 +429,8 @@ async def get_correction(
             ml_model.predict_correction,
             temp=parsed_temp,
             humidity=parsed_humidity,
-            hour=parsed_hour,
-            month=now.month,
+            hour=feature_time.hour,
+            month=feature_time.month,
             lat=resolution["lat"],
             lon=resolution["lon"],
             region=resolution["region"],
@@ -488,6 +489,7 @@ async def enrich_forecast(
     db: Session = Depends(get_db),
 ):
     now = _rome_now()
+    feature_time = now.astimezone(timezone.utc)
     resolution = _resolve_city_for_enrich(payload.city, db)
     if not resolution["resolved"]:
         warning = resolution["warning"]
@@ -506,8 +508,8 @@ async def enrich_forecast(
         ml_model.predict_correction,
         temp=payload.current.temp,
         humidity=payload.current.humidity or 50.0,
-        hour=now.hour,
-        month=now.month,
+        hour=feature_time.hour,
+        month=feature_time.month,
         lat=resolution["lat"],
         lon=resolution["lon"],
         region=region,
@@ -522,8 +524,8 @@ async def enrich_forecast(
         ml_model.predict_rain_probability,
         forecast_temp=payload.current.temp,
         humidity=payload.current.humidity or 50.0,
-        hour=now.hour,
-        month=now.month,
+        hour=feature_time.hour,
+        month=feature_time.month,
         lat=resolution["lat"],
         lon=resolution["lon"],
         region=region,
@@ -562,7 +564,7 @@ async def get_rain_prediction(
     city: str = Query(...),
     temp: float = Query(...),
     humidity: float = Query(60.0),
-    hour: int | None = Query(None),
+    hour: int | None = Query(None, ge=0, le=23),
     cloud_cover: float = Query(50.0),
     lead_hours: int = Query(0, ge=0, le=240),
     forecast_precipitation: float | None = Query(None),
@@ -578,6 +580,7 @@ async def get_rain_prediction(
     now = _rome_now()
     if hour is None:
         hour = now.hour
+    feature_time = now.replace(hour=hour).astimezone(timezone.utc)
 
     resolution = _resolve_city_context(city, db)
     if not resolution["resolved"]:
@@ -590,8 +593,8 @@ async def get_rain_prediction(
         ml_model.predict_rain_probability,
         forecast_temp=temp,
         humidity=humidity,
-        hour=hour,
-        month=now.month,
+        hour=feature_time.hour,
+        month=feature_time.month,
         lat=resolution["lat"],
         lon=resolution["lon"],
         region=resolution["region"],
