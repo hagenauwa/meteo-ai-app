@@ -7,7 +7,7 @@ scikit-learn==1.6.1
 httpx==0.28.1
 pandas==2.3.3
 meteostat==2.1.4
-apscheduler==3.10.4
+apscheduler==3.11.3
 python-dotenv==1.2.2
 numpy==2.2.4
 joblib==1.4.2
